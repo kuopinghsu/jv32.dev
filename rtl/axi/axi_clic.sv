@@ -1,0 +1,191 @@
+// ============================================================================
+// File: axi_clic.sv
+// Project: JV32 RISC-V Processor
+// Description: RISC-V CLIC with CLINT-compatible Timer/Software registers
+//
+// Provides:
+//   - CLINT-compatible mtime/mtimecmp (64-bit), msip
+//   - 16 external interrupt lines with per-IRQ enable/level/priority
+//   - Sideband signals to jv32_csr for interrupt delivery
+//
+// Register Map (base 0x0200_0000):
+//   0x0000: MSIP        [0]=software interrupt request
+//   0x4000: MTIME_LO    [31:0] of mtime
+//   0x4004: MTIME_HI    [63:32] of mtime
+//   0x4008: MTIMECMP_LO [31:0] of mtimecmp
+//   0x400C: MTIMECMP_HI [63:32] of mtimecmp
+//   0x1000+n*4: CLICINT[n] [0]=ip(RO), [1]=ie, [15:8]=attr, [23:16]=ctl(prio)
+//
+// Timer IRQ: when mtime >= mtimecmp
+// Software IRQ: msip[0]
+// External IRQ: any enabled pending CLIC interrupt with level > threshold
+// ============================================================================
+
+module axi_clic #(
+    parameter int unsigned CLK_FREQ  = 100_000_000,
+    parameter int unsigned NUM_IRQ   = 16
+)(
+    input  logic        clk,
+    input  logic        rst_n,
+
+    // AXI4-Lite slave
+    input  logic [31:0] s_awaddr,
+    input  logic        s_awvalid,
+    output logic        s_awready,
+    input  logic [31:0] s_wdata,
+    input  logic [3:0]  s_wstrb,
+    input  logic        s_wvalid,
+    output logic        s_wready,
+    output logic [1:0]  s_bresp,
+    output logic        s_bvalid,
+    input  logic        s_bready,
+    input  logic [31:0] s_araddr,
+    input  logic        s_arvalid,
+    output logic        s_arready,
+    output logic [31:0] s_rdata,
+    output logic [1:0]  s_rresp,
+    output logic        s_rvalid,
+    input  logic        s_rready,
+
+    // External interrupt inputs (active-high)
+    input  logic [NUM_IRQ-1:0] ext_irq_i,
+
+    // IRQ outputs to CPU
+    output logic        timer_irq_o,
+    output logic        software_irq_o,
+    output logic        clic_irq_o,
+    output logic [7:0]  clic_level_o,
+    output logic [7:0]  clic_prio_o,
+    output logic [31:0] clic_vector_pc_o  // computed from mtvt base
+);
+
+    // =====================================================================
+    // Internal state
+    // =====================================================================
+    logic [63:0] mtime;
+    logic [63:0] mtimecmp;
+    logic        msip;
+
+    // Per-IRQ registers: [0]=ip(from ext), [1]=ie, [23:16]=ctl/prio, [31:24]=level
+    logic [NUM_IRQ-1:0] clicint_ie;
+    logic [7:0]         clicint_ctl [NUM_IRQ]; // priority/level
+
+    // =====================================================================
+    // mtime free-running counter
+    // =====================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) mtime <= 64'h0;
+        else        mtime <= mtime + 64'd1;
+    end
+
+    assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
+    assign software_irq_o = msip;
+
+    // =====================================================================
+    // CLIC interrupt arbiter
+    // =====================================================================
+    always_comb begin
+        clic_irq_o       = 1'b0;
+        clic_level_o     = 8'h0;
+        clic_prio_o      = 8'h0;
+        clic_vector_pc_o = 32'h0;
+        for (int i = 0; i < NUM_IRQ; i++) begin
+            if (clicint_ie[i] && ext_irq_i[i]) begin
+                if (!clic_irq_o || (clicint_ctl[i] > clic_prio_o)) begin
+                    clic_irq_o       = 1'b1;
+                    clic_level_o     = clicint_ctl[i];
+                    clic_prio_o      = clicint_ctl[i];
+                    clic_vector_pc_o = 32'h0; // caller fills from mtvt
+                end
+            end
+        end
+    end
+
+    // =====================================================================
+    // AXI4-Lite slave: simple single-beat interface
+    // =====================================================================
+    // Write channel
+    logic        aw_active;
+    logic [31:0] aw_addr_r;
+    logic        w_active;
+    logic [31:0] w_data_r;
+    logic [3:0]  w_strb_r;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            aw_active <= 1'b0; aw_addr_r <= 32'h0;
+            w_active  <= 1'b0; w_data_r  <= 32'h0; w_strb_r <= 4'h0;
+            s_bvalid  <= 1'b0;
+        end else begin
+            // Accept AW
+            if (s_awvalid && s_awready) begin aw_active <= 1'b1; aw_addr_r <= s_awaddr; end
+            // Accept W
+            if (s_wvalid && s_wready) begin w_active <= 1'b1; w_data_r <= s_wdata; w_strb_r <= s_wstrb; end
+            // Process write when both have arrived
+            if ((aw_active || (s_awvalid && s_awready)) && (w_active || (s_wvalid && s_wready))) begin
+                aw_active <= 1'b0; w_active <= 1'b0;
+                s_bvalid  <= 1'b1;
+                // Perform write
+                begin
+                    automatic logic [31:0] addr = aw_active ? aw_addr_r : s_awaddr;
+                    automatic logic [31:0] dat  = w_active  ? w_data_r  : s_wdata;
+                    automatic logic [3:0]  strb = w_active  ? w_strb_r  : s_wstrb;
+                    // byte-enable helper
+                    logic [31:0] msk;
+                    msk = {{8{strb[3]}},{8{strb[2]}},{8{strb[1]}},{8{strb[0]}}};
+                    casez (addr[15:0])
+                        16'h0000: msip <= dat[0];
+                        16'h4000: mtimecmp[31:0]  <= (mtimecmp[31:0]  & ~msk) | (dat & msk);
+                        16'h4004: mtimecmp[63:32] <= (mtimecmp[63:32] & ~msk) | (dat & msk);
+                        16'h4008: mtimecmp[31:0]  <= (mtimecmp[31:0]  & ~msk) | (dat & msk);
+                        16'h400C: mtimecmp[63:32] <= (mtimecmp[63:32] & ~msk) | (dat & msk);
+                        default: begin
+                            if (addr[15:12] == 4'h1) begin
+                                // CLICINT[n]: 0x1000 + n*4
+                                automatic int n = int'({22'b0, addr[11:2]});
+                                if (n < NUM_IRQ) begin
+                                    if (strb[0]) clicint_ie[n]  <= dat[1];
+                                    if (strb[2]) clicint_ctl[n] <= dat[23:16];
+                                end
+                            end
+                        end
+                    endcase
+                end
+            end else if (s_bvalid && s_bready) s_bvalid <= 1'b0;
+        end
+    end
+
+    assign s_awready = !aw_active;
+    assign s_wready  = !w_active;
+    assign s_bresp   = 2'b00;
+
+    // Read channel
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin s_rvalid <= 1'b0; s_rdata <= 32'h0; end
+        else if (s_arvalid && s_arready) begin
+            s_rvalid <= 1'b1;
+            casez (s_araddr[15:0])
+                16'h0000: s_rdata <= {31'd0, msip};
+                16'h4000: s_rdata <= mtime[31:0];
+                16'h4004: s_rdata <= mtime[63:32];
+                16'h4008: s_rdata <= mtimecmp[31:0];
+                16'h400C: s_rdata <= mtimecmp[63:32];
+                default: begin
+                    s_rdata <= 32'h0;
+                    if (s_araddr[15:12] == 4'h1) begin
+                        automatic int n = int'({22'b0, s_araddr[11:2]});
+                        if (n < NUM_IRQ)
+                            s_rdata <= {8'h0, clicint_ctl[n], 14'h0, clicint_ie[n], ext_irq_i[n]};
+                    end
+                end
+            endcase
+        end else if (s_rvalid && s_rready) begin s_rvalid <= 1'b0; end
+    end
+
+    assign s_arready = !s_rvalid;
+    assign s_rresp   = 2'b00;
+
+    // Suppress unused
+    logic _unused; assign _unused = &{1'b0, CLK_FREQ};
+
+endmodule

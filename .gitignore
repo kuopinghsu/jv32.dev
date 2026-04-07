@@ -1,0 +1,75 @@
+# Build artifacts
+/build/
+/build2/
+/build3/
+/syn/build/
+*.o
+*.d
+*.a
+*.so
+
+# Verilator generated files
+obj_dir/
+objdir/
+*.mk
+*.cpp.d
+*.h.d
+
+# Synthesis results
+syn/reports
+syn/results
+
+# OpenRAM generated files and local venv (created by 'make openram-setup' / 'make gen-mem')
+syn/.venv/
+syn/lib/openram/
+
+# Executables
+*.exe
+
+# Waveform dumps
+*.vcd
+*.fst
+*.fsdb
+*.shm
+
+# Trace files
+*_trace.txt
+*.log
+
+# ELF files and binaries
+*.elf
+*.bin
+*.hex
+*.dis
+*.readelf
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Doxygen generated output
+docs/doxygen/
+
+# Temporary files
+*.tmp
+.*.swp
+
+.Xil
+fpga/vivado*
+fpga/build_oss
+
+env.config
+rtos/zephyr/build.*
+
+/verif/riscof_targets/riscof_work_trace/
+/verif/riscof_targets/riscof_work/
+
