@@ -170,6 +170,7 @@ module axi_uart #(
             if (txf_push) begin
                 txf_mem[txf_wr_ptr] <= axi_wdata[7:0];
                 txf_wr_ptr          <= txf_wr_ptr + 1;
+                `DEBUG2(`DBG_GRP_UART, ("TX push: '%c' (0x%h)", axi_wdata[7:0], axi_wdata[7:0]));
             end
             if (txf_pop)
                 txf_rd_ptr <= txf_rd_ptr + 1;
@@ -202,6 +203,7 @@ module axi_uart #(
             if (rxf_push) begin
                 rxf_mem[rxf_wr_ptr] <= rx_data;
                 rxf_wr_ptr          <= rxf_wr_ptr + 1;
+                `DEBUG2(`DBG_GRP_UART, ("RX push: '%c' (0x%h)", rx_data, rx_data));
             end
             if (rxf_pop)
                 rxf_rd_ptr <= rxf_rd_ptr + 1;

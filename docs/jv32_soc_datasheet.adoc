@@ -113,13 +113,13 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |  |  |            +---------->| IRAM TCM  |<-+ D access (IRAM range)  | |
  |  |  | jv32_core  |           | (64 KB)   |  |                        | |
  |  |  |            |           +===========+  |                        | |
- |  |  |  3 stage   +--D access-----------+---++                        | |
+ |  |  |  3 stage   +--D access-----------+----+                        | |
  |  |  |  pipeline  |                     |                             | |
  |  |  |            |                     +-->+===========+             | |
  |  |  |            |                         | DRAM TCM  | (64 KB)     | |
  |  |  |            |  out of TCM miss        +===========+             | |
- |  |  |            +--------+-I fetch------->+----------+              | |
- |  |  |            +--------+-D access------>| AXI Mstr |              | |
+ |  |  |            +----------I fetch------->+----------+              | |
+ |  |  |            +----------D access------>| AXI Mstr |              | |
  |  |  +------------+       D > I priority    +-----+----+              | |
  |  |                                               |                   | |
  |  |  s_axi <-- AXI Slave (debug/DPI TCM access)   |                   | |
@@ -143,8 +143,9 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |                   | msip (software IRQ)      +---->timer_irq           |
  |                   | 16 ext IRQ lines         +---->software_irq        |
  |                   +--------------------------+---->external_irq        |
- |                     ^-- ext_irq_i[15:0]            |                   |
- |                                                    |                   |
+ |                     ^                              |                   |
+ |                     |                              |                   |
+ |                     +----- ext_irq_i[15:0]         |                   |
  |                 Slave 2: Magic  0x4000_0000--------+                   |
  |                   +--------------------------+                         |
  |                   | Console stdout write     |                         |
@@ -179,7 +180,7 @@ The core supports:
 * Multi-cycle stall for slow multiply/divide/barrel-shift when `FAST_MUL=0`/`FAST_DIV=0`/`FAST_SHIFT=0`
 * AMO (LR/SC and AMO operations) via a 3-state machine (IDLE → LOAD_WAIT → STORE_WAIT)
 * Configurable branch predictor (`BP_EN`, static not-taken fallback when disabled)
-* CLIC-aware CSR unit with CLIC interrupt-level threshold (`mintthresh`), current level (`mintstatus`), vectored-trap base (`mtvt`), and next-interrupt fast-claim (`mnxti`)
+* CLIC-aware CSR unit with CLIC interrupt-level threshold (`mintthresh`), current level (`mintstatus`), vectored-trap base (`mtvt`), next-interrupt fast-claim (`mnxti`), and hardware tail-chaining on `mret`
 
 ==== TCM: IRAM and DRAM (`jv32_top`)
 
@@ -512,7 +513,7 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 |0x345
 |mnxti
 |R/W
-|CLIC next-interrupt: reads next pending CLIC interrupt (above mintthresh) and claims it atomically; returns 0 if none pending
+|CLIC next-interrupt: reads the vector address (`mtvt + 4*id`) of the highest-priority pending CLIC interrupt with level > `mintthresh`; returns 0 if no such interrupt is pending. A write (e.g. `csrrsi mnxti, 0`) also atomically claims the interrupt: updates `mcause`, sets `mintstatus.mil`, and re-enables `MIE`, allowing the handler to branch directly to the returned address (software-assisted tail-chain).
 
 |0x347
 |mintthresh
@@ -661,9 +662,40 @@ On exception or interrupt:
 5. `mtval ← faulting_address` (or 0)
 6. PC redirected to `mtvec` (direct mode) or `mtvec + 4*cause` (vectored mode)
 
-MRET restores: `mstatus.MIE ← mstatus.MPIE`; `mstatus.MPIE ← 1`; PC ← `mepc`.
+CLIC vectored interrupts redirect to `mtvt + 4*clic_id` (vector table indexed by the winning interrupt's ID) and set `mintstatus.mil` to the claimed interrupt level.
 
-With CLIC, vectored interrupts redirect via `mtvt[base] + 4*clic_cause` and update `mintstatus.mil` with the claimed interrupt level.
+Normal MRET restores: `mstatus.MIE ← mstatus.MPIE`; `mstatus.MPIE ← 1`; PC ← `mepc`.
+
+==== Tail-Chaining (Hardware)
+
+If, at the moment `mret` retires, a CLIC external interrupt is pending with level > `mintthresh`, the core performs a **tail-chain** rather than a full context restore:
+
+* Fetch is redirected to `mtvt + 4*clic_id` (the next handler) — zero overhead cycles.
+* `mstatus.MIE` remains 0 (already in a new handler).
+* `mstatus.MPIE` is set to 1 (so the eventual chain-terminating `mret` re-enables MIE).
+* `mepc` is unchanged (still holds the preempted task's return address).
+* `mcause` is updated to `0x8000_000B` (machine external interrupt).
+* `mintstatus.mil` is updated to the new interrupt's level.
+
+Tail-chaining eliminates the push/pop overhead between consecutive ISRs of equal or lower priority and is fully transparent to software: the same trap handler is re-entered for each chained interrupt.
+
+==== Software-Assisted Tail-Chain (`mnxti`)
+
+Within a CLIC handler, software can voluntarily tail-chain to the next pending interrupt by reading `mnxti`:
+
+[source,c]
+----
+uintptr_t next_pc = csr_swap(mnxti, 0);
+if (next_pc) goto (void *)next_pc;   // chain to next handler
+----
+
+When `mnxti` is written (any write, e.g. `csrrsi mnxti, 0`) and a qualifying interrupt is pending:
+
+* `mcause` and `mintstatus.mil` are atomically updated to the new interrupt.
+* `mstatus.MIE` is re-enabled (nested interrupt within the handler).
+* The read value is `mtvt + 4*clic_id` of the newly claimed interrupt (or 0 if none).
+
+Software branches to the returned address to begin serving the next interrupt without an `mret`/re-entry cycle.
 
 <<<
 
@@ -957,7 +989,7 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |16 (`NUM_IRQ=16`), routed from `ext_irq_i[15:0]`, each with individual enable/level/priority via `CLICINT[n]`
 
 |Interrupt Outputs
-|`timer_irq_o`, `software_irq_o`, `clic_irq_o` (aggregated external), `clic_level_o[7:0]`, `clic_prio_o[7:0]`, `clic_vector_pc_o[31:0]`
+|`timer_irq_o`, `software_irq_o`, `clic_irq_o` (aggregated external), `clic_level_o[7:0]`, `clic_prio_o[7:0]`, `clic_id_o[4:0]` (winning IRQ index; used by CPU to compute `mtvt + 4*id`)
 |===
 
 ==== Register Map
@@ -1029,7 +1061,7 @@ Write `MSIP[0] = 1` to assert machine software interrupt immediately, `0` to cle
 
 Each `ext_irq_i[n]` input is gateable via `CLICINT[n].ie`. When any enabled and pending external interrupt has `ctl` (priority level) greater than the current `mintthresh` CSR value, `clic_irq_o` is asserted to the core as an M-mode external interrupt.
 
-The CLIC computes `clic_vector_pc_o` as `mtvt + 4 * irq_index` for vectored CLIC operation (requires `mtvec` in CLIC-vectored mode and `mtvt` programmed to a handler table).
+The CLIC asserts `clic_id_o[4:0]` with the index of the highest-priority pending enabled interrupt. The CPU uses this to compute the handler address as `mtvt + 4*clic_id` (where `mtvt` is programmed to a 4-byte-pointer table). This happens automatically on interrupt entry and on hardware tail-chain at `mret`; software can also perform the same lookup by reading `mnxti`.
 
 ---
 
@@ -1473,15 +1505,25 @@ void handle_timer_irq(void) {
 }
 
 void handle_clic_irq(void) {
-    // CLIC vectored: read MNXTI to claim and get vector PC
-    // Or: scan CLICINT[n].ip to find pending source
+    // CLIC vectored entry: mcause = 0x8000_000B, mintstatus.mil = this IRQ's level.
+    // Scan CLICINT[n].ip to identify the source; IP auto-clears when ext_irq_i[n] deasserts.
     for (int n = 0; n < 16; n++) {
         volatile uint32_t *clicint = (uint32_t *)(0x02001000 + n * 4);
         if (*clicint & 0x1) {
-            // Source n pending — handle it
-            // (IP bit auto-clears when ext_irq_i[n] deasserts)
+            // Source n is pending — handle it here.
         }
     }
+    // Software-assisted tail-chain: check for next pending IRQ via mnxti.
+    // If a higher-priority IRQ arrived during this handler, chain directly to it.
+    uintptr_t next = read_csr(mnxti);
+    if (next) {
+        // Claim it (sets mcause, mintstatus.mil, re-enables MIE) and branch.
+        write_csr(mnxti, 0);
+        ((void (*)(void))next)();
+    }
+    // Hardware tail-chain: if another CLIC IRQ above mintthresh is pending
+    // when this handler's mret executes, the CPU redirects to mtvt+4*id
+    // automatically — no code change needed.
 }
 ----
 

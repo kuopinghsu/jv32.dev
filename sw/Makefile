@@ -43,7 +43,7 @@ BUILD_DIR ?= .
 # Intermediate object directory (always under BUILD_DIR)
 OBJ_DIR   := $(BUILD_DIR)/obj
 
-# Linker script and startup source (now in common/)
+# Linker script and startup source (in common/)
 COMMON_LINK := common/link.ld
 STARTUP_SRC := common/startup.S
 STARTUP_OBJ := $(OBJ_DIR)/startup.o
@@ -52,9 +52,6 @@ LDFLAGS := -march=$(ARCH) -mabi=$(ABI)
 LDFLAGS += -nostdlib -nostartfiles
 LDFLAGS += -T $(COMMON_LINK)
 LDFLAGS += -Wl,--gc-sections
-
-# Tests directory
-TESTS_DIR := tests
 
 # Common SDK sources (compiled once; linked into every test ELF)
 # handle_trap() in jv_irq.c is weak, so test overrides take priority.
@@ -66,9 +63,8 @@ TESTS := \
     $(BUILD_DIR)/hello.elf \
     $(BUILD_DIR)/trap_test.elf
 
-# ============================================================================
 .PHONY: all build clean disasm help \
-        _build-coremark _build-dhry
+        _build-hello _build-trap_test _build-coremark _build-dhry
 
 # Prevent make from deleting intermediate object files
 .SECONDARY:
@@ -84,9 +80,45 @@ ifndef TEST
 endif
 	@$(MAKE) --no-print-directory _build-$(TEST)
 
-# Fallback: build a test from tests/ (ELF already lands in BUILD_DIR)
-_build-%: $(BUILD_DIR)/%.elf
-	@:
+# ============================================================================
+# Hello World
+# ============================================================================
+HELLO_DIR  := hello
+HELLO_SRCS := $(HELLO_DIR)/hello.c
+HELLO_OBJS := $(patsubst $(HELLO_DIR)/%.c,$(OBJ_DIR)/$(HELLO_DIR)/%.o,$(HELLO_SRCS))
+
+$(OBJ_DIR)/$(HELLO_DIR)/%.o: $(HELLO_DIR)/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CC      $@"
+	$(CC) $(CFLAGS) -I$(HELLO_DIR) -c -o $@ $<
+
+$(BUILD_DIR)/hello.elf: $(HELLO_OBJS) $(STARTUP_OBJ) $(COMMON_OBJS) $(COMMON_LINK)
+	@mkdir -p $(BUILD_DIR)
+	@echo "  LD      $@"
+	$(LD) $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/hello.map -o $@ $(STARTUP_OBJ) $(COMMON_OBJS) $(HELLO_OBJS)
+	$(SIZE) $@
+
+_build-hello: $(BUILD_DIR)/hello.elf
+
+# ============================================================================
+# Trap Test
+# ============================================================================
+TRAP_TEST_DIR  := trap_test
+TRAP_TEST_SRCS := $(TRAP_TEST_DIR)/trap_test.c
+TRAP_TEST_OBJS := $(patsubst $(TRAP_TEST_DIR)/%.c,$(OBJ_DIR)/$(TRAP_TEST_DIR)/%.o,$(TRAP_TEST_SRCS))
+
+$(OBJ_DIR)/$(TRAP_TEST_DIR)/%.o: $(TRAP_TEST_DIR)/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CC      $@"
+	$(CC) $(CFLAGS) -I$(TRAP_TEST_DIR) -c -o $@ $<
+
+$(BUILD_DIR)/trap_test.elf: $(TRAP_TEST_OBJS) $(STARTUP_OBJ) $(COMMON_OBJS) $(COMMON_LINK)
+	@mkdir -p $(BUILD_DIR)
+	@echo "  LD      $@"
+	$(LD) $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/trap_test.map -o $@ $(STARTUP_OBJ) $(COMMON_OBJS) $(TRAP_TEST_OBJS)
+	$(SIZE) $@
+
+_build-trap_test: $(BUILD_DIR)/trap_test.elf
 
 # ============================================================================
 # CoreMark
@@ -146,21 +178,8 @@ $(BUILD_DIR)/dhry.elf: $(DHRY_OBJS) $(STARTUP_OBJ) $(COMMON_OBJS) $(COMMON_LINK)
 _build-dhry: $(BUILD_DIR)/dhry.elf
 
 # ============================================================================
-# Pattern rules for tests/ directory
+# Common rules
 # ============================================================================
-
-# Link: test obj + startup + SDK common → ELF in BUILD_DIR
-$(BUILD_DIR)/%.elf: $(OBJ_DIR)/$(TESTS_DIR)/%.o $(STARTUP_OBJ) $(COMMON_OBJS) $(COMMON_LINK)
-	@mkdir -p $(BUILD_DIR)
-	@echo "  LD      $@"
-	$(LD) $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/$*.map -o $@ $(STARTUP_OBJ) $(COMMON_OBJS) $<
-	$(SIZE) $@
-
-# Compile C test sources → objects in OBJ_DIR/tests/
-$(OBJ_DIR)/$(TESTS_DIR)/%.o: $(TESTS_DIR)/%.c
-	@mkdir -p $(dir $@)
-	@echo "  CC      $@"
-	$(CC) $(CFLAGS) -I. -I$(TESTS_DIR) -c -o $@ $<
 
 # Compile common SDK C sources → objects in OBJ_DIR/common/
 $(OBJ_DIR)/common/%.o: common/%.c

@@ -106,9 +106,24 @@ ifdef DRAM_SIZE
   VERILATOR_FLAGS += -pvalue+DRAM_SIZE=$(DRAM_SIZE)
 endif
 
-# Debug output (DEBUG=1 enables $display trace in RTL)
+# Debug output
+#   DEBUG=1  — enable level-1 messages (DEBUG1 macro)
+#   DEBUG=2  — enable level-1 + level-2 per-group messages (DEBUG1 + DEBUG2)
+#   DEBUG_GROUP=0x<hex>  — bitmask of groups to show (default: all)
+DEBUG       ?=
+DEBUG_GROUP ?=
 ifdef DEBUG
-  VERILATOR_FLAGS += +define+DEBUG -CFLAGS "-DDEBUG=1"
+  ifeq ($(DEBUG),1)
+    VERILATOR_FLAGS += +define+DEBUG +define+DEBUG_LEVEL_1
+    VERILATOR_FLAGS += -CFLAGS "-DDEBUG=1"
+  else ifeq ($(DEBUG),2)
+    VERILATOR_FLAGS += +define+DEBUG +define+DEBUG_LEVEL_1 +define+DEBUG_LEVEL_2
+    VERILATOR_FLAGS += -CFLAGS "-DDEBUG=2"
+    ifdef DEBUG_GROUP
+      _DG_DEC := $(shell printf '%d' '$(DEBUG_GROUP)' 2>/dev/null || printf '%s' '$(DEBUG_GROUP)')
+      VERILATOR_FLAGS += +define+DEBUG_GROUP=$(_DG_DEC)
+    endif
+  endif
 endif
 
 # ============================================================================
@@ -134,12 +149,12 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) DEBUG=$(DEBUG)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
 # ============================================================================
-.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% lint lint-full lint-modules lint-decl lint-svlint FORCE
+.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-trap_test FORCE
 
 # Default: build RTL simulator
 all: build-rtl
@@ -341,6 +356,63 @@ WAVE_FILE ?= $(BUILD_DIR)/jv32soc.fst
 
 wave:
 	$(GTKWAVE) $(WAVE_FILE) &
+
+# ============================================================================
+# Software simulator
+# ============================================================================
+JV32SIM = $(BUILD_DIR)/jv32sim
+SIM_DIR  = sim
+
+$(JV32SIM): $(SIM_DIR)/jv32sim.cpp
+	@mkdir -p $(BUILD_DIR)
+	g++ -O2 -Wall -Wextra -std=c++14 -o $@ $<
+
+sim-build: $(JV32SIM)
+
+# ============================================================================
+# Trace comparison: software simulator vs RTL simulator
+# Usage:
+#   make compare-trap_test
+#
+# Builds trap_test.elf, jv32sim, and the RTL simulation binary, then runs
+# both and diffs the instruction traces (only non-x0 register writes).
+# ============================================================================
+compare-trap_test: $(BUILD_DIR)/trap_test.elf $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo " JV32 Trace Comparison: trap_test"
+	@echo "=========================================="
+	@echo ""
+	@echo "[1/3] Running software simulator..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/trap_test.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running RTL simulator..."
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	    $(BUILD_DIR)/trap_test.elf 2>/dev/null \
+	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[3/3] Comparing traces..."
+	@sim_lines=$$(wc -l < $(BUILD_DIR)/sim_trace.txt); \
+	rtl_lines=$$(wc -l < $(BUILD_DIR)/rtl_trace.txt); \
+	echo "  sim: $$sim_lines lines   rtl: $$rtl_lines lines"; \
+	if diff -u $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt \
+	      > $(BUILD_DIR)/trace_diff.txt 2>&1; then \
+	    echo ""; \
+	    echo "=========================================="; \
+	    echo "PASS: traces match exactly"; \
+	    echo "=========================================="; \
+	else \
+	    echo ""; \
+	    head -80 $(BUILD_DIR)/trace_diff.txt; \
+	    echo ""; \
+	    diff_lines=$$(wc -l < $(BUILD_DIR)/trace_diff.txt); \
+	    echo "Full diff saved to: $(BUILD_DIR)/trace_diff.txt ($$diff_lines lines)"; \
+	    echo ""; \
+	    echo "=========================================="; \
+	    echo "FAIL: traces differ"; \
+	    echo "=========================================="; \
+	    exit 1; \
+	fi
 
 # ============================================================================
 # Clean

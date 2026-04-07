@@ -113,13 +113,14 @@ module jv32_top #(
     input  logic        clic_irq,
     input  logic [7:0]  clic_level,
     input  logic [7:0]  clic_prio,
-    input  logic [31:0] clic_vector_pc,
+    input  logic [4:0]  clic_id,
     output logic        clic_ack,
 
     // =========================================================================
     // Trace
     // =========================================================================
     output logic        trace_valid,
+    output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data
@@ -194,9 +195,10 @@ module jv32_top #(
         .clic_irq        (clic_irq),
         .clic_level      (clic_level),
         .clic_prio       (clic_prio),
-        .clic_vector_pc  (clic_vector_pc),
+        .clic_id         (clic_id),
         .clic_ack        (clic_ack),
         .trace_valid     (trace_valid),
+        .trace_reg_we    (trace_reg_we),
         .trace_pc        (trace_pc),
         .trace_rd        (trace_rd),
         .trace_rd_data   (trace_rd_data)
@@ -600,7 +602,7 @@ module jv32_top #(
     // =========================================================================
     assign imem_resp_valid = imem_resp_valid_tcm | imem_resp_valid_axi;
     assign imem_resp_data  = imem_resp_valid_tcm ? imem_resp_data_tcm : imem_resp_data_axi;
-    assign imem_resp_pc    = imem_resp_valid_tcm ? imem_resp_pc_tcm   : imem_resp_pc_axi;
+    assign imem_resp_pc    = (imem_resp_valid_tcm ? imem_resp_pc_tcm   : imem_resp_pc_axi) & ~32'h3;
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;

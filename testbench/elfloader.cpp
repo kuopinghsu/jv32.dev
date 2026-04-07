@@ -26,7 +26,7 @@ uint32_t g_fromhost_addr = 0;
 std::map<std::string, Symbol> g_symbols;
 
 // Memory configuration (defaults match the SV axi_memory instance)
-uint32_t g_mem_base = 0x80000000;
+uint32_t g_mem_base = 0x00000000;
 uint32_t g_mem_size = 2 * 1024 * 1024;
 
 // ELF file structures
@@ -119,7 +119,7 @@ bool load_elf(void* dut, const std::string& filename) {
     printf("Entry point: 0x%08x\n", ehdr.e_entry);
 
     // Set the scope for DPI calls to the memory module
-    svSetScope(svGetScopeFromName("TOP.tb_kv32_soc.ext_mem"));
+    svSetScope(svGetScopeFromName("TOP.tb_jv32_soc"));
 
     // Load program headers (segments)
     size_t total_bytes = 0;
@@ -246,7 +246,7 @@ bool load_bin(void* dut, const std::string& filename) {
     }
 
     // Set the scope for DPI calls to the memory module
-    svSetScope(svGetScopeFromName("TOP.tb_kv32_soc.ext_mem"));
+    svSetScope(svGetScopeFromName("TOP.tb_jv32_soc"));
 
     // Read file and write to memory via DPI-C
     int addr = 0;

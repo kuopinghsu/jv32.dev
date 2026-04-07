@@ -56,7 +56,7 @@ module axi_clic #(
     output logic        clic_irq_o,
     output logic [7:0]  clic_level_o,
     output logic [7:0]  clic_prio_o,
-    output logic [31:0] clic_vector_pc_o  // computed from mtvt base
+    output logic [4:0]  clic_id_o         // winning IRQ index (for mtvt vector lookup)
 );
 
     // =====================================================================
@@ -85,17 +85,17 @@ module axi_clic #(
     // CLIC interrupt arbiter
     // =====================================================================
     always_comb begin
-        clic_irq_o       = 1'b0;
-        clic_level_o     = 8'h0;
-        clic_prio_o      = 8'h0;
-        clic_vector_pc_o = 32'h0;
+        clic_irq_o   = 1'b0;
+        clic_level_o = 8'h0;
+        clic_prio_o  = 8'h0;
+        clic_id_o    = 5'h0;
         for (int i = 0; i < NUM_IRQ; i++) begin
             if (clicint_ie[i] && ext_irq_i[i]) begin
                 if (!clic_irq_o || (clicint_ctl[i] > clic_prio_o)) begin
-                    clic_irq_o       = 1'b1;
-                    clic_level_o     = clicint_ctl[i];
-                    clic_prio_o      = clicint_ctl[i];
-                    clic_vector_pc_o = 32'h0; // caller fills from mtvt
+                    clic_irq_o   = 1'b1;
+                    clic_level_o = clicint_ctl[i];
+                    clic_prio_o  = clicint_ctl[i];
+                    clic_id_o    = 5'(i);  // winning IRQ index
                 end
             end
         end
@@ -187,5 +187,22 @@ module axi_clic #(
 
     // Suppress unused
     logic _unused; assign _unused = &{1'b0, CLK_FREQ};
+
+`ifndef SYNTHESIS
+    // Debug: log CLIC arbiter state changes on clock edges
+    logic clic_irq_r;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) clic_irq_r <= 1'b0;
+        else        clic_irq_r <= clic_irq_o;
+    end
+    always_ff @(posedge clk) begin
+        if (clic_irq_o && !clic_irq_r)
+            `DEBUG2(`DBG_GRP_CLIC, ("IRQ raised:   id=%0d level=%0d prio=%0d",
+                clic_id_o, clic_level_o, clic_prio_o));
+        if (!clic_irq_o && clic_irq_r)
+            `DEBUG2(`DBG_GRP_CLIC, ("IRQ cleared:  id=%0d",
+                clic_id_o));
+    end
+`endif
 
 endmodule

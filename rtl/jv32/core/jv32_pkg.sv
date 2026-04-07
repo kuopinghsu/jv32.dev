@@ -9,26 +9,80 @@
 
 // ============================================================================
 // Debug display macros
-//   DEBUG1(msg)         — print when DEBUG=1 is set at elaboration time
-//   DEBUG2(grp, msg)    — print when DEBUG=2 is set (grp arg ignored in jv32)
+//   DEBUG1(msg)             — print always when DEBUG=1 or DEBUG=2
+//   DEBUG2(grp, msg)        — print per-group when DEBUG=2; filter with DEBUG_GROUP=0x...
 // Use double parentheses for msg: DEBUG1(("val=%0d", x))
+//
+// Debug group bit indices (pass to DEBUG2 as first argument):
+//   DBG_GRP_FETCH   0   — Instruction fetch, PC tracking
+//   DBG_GRP_PIPE    1   — Pipeline stalls and flushes
+//   DBG_GRP_EX      2   — Execute stage (ALU, branch, forward)
+//   DBG_GRP_MEM     3   — Memory stage (load/store)
+//   DBG_GRP_CSR     4   — CSR read/write
+//   DBG_GRP_IRQ     5   — Interrupts and exceptions
+//   DBG_GRP_UART    6   — UART peripheral
+//   DBG_GRP_CLIC    7   — CLIC interrupt controller
+//   DBG_GRP_MAGIC   8   — Magic simulation device (exit, NCM)
+//   DBG_GRP_ICACHE 13   — NCM / magic-device icache-bypass (legacy)
 // ============================================================================
-`define DBG_GRP_ICACHE 13   // NCM / magic-device icache-bypass group
+
+// Debug group bit indices
+`define DBG_GRP_FETCH   0
+`define DBG_GRP_PIPE    1
+`define DBG_GRP_EX      2
+`define DBG_GRP_MEM     3
+`define DBG_GRP_CSR     4
+`define DBG_GRP_IRQ     5
+`define DBG_GRP_UART    6
+`define DBG_GRP_CLIC    7
+`define DBG_GRP_MAGIC   8
+`define DBG_GRP_ICACHE 13   // legacy alias used by axi_magic.sv
+
+// Default: all groups enabled. Override with +define+DEBUG_GROUP=<decimal>
+`ifndef DEBUG_GROUP
+    `define DEBUG_GROUP 32'hFFFF_FFFF
+`endif
 
 `ifdef SYNTHESIS
     `define DEBUG1(msg)
     `define DEBUG2(grp, msg)
 `else
-  `ifdef DEBUG
-    `define DEBUG1(msg)        $display("[DBG] %s", $sformatf msg)
-    `define DEBUG2(grp, msg)   $display("[DBG] %s", $sformatf msg)
+  `ifdef DEBUG_LEVEL_1
+    `define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
   `else
     `define DEBUG1(msg)
+  `endif
+  `ifdef DEBUG_LEVEL_2
+    `define DEBUG2(grp, msg) \
+        if (|((`DEBUG_GROUP >> (grp)) & 32'h1)) \
+            $display("[%s] %s", jv32_pkg::dbg_grp_name(grp), $sformatf msg)
+  `else
     `define DEBUG2(grp, msg)
   `endif
 `endif
 
 package jv32_pkg;
+
+    // ========================================================================
+    // Debug group name helper (used by DEBUG2 macro)
+    // ========================================================================
+`ifndef SYNTHESIS
+    function automatic string dbg_grp_name(int unsigned idx);
+        case (idx)
+            `DBG_GRP_FETCH:  return "FETCH ";
+            `DBG_GRP_PIPE:   return "PIPE  ";
+            `DBG_GRP_EX:     return "EX    ";
+            `DBG_GRP_MEM:    return "MEM   ";
+            `DBG_GRP_CSR:    return "CSR   ";
+            `DBG_GRP_IRQ:    return "IRQ   ";
+            `DBG_GRP_UART:   return "UART  ";
+            `DBG_GRP_CLIC:   return "CLIC  ";
+            `DBG_GRP_MAGIC:  return "MAGIC ";
+            `DBG_GRP_ICACHE: return "ICACHE";
+            default:         return "???   ";
+        endcase
+    endfunction
+`endif
 
     // ========================================================================
     // Top-Level SoC Configuration Parameters

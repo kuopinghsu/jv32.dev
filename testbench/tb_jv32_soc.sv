@@ -23,6 +23,7 @@ module tb_jv32_soc #(
 
     // Trace outputs
     output logic        trace_valid,
+    output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data,
@@ -122,6 +123,7 @@ module tb_jv32_soc #(
         .s_tcm_wdata    (32'h0), .s_tcm_wstrb   (4'h0), .s_tcm_wvalid  (1'b0), .s_tcm_wready(),
         .s_tcm_bresp    (),      .s_tcm_bvalid  (),     .s_tcm_bready  (1'b1),
         .trace_valid    (trace_valid),
+        .trace_reg_we   (trace_reg_we),
         .trace_pc       (trace_pc),
         .trace_rd       (trace_rd),
         .trace_rd_data  (trace_rd_data)

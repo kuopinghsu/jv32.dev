@@ -42,10 +42,9 @@ module jv32_rvc #(
     logic        hold_valid;
     logic [15:0] hold;
     logic [31:0] hold_pc;
+    logic        hold_from_split; // hold was set from split32 path; don't re-advance pc_if on output
     logic        init_offset;
-    logic        pend_valid;
-    logic [31:0] pend_data;
-    logic [31:0] pend_pc;
+    logic        stale_rsp;  // 1 cycle after mr=1: SRAM echoes the old word, must discard
 
     /* verilator lint_off WIDTHEXPAND */
     function automatic logic [31:0] c_sext6 (input logic [5:0]  v);
@@ -198,79 +197,122 @@ module jv32_rvc #(
     /* verilator lint_on WIDTHEXPAND */
 
     // Effective memory response
+    // Gate imem_resp_valid with !stale_rsp so the stale SRAM echo (one cycle after
+    // mem_ready=1 advances pc_if) is invisible to all downstream decode logic.
     logic eff_valid; logic [31:0] eff_data, eff_pc;
     always_comb begin
-        if (pend_valid) begin eff_valid=1'b1; eff_data=pend_data; eff_pc=pend_pc; end
-        else begin eff_valid=imem_resp_valid; eff_data=imem_resp_data; eff_pc=imem_resp_pc; end
+        eff_valid=imem_resp_valid && !stale_rsp;
+        eff_data=imem_resp_data; eff_pc=imem_resp_pc;
     end
 
     logic split32;
     assign split32 = hold_valid && (hold[1:0] == 2'b11);
 
     // Combinational output
+    //
+    // mem_ready=1 tells the core to advance pc_if by 4 on the next clock edge.
+    // It must only be 1 when the RVC has genuinely consumed the current fetch word
+    // and is ready for the next one.  Defaulting to 1 would advance pc_if on
+    // every cycle where no instruction is produced (e.g. after a flush with
+    // eff_valid=0), causing pc_if to overshoot.  Instead default to 0 and
+    // explicitly set to 1 only in cases that advance the fetch.
     always_comb begin
         instr_valid=1'b0; instr_data=32'h13; orig_instr=32'h13;
-        instr_pc=32'h0; is_compressed=1'b0; mem_ready=1'b1;
+        instr_pc=32'h0; is_compressed=1'b0; mem_ready=1'b0;
         if (!stall) begin
             if (split32) begin
                 if (eff_valid) begin
                     instr_valid=1'b1; instr_data={eff_data[15:0],hold}; orig_instr={eff_data[15:0],hold};
-                    instr_pc=hold_pc; is_compressed=1'b0;
+                    instr_pc=hold_pc; is_compressed=1'b0; mem_ready=1'b1;
                 end
+                // else: eff_valid=0 or stale_rsp active — mem_ready stays 0
             end else if (hold_valid) begin
                 instr_valid=1'b1; instr_data=expand_c(hold); orig_instr={16'h0,hold};
-                instr_pc=hold_pc; is_compressed=1'b1; mem_ready=1'b0;
+                instr_pc=hold_pc; is_compressed=1'b1;
+                // When hold came from the split32 path, pc_if was already advanced
+                // by the split32 mr=1.  The SRAM is already fetching the next fresh
+                // word, so we must NOT advance pc_if again here (mr=0).  When hold
+                // came from the normal lower-compressed path, pc_if was NOT advanced
+                // and we must advance it now so the SRAM moves on (mr=1).
+                mem_ready = hold_from_split ? 1'b0 : 1'b1;
             end else if (eff_valid) begin
                 if (init_offset) begin
                     if (eff_data[17:16]!=2'b11) begin
+                        // upper compressed half: output it and advance
                         instr_valid=1'b1; instr_data=expand_c(eff_data[31:16]);
                         orig_instr={16'h0,eff_data[31:16]}; instr_pc=eff_pc+32'd2; is_compressed=1'b1;
+                        mem_ready=1'b1;
+                    end else begin
+                        // upper half is split32 marker: advance to fetch the completing word
+                        mem_ready=1'b1;
                     end
                 end else if (eff_data[1:0]==2'b11) begin
-                    instr_valid=1'b1; instr_data=eff_data; orig_instr=eff_data; instr_pc=eff_pc;
+                    instr_valid=1'b1; instr_data=eff_data; orig_instr=eff_data;
+                    instr_pc=eff_pc; mem_ready=1'b1;
                 end else begin
                     instr_valid=1'b1; instr_data=expand_c(eff_data[15:0]);
                     orig_instr={16'h0,eff_data[15:0]}; instr_pc=eff_pc; is_compressed=1'b1;
-                    mem_ready=1'b0;
+                    // If upper half is a 32-bit lower-half (split32), advance pc_if so the
+                    // next fetch word supplies the upper 16 bits to complete the 32-bit instr.
+                    // If upper half is compressed, set mem_ready=0; hold is set and will be
+                    // output next cycle with mem_ready=1.
+                    mem_ready = (eff_data[17:16] == 2'b11) ? 1'b1 : 1'b0;
                 end
             end
-        end else begin mem_ready=1'b0; instr_valid=1'b0; end
+            // eff_valid=0 with no hold/split32: mem_ready stays 0, pc_if does not advance
+        end
     end
 
     // Sequential state
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             hold_valid<=1'b0; hold<=16'h0; hold_pc<=32'h0;
-            init_offset<=1'b0; pend_valid<=1'b0; pend_data<=32'h0; pend_pc<=32'h0;
+            hold_from_split<=1'b0; init_offset<=1'b0; stale_rsp<=1'b0;
         end else if (flush) begin
-            hold_valid<=1'b0; pend_valid<=1'b0; init_offset<=flush_pc[1];
+            hold_valid<=1'b0; hold_from_split<=1'b0; init_offset<=flush_pc[1]; stale_rsp<=1'b0;
         end else begin
-            // Park fresh response while hold is consuming (prevent loss)
-            if (hold_valid && !pend_valid && imem_resp_valid && !stall)
-                begin pend_valid<=1'b1; pend_data<=imem_resp_data; pend_pc<=imem_resp_pc; end
+            // Advance stale_rsp: set when mem_ready fired last cycle (SRAM echo incoming).
+            stale_rsp <= mem_ready && !stall;
 
             if (!stall) begin
                 if (split32 && eff_valid) begin
-                    hold_valid<=1'b0;
-                    if (pend_valid) pend_valid<=1'b0;
+                    // split32 consumed: eff_data[31:16] is the upper bits of the completing
+                    // word.  They form the start of the next instruction after the split32.
+                    // pc_if was advanced by the split32 mr=1, so hold_from_split=1.
+                    hold_valid<=1'b1;
+                    hold<=eff_data[31:16];
+                    hold_pc<={eff_pc[31:2], 2'b10}; // byte addr of eff_data[31:16]
+                    hold_from_split<=1'b1;
                 end else if (hold_valid && !split32) begin
+                    // Hold consumed (mem_ready was asserted in comb).
                     hold_valid<=1'b0;
-                    if (pend_valid) pend_valid<=1'b0;
+                    hold_from_split<=1'b0;
                 end else if (eff_valid) begin
                     if (init_offset) begin
                         init_offset<=1'b0;
                         if (eff_data[17:16]==2'b11)
-                            begin hold_valid<=1'b1; hold<=eff_data[31:16]; hold_pc<=eff_pc+32'd2; end
-                        if (pend_valid) pend_valid<=1'b0;
-                    end else if (eff_data[1:0]==2'b11) begin
-                        if (pend_valid) pend_valid<=1'b0;
-                    end else begin
+                            begin hold_valid<=1'b1; hold<=eff_data[31:16]; hold_pc<=eff_pc+32'd2;
+                                  hold_from_split<=1'b0; end
+                    end else if (eff_data[1:0]!=2'b11) begin
+                        // Compressed lower half: park upper half in hold.
                         hold_valid<=1'b1; hold<=eff_data[31:16]; hold_pc<=eff_pc+32'd2;
-                        if (pend_valid) pend_valid<=1'b0;
+                        hold_from_split<=1'b0;
                     end
+                    // else: full 32-bit — nothing to hold
                 end
             end
         end
     end
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (!rst_n) ;
+        else begin
+            $display("[RVC] pc=%08x iv=%b mr=%b hv=%b s32=%b io=%b stl=%b fl=%b fl_pc=%08x eff_pc=%08x eff_data=%08x eff_v=%b",
+                     instr_pc, instr_valid, mem_ready, hold_valid, split32, init_offset, stall,
+                     flush, flush_pc, eff_pc, eff_data, eff_valid);
+        end
+    end
+`endif
 
 endmodule

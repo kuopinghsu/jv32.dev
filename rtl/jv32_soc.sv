@@ -74,6 +74,7 @@ module jv32_soc #(
 
     // Trace
     output logic        trace_valid,
+    output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data
@@ -97,7 +98,7 @@ module jv32_soc #(
     logic        timer_irq, software_irq, external_irq;
     logic        clic_irq;
     logic [7:0]  clic_level, clic_prio;
-    logic [31:0] clic_vector_pc;
+    logic [4:0]  clic_id;
     logic        clic_ack;
 
     // =====================================================================
@@ -158,10 +159,11 @@ module jv32_soc #(
         .clic_irq         (clic_irq),
         .clic_level       (clic_level),
         .clic_prio        (clic_prio),
-        .clic_vector_pc   (clic_vector_pc),
+        .clic_id          (clic_id),
         .clic_ack         (clic_ack),
         // Trace
         .trace_valid      (trace_valid),
+        .trace_reg_we     (trace_reg_we),
         .trace_pc         (trace_pc),
         .trace_rd         (trace_rd),
         .trace_rd_data    (trace_rd_data)
@@ -240,7 +242,7 @@ module jv32_soc #(
         .clic_irq_o       (clic_irq),
         .clic_level_o     (clic_level),
         .clic_prio_o      (clic_prio),
-        .clic_vector_pc_o (clic_vector_pc)
+        .clic_id_o        (clic_id)
     );
     assign external_irq = clic_irq;
 

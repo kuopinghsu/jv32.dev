@@ -55,7 +55,7 @@ module jv32_core #(
     input  logic        clic_irq,
     input  logic [7:0]  clic_level,
     input  logic [7:0]  clic_prio,
-    input  logic [31:0] clic_vector_pc,
+    input  logic [4:0]  clic_id,            // winning IRQ index for mtvt table
     output logic        clic_ack,
 
     // I-fetch flush: asserted on branch/jump/exception/mret/IRQ redirect.
@@ -64,6 +64,7 @@ module jv32_core #(
 
     // Trace (one entry per retired instruction)
     output logic        trace_valid,
+    output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data
@@ -214,6 +215,8 @@ module jv32_core #(
     logic        csr_irq_pending;
     logic [31:0] csr_irq_cause;
     logic [31:0] csr_irq_pc;
+    logic        csr_tail_chain;
+    logic [31:0] csr_tail_chain_pc;
 
     // EX→WB pipeline register
     ex_wb_t ex_wb_r;
@@ -240,8 +243,10 @@ module jv32_core #(
         .clic_irq         (clic_irq),
         .clic_level       (clic_level),
         .clic_prio        (clic_prio),
-        .clic_vector_pc   (clic_vector_pc),
+        .clic_id          (clic_id),
         .clic_ack         (clic_ack),
+        .tail_chain_o     (csr_tail_chain),
+        .tail_chain_pc_o  (csr_tail_chain_pc),
         .irq_pending      (csr_irq_pending),
         .irq_cause        (csr_irq_cause),
         .irq_pc           (csr_irq_pc),
@@ -327,7 +332,9 @@ module jv32_core #(
                 if_ex_r.pc            <= rvc_instr_pc;
                 if_ex_r.instr         <= rvc_instr_data;
                 if_ex_r.orig_instr    <= rvc_orig_instr;
-                if_ex_r.is_compressed <= rvc_is_compressed;                if_ex_r.bp_taken      <= bp_redirect; // BTFNT: record prediction            end else begin
+                if_ex_r.is_compressed <= rvc_is_compressed;
+                if_ex_r.bp_taken      <= bp_redirect; // BTFNT: record prediction
+            end else begin
                 if_ex_r <= '0;
             end
         end
@@ -537,7 +544,7 @@ module jv32_core #(
         dmem_req_addr  = 32'h0; dmem_req_wdata = 32'h0; dmem_req_wstrb = 4'h0;
         dmem_stall     = 1'b0;
 
-        if (!ex_stall && ex_wb_r.valid) begin
+        if (ex_wb_r.valid && !alu_stall) begin
             if (ex_wb_r.is_amo) begin
                 case (amo_state)
                     AMO_IDLE: begin
@@ -652,7 +659,9 @@ module jv32_core #(
             if_flush_pc = mtvec_csr;
         end else if (ex_wb_r.valid && ex_wb_r.mret) begin
             if_flush    = 1'b1;
-            if_flush_pc = mepc_csr;
+            // Tail-chain: if a CLIC IRQ is pending above threshold, redirect
+            // directly to the next handler instead of returning to mepc.
+            if_flush_pc = csr_tail_chain ? csr_tail_chain_pc : mepc_csr;
         end else if (csr_irq_pending) begin
             if_flush    = 1'b1;
             if_flush_pc = csr_irq_pc;
@@ -717,12 +726,16 @@ module jv32_core #(
     // WB Stage: load data sign extension + register writeback
     // =====================================================================
     logic [31:0] load_result;
+    logic  [7:0] load_byte;
+    logic [15:0] load_half;
+    assign load_byte = dmem_resp_data[8*ex_wb_r.mem_addr[1:0] +: 8];
+    assign load_half = dmem_resp_data[16*ex_wb_r.mem_addr[1]  +: 16];
     always_comb begin
         case (ex_wb_r.mem_op)
-            MEM_BYTE:   load_result = {{24{dmem_resp_data[7]}},  dmem_resp_data[7:0]};
-            MEM_HALF:   load_result = {{16{dmem_resp_data[15]}}, dmem_resp_data[15:0]};
-            MEM_BYTE_U: load_result = {24'd0, dmem_resp_data[7:0]};
-            MEM_HALF_U: load_result = {16'd0, dmem_resp_data[15:0]};
+            MEM_BYTE:   load_result = {{24{load_byte[7]}},  load_byte};
+            MEM_HALF:   load_result = {{16{load_half[15]}}, load_half};
+            MEM_BYTE_U: load_result = {24'd0, load_byte};
+            MEM_HALF_U: load_result = {16'd0, load_half};
             default:    load_result = dmem_resp_data;
         endcase
     end
@@ -747,6 +760,9 @@ module jv32_core #(
     // Trace output
     // =====================================================================
     assign trace_valid   = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall;
+    assign trace_reg_we  = ex_wb_r.valid && ex_wb_r.reg_we
+                           && (ex_wb_r.rd_addr != 5'd0)
+                           && !ex_wb_r.exception && !dmem_stall;
     assign trace_pc      = ex_wb_r.pc;
     assign trace_rd      = ex_wb_r.rd_addr;
     assign trace_rd_data = rf_wdata;
@@ -756,5 +772,48 @@ module jv32_core #(
     assign _unused = &{1'b0, dec_is_wfi, dec_is_fence, dec_is_fence_i,
                        ex_wb_r.csr_op, ex_wb_r.csr_addr, ex_wb_r.csr_wdata, ex_wb_r.csr_zimm,
                        ex_wb_r.redirect, ex_wb_r.redirect_pc};
+
+`ifndef SYNTHESIS
+    // =====================================================================
+    // Debug trace (simulation only; guarded by DEBUG1 / DEBUG2 macros)
+    // =====================================================================
+    always_ff @(posedge clk) begin
+        // FETCH: instruction latching into IF/EX stage
+        if (!ex_stall && !ex_flush && !if_flush && rvc_instr_valid)
+            `DEBUG2(`DBG_GRP_FETCH, ("IF  pc=0x%h instr=0x%h",
+                rvc_instr_pc, rvc_instr_data));
+
+        // CORE IF: pc_if advancement trace
+        $display("[IFT] pc_if=%08x if_stall=%b bp_redir=%b if_flush=%b mr=%b rvc_valid=%b",
+            pc_if, if_stall, bp_redirect, if_flush, rvc_mem_ready, rvc_instr_valid);
+
+        // PIPE: pipeline flush events
+        if (if_flush) begin
+            if (ex_wb_r.valid && ex_wb_r.exception)
+                `DEBUG1(("[FLUSH] Exception: cause=%0d pc=0x%h → mtvec=0x%h",
+                    ex_wb_r.exc_cause, ex_wb_r.pc, if_flush_pc));
+            else if (ex_wb_r.valid && ex_wb_r.mret)
+                `DEBUG1(("[FLUSH] MRET → 0x%h%s", if_flush_pc,
+                    csr_tail_chain ? " [tail-chain]" : ""));
+            else if (csr_irq_pending)
+                `DEBUG1(("[FLUSH] IRQ → 0x%h cause=0x%h",
+                    if_flush_pc, csr_irq_cause));
+            else
+                `DEBUG2(`DBG_GRP_EX, ("REDIRECT → 0x%h (bp_mispred from pc=0x%h bp_taken=%b)",
+                    if_flush_pc, if_ex_r.pc, if_ex_r.bp_taken));
+        end
+
+        // MEM: data memory request issued (completed, not stalling)
+        if (dmem_req_valid && !dmem_stall)
+            `DEBUG2(`DBG_GRP_MEM, ("%s @ 0x%h data=0x%h strb=%04b",
+                dmem_req_write ? "STORE" : "LOAD ",
+                dmem_req_addr, dmem_req_wdata, dmem_req_wstrb));
+
+        // PIPE: instruction retired (WB stage)
+        if (trace_valid)
+            `DEBUG2(`DBG_GRP_PIPE, ("WB  pc=0x%h rd=x%-2d data=0x%h",
+                trace_pc, trace_rd, trace_rd_data));
+    end
+`endif
 
 endmodule

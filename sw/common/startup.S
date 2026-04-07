@@ -150,15 +150,6 @@ trap_entry:
     .size trap_entry, . - trap_entry
 
 /* ============================================================================
- * Weak default handle_trap: print fault info via UART and exit(1)
- * Tests can override this by defining their own handle_trap().
+ * Default handle_trap is provided by sw/common/jv_irq.c as a weak symbol.
+ * Tests can override it by defining their own handle_trap().
  * ============================================================================ */
-    .section .text, "ax", @progbits
-    .global  handle_trap
-    .weak    handle_trap
-    .type    handle_trap, @function
-handle_trap:
-    /* Default: just return with mepc unchanged (a0=0) */
-    li      a0, 0
-    ret
-    .size handle_trap, . - handle_trap

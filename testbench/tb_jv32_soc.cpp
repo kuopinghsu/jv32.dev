@@ -70,13 +70,16 @@ int main(int argc, char** argv) {
     // -------------------------------------------------------------------------
     // Parse arguments
     // -------------------------------------------------------------------------
-    const char* elf_path    = nullptr;
-    const char* trace_file  = nullptr;
-    uint64_t    max_cycles  = MAX_CYCLES_DEF;
+    const char* elf_path      = nullptr;
+    const char* trace_file    = nullptr;
+    const char* rtl_trace_file= nullptr;
+    uint64_t    max_cycles    = MAX_CYCLES_DEF;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i+1 < argc) {
             trace_file = argv[++i];
+        } else if (strcmp(argv[i], "--rtl-trace") == 0 && i+1 < argc) {
+            rtl_trace_file = argv[++i];
         } else if (strcmp(argv[i], "--max-cycles") == 0 && i+1 < argc) {
             max_cycles = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (!elf_path) {
@@ -88,7 +91,7 @@ int main(int argc, char** argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--max-cycles <N>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--max-cycles <N>]\n", argv[0]);
         return 1;
     }
 
@@ -133,6 +136,18 @@ int main(int argc, char** argv) {
     dut->eval();
 
     // -------------------------------------------------------------------------
+    // Open RTL trace file
+    // -------------------------------------------------------------------------
+    FILE* rtl_tfp = nullptr;
+    if (rtl_trace_file) {
+        rtl_tfp = fopen(rtl_trace_file, "w");
+        if (!rtl_tfp) {
+            fprintf(stderr, "Cannot open rtl-trace file: %s\n", rtl_trace_file);
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Simulation loop
     // -------------------------------------------------------------------------
     uint64_t cycle = 0;
@@ -142,18 +157,20 @@ int main(int argc, char** argv) {
         tick(dut, tfp);
         cycle++;
 
-        // Print trace on retired instruction
-        if (dut->trace_valid) {
+        // Print trace on retired instruction that writes a register
+        if (dut->trace_reg_we) {
             instret++;
             uint32_t pc  = dut->trace_pc;
             uint32_t rd  = dut->trace_rd;
             uint32_t rdd = dut->trace_rd_data;
-            printf("PC=%08" PRIx32 " rd=x%02" PRIu32 " rd_data=%08" PRIx32 "\n",
-                   pc, rd, rdd);
+            FILE* out = rtl_tfp ? rtl_tfp : stdout;
+            fprintf(out, "PC=%08" PRIx32 " rd=x%02" PRIu32 " rd_data=%08" PRIx32 "\n",
+                    pc, rd, rdd);
         }
     }
 
     if (tfp) { tfp->flush(); tfp->close(); }
+    if (rtl_tfp) { fflush(rtl_tfp); fclose(rtl_tfp); }
 
     printf("[SIM] %llu cycles, %llu instructions retired\n",
            (unsigned long long)cycle, (unsigned long long)instret);
@@ -176,9 +193,11 @@ int main(int argc, char** argv) {
 static void load_elf_to_dut(Vtb_jv32_soc* dut, const char* elf_path,
                              uint32_t iram_base, uint32_t /*iram_size*/,
                              uint32_t /*dram_base*/, uint32_t dram_size) {
-    // Cover: IRAM @ 0x8000_0000 through DRAM end @ 0xC000_0000 + dram_size
-    g_mem_base = iram_base;
-    g_mem_size = 0x40000000U + dram_size;
+    // mem_write_byte() in tb_jv32_soc.sv accepts full AXI (physical) addresses
+    // and performs its own IRAM/DRAM range check, so pass g_mem_base=0 so the
+    // elfloader does not subtract the IRAM base from p_paddr before the call.
+    g_mem_base = 0;
+    g_mem_size = iram_base + 0x40000000U + dram_size;
 
     if (!load_program(dut, std::string(elf_path))) {
         fprintf(stderr, "[SIM] ELF load failed: %s\n", elf_path);

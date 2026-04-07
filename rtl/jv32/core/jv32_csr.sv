@@ -47,8 +47,13 @@ module jv32_csr (
     input  logic        clic_irq,            // level-triggered interrupt present
     input  logic [7:0]  clic_level,          // interrupt level
     input  logic [7:0]  clic_prio,           // interrupt priority
-    input  logic [31:0] clic_vector_pc,      // vector PC for CLIC handler
+    input  logic [4:0]  clic_id,             // winning IRQ index (0..NUM_IRQ-1)
     output logic        clic_ack,            // accepted CLIC interrupt
+
+    // Tail-chain: asserted on mret when a CLIC IRQ is pending above threshold;
+    // core should redirect to tail_chain_pc instead of mepc.
+    output logic        tail_chain_o,
+    output logic [31:0] tail_chain_pc_o,
 
     output logic        irq_pending,
     output logic [31:0] irq_cause,
@@ -129,7 +134,7 @@ module jv32_csr (
             // CLIC
             CSR_MTVT:      csr_rdata = mtvt_reg;
             CSR_MNXTI:     csr_rdata = (clic_irq && (clic_level > mintthresh_reg))
-                                       ? (mtvt_reg + {22'd0, clic_prio, 2'b00})
+                                       ? (mtvt_reg + {25'd0, clic_id, 2'b00})
                                        : 32'd0;
             CSR_MINTSTATUS:csr_rdata = {mintstatus_mil, 24'd0};
             CSR_MINTTHRESH:csr_rdata = {24'd0, mintthresh_reg};
@@ -184,6 +189,8 @@ module jv32_csr (
                 mcause_reg   <= {1'b0, 26'd0, exception_cause};
                 mtval_reg    <= exception_tval;
                 mintstatus_mil <= 8'h0;
+                `DEBUG1(("[TRAP] Exception: cause=%0d pc=0x%h tval=0x%h mie=%b->0",
+                    exception_cause, exception_pc, exception_tval, mstatus_mie));
             // ---- interrupt trap ----
             end else if (irq_pending && mstatus_mie) begin
                 mstatus_mpie <= mstatus_mie;
@@ -191,13 +198,33 @@ module jv32_csr (
                 mepc_reg     <= exception_pc;
                 mcause_reg   <= irq_cause;
                 mtval_reg    <= 32'h0;
-                // CLIC: update mintstatus
+                // CLIC: update mintstatus with the level of the accepted interrupt
                 if (clic_irq) mintstatus_mil <= clic_level;
+                `DEBUG1(("[TRAP] Interrupt: cause=0x%h mepc=0x%h mie=%b->0",
+                    irq_cause, exception_pc, mstatus_mie));
+                `DEBUG2(`DBG_GRP_IRQ, ("CLIC accepted: id=%0d level=%0d vec=0x%h",
+                    clic_id, clic_level, clic_vec_pc));
             // ---- MRET ----
             end else if (mret) begin
-                mstatus_mie  <= mstatus_mpie;
-                mstatus_mpie <= 1'b1;
-                mintstatus_mil <= 8'h0;
+                if (clic_irq && (clic_level > mintthresh_reg)) begin
+                    // Tail-chain: a CLIC IRQ is pending above threshold.
+                    // Skip full context restore; go directly to the next handler.
+                    //  - mstatus_mie stays 0  (entering new handler)
+                    //  - mstatus_mpie stays 1 (so eventual chain-ending mret re-enables MIE)
+                    //  - mepc_reg unchanged    (still the preempted code's return address)
+                    mstatus_mpie   <= 1'b1;
+                    mcause_reg     <= {1'b1, 31'd11};  // machine external interrupt
+                    mintstatus_mil <= clic_level;
+                    `DEBUG1(("[MRET] Tail-chain: clic_id=%0d level=%0d vec=0x%h",
+                        clic_id, clic_level, clic_vec_pc));
+                end else begin
+                    // Normal mret: restore interrupt state
+                    mstatus_mie    <= mstatus_mpie;
+                    mstatus_mpie   <= 1'b1;
+                    mintstatus_mil <= 8'h0;
+                    `DEBUG1(("[MRET] Return to mepc=0x%h mie=%b->%b",
+                        mepc_reg, mstatus_mie, mstatus_mpie));
+                end
             // ---- CSR write ----
             end else if (csr_we) begin
                 case (csr_addr)
@@ -212,16 +239,38 @@ module jv32_csr (
                     CSR_MCAUSE:    mcause_reg    <= wd;
                     CSR_MTVAL:     mtval_reg     <= wd;
                     CSR_MTVT:      mtvt_reg      <= {wd[31:6], 6'd0};
-                    CSR_MINTTHRESH:mintthresh_reg<= wd[7:0];
+                    CSR_MINTTHRESH:mintthresh_reg <= wd[7:0];
+                    // mnxti write side-effect: if a qualifying CLIC IRQ is pending,
+                    // atomically claim it (update mcause + mintstatus, re-enable MIE)
+                    // so the handler can branch directly to tail_chain_pc_o.
+                    CSR_MNXTI: begin
+                        if (clic_irq && (clic_level > mintthresh_reg)) begin
+                            mcause_reg     <= {1'b1, 31'd11};
+                            mintstatus_mil <= clic_level;
+                            mstatus_mie    <= 1'b1;  // re-enable for next handler (nesting)
+                        end
+                    end
                     CSR_MCYCLE:    mcycle_cnt[31:0]   <= wd;
                     CSR_MCYCLEH:   mcycle_cnt[63:32]  <= wd;
                     CSR_MINSTRET:  minstret_cnt[31:0] <= wd;
                     CSR_MINSTRETH: minstret_cnt[63:32]<= wd;
                     default: ;
                 endcase
+                `DEBUG2(`DBG_GRP_CSR, ("CSR write: addr=0x%h src=0x%h wd=0x%h",
+                    csr_addr, csr_src, wd));
             end
         end
     end
+
+    // =====================================================================
+    // CLIC vector PC: mtvt base + IRQ index * 4
+    // =====================================================================
+    logic [31:0] clic_vec_pc;
+    assign clic_vec_pc = mtvt_reg + {25'd0, clic_id, 2'b00};
+
+    // Tail-chain: asserted the cycle mret fires if a CLIC IRQ above threshold is pending.
+    assign tail_chain_o    = mret && clic_irq && (clic_level > mintthresh_reg);
+    assign tail_chain_pc_o = clic_vec_pc;
 
     // =====================================================================
     // Interrupt priority arbiter (CLINT-style)
@@ -237,7 +286,7 @@ module jv32_csr (
         if (clic_irq && (clic_level > mintthresh_reg) && mstatus_mie) begin
             irq_pending = 1'b1;
             irq_cause   = {1'b1, 31'd11};  // machine external interrupt
-            irq_pc      = clic_vector_pc;
+            irq_pc      = clic_vec_pc;
             clic_ack    = 1'b1;
         end else if (mstatus_mie) begin
             if ((mip[11] && mie_reg[11])) begin
@@ -260,6 +309,6 @@ module jv32_csr (
     assign mepc_o  = mepc_reg;
 
     // Suppress unused
-    logic _unused; assign _unused = &{1'b0, wb_valid};
+    logic _unused; assign _unused = &{1'b0, wb_valid, clic_prio};
 
 endmodule
