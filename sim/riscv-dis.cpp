@@ -66,6 +66,15 @@ std::string RiscvDisassembler::disassemble(uint32_t instr, uint32_t pc) {
         case 0x2F: // AMO (Atomic)
             return decode_amo(instr, funct3, funct5);
 
+        case 0x43: // FMADD
+        case 0x47: // FMSUB
+        case 0x4B: // FNMSUB
+        case 0x4F: // FNMADD
+            return decode_fp_r4(instr, opcode);
+
+        case 0x53: // OP-FP
+            return decode_fp_op(instr);
+
         default:
             return "unknown";
     }
@@ -212,7 +221,7 @@ std::string RiscvDisassembler::decode_i_type(uint32_t instr, uint32_t opcode, ui
                     imm = shamt;
                 } else if (funct7 == 0x34 && shamt == 0x18) { // Zbb: REV8 (RV32: imm=0x698)
                     return "rev8 " + reg_name(rd) + "," + reg_name(rs1);
-                } else if (funct7 == 0x28 && shamt == 0x07) { // Zbb: ORC.B
+                } else if (funct7 == 0x14 && shamt == 0x07) { // Zbb: ORC.B
                     return "orc.b " + reg_name(rd) + "," + reg_name(rs1);
                 } else if (funct7 == 0x24) { // Zbs: BEXTI
                     mnemonic = "bexti";
@@ -415,6 +424,181 @@ std::string RiscvDisassembler::decode_amo(uint32_t instr, uint32_t funct3, uint3
     return oss.str();
 }
 
+std::string RiscvDisassembler::rm_suffix(uint32_t rm) {
+    switch (rm) {
+        case 1: return ",rtz";
+        case 2: return ",rdn";
+        case 3: return ",rup";
+        case 4: return ",rmm";
+        default: return "";  // rne(0) and dyn(7) are implicit — omit for readability
+    }
+}
+
+std::string RiscvDisassembler::decode_fp_r4(uint32_t instr, uint32_t opcode) {
+    uint32_t rd  = (instr >> 7)  & 0x1F;
+    uint32_t rm  = (instr >> 12) & 0x7;
+    uint32_t rs1 = (instr >> 15) & 0x1F;
+    uint32_t rs2 = (instr >> 20) & 0x1F;
+    uint32_t fmt = (instr >> 25) & 0x3;
+    uint32_t rs3 = (instr >> 27) & 0x1F;
+
+    const char* suf;
+    switch (fmt) {
+        case 0: suf = ".s"; break;
+        case 1: suf = ".d"; break;
+        case 2: suf = ".h"; break;
+        default: return "unknown";
+    }
+
+    const char* mnem;
+    switch (opcode) {
+        case 0x43: mnem = "fmadd";  break;
+        case 0x47: mnem = "fmsub";  break;
+        case 0x4B: mnem = "fnmsub"; break;
+        case 0x4F: mnem = "fnmadd"; break;
+        default: return "unknown";
+    }
+
+    std::ostringstream oss;
+    oss << mnem << suf << " " << reg_name(rd) << "," << reg_name(rs1)
+        << "," << reg_name(rs2) << "," << reg_name(rs3) << rm_suffix(rm);
+    return oss.str();
+}
+
+std::string RiscvDisassembler::decode_fp_op(uint32_t instr) {
+    uint32_t rd     = (instr >> 7)  & 0x1F;
+    uint32_t funct3 = (instr >> 12) & 0x7;
+    uint32_t rs1    = (instr >> 15) & 0x1F;
+    uint32_t rs2    = (instr >> 20) & 0x1F;
+    uint32_t funct7 = (instr >> 25) & 0x7F;
+    uint32_t rm     = funct3;  // alias for readability where funct3 is rm
+
+    std::ostringstream oss;
+
+    switch (funct7) {
+        // --- Single-precision (Zfinx) ---
+        case 0x00: oss << "fadd.s "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x04: oss << "fsub.s "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x08: oss << "fmul.s "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x0C: oss << "fdiv.s "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x2C: oss << "fsqrt.s " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str();
+        case 0x10:
+            if      (funct3 == 0) { oss << "fsgnj.s "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fsgnjn.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 2) { oss << "fsgnjx.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x14:
+            if      (funct3 == 0) { oss << "fmin.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fmax.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x50:
+            if      (funct3 == 2) { oss << "feq.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "flt.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 0) { oss << "fle.s " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x60:
+            if      (rs2 == 0) { oss << "fcvt.w.s "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.wu.s " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x68:
+            if      (rs2 == 0) { oss << "fcvt.s.w "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.s.wu " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x70:
+            if (rs2 == 0) {
+                if      (funct3 == 0) { oss << "fmv.x.w "  << reg_name(rd) << "," << reg_name(rs1); return oss.str(); }
+                else if (funct3 == 1) { oss << "fclass.s " << reg_name(rd) << "," << reg_name(rs1); return oss.str(); }
+            }
+            return "unknown";
+        case 0x78:
+            if (rs2 == 0 && funct3 == 0) { oss << "fmv.w.x " << reg_name(rd) << "," << reg_name(rs1); return oss.str(); }
+            return "unknown";
+
+        // --- Double-precision (Zdinx) ---
+        case 0x01: oss << "fadd.d "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x05: oss << "fsub.d "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x09: oss << "fmul.d "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x0D: oss << "fdiv.d "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x2D: oss << "fsqrt.d " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str();
+        case 0x11:
+            if      (funct3 == 0) { oss << "fsgnj.d "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fsgnjn.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 2) { oss << "fsgnjx.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x15:
+            if      (funct3 == 0) { oss << "fmin.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fmax.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x51:
+            if      (funct3 == 2) { oss << "feq.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "flt.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 0) { oss << "fle.d " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x61:
+            if      (rs2 == 0) { oss << "fcvt.w.d "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.wu.d " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x69:
+            if      (rs2 == 0) { oss << "fcvt.d.w "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.d.wu " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x71:
+            if (rs2 == 0 && funct3 == 1) { oss << "fclass.d " << reg_name(rd) << "," << reg_name(rs1); return oss.str(); }
+            return "unknown";
+        case 0x21:
+            if (rs2 == 0) { oss << "fcvt.d.s " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+
+        // --- Half-precision (Zhinx) ---
+        case 0x02: oss << "fadd.h "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x06: oss << "fsub.h "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x0A: oss << "fmul.h "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x0E: oss << "fdiv.h "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2) << rm_suffix(rm); return oss.str();
+        case 0x2E: oss << "fsqrt.h " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str();
+        case 0x12:
+            if      (funct3 == 0) { oss << "fsgnj.h "  << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fsgnjn.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 2) { oss << "fsgnjx.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x16:
+            if      (funct3 == 0) { oss << "fmin.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "fmax.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x52:
+            if      (funct3 == 2) { oss << "feq.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 1) { oss << "flt.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            else if (funct3 == 0) { oss << "fle.h " << reg_name(rd) << "," << reg_name(rs1) << "," << reg_name(rs2); return oss.str(); }
+            return "unknown";
+        case 0x62:
+            if      (rs2 == 0) { oss << "fcvt.w.h "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.wu.h " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x6A:
+            if      (rs2 == 0) { oss << "fcvt.h.w "  << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 1) { oss << "fcvt.h.wu " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x72:
+            if (rs2 == 0 && funct3 == 1) { oss << "fclass.h " << reg_name(rd) << "," << reg_name(rs1); return oss.str(); }
+            return "unknown";
+        case 0x22:
+            if (rs2 == 0) { oss << "fcvt.h.s " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+
+        // --- Cross-format conversions ---
+        case 0x20:
+            if      (rs2 == 1) { oss << "fcvt.s.d "    << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 2) { oss << "fcvt.s.h "    << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            else if (rs2 == 6) { oss << "fcvt.s.bf16 " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+        case 0x44:
+            if (rs2 == 0) { oss << "fcvt.bf16.s " << reg_name(rd) << "," << reg_name(rs1) << rm_suffix(rm); return oss.str(); }
+            return "unknown";
+
+        default:
+            return "unknown";
+    }
+}
+
 std::string RiscvDisassembler::reg_name(uint32_t reg) {
     static const char* abi_names[] = {
         "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
@@ -431,6 +615,14 @@ std::string RiscvDisassembler::reg_name(uint32_t reg) {
 
 std::string RiscvDisassembler::csr_name(uint32_t csr) {
     switch (csr) {
+        // Floating-Point CSRs (Zicsr + Zfinx/Zdinx/Zhinx)
+        case 0x001: return "fflags";
+        case 0x002: return "frm";
+        case 0x003: return "fcsr";
+
+        // Zcmt: jump-vector-table base
+        case 0x017: return "jvt";
+
         // Machine Information Registers
         case 0xF11: return "mvendorid";
         case 0xF12: return "marchid";

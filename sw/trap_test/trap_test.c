@@ -47,7 +47,9 @@ static uint32_t on_ebreak(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     (void)mcause; (void)mtval;
     g_trap_ebreak = 1;
-    return mepc + 4;        /* skip ebreak (always 4 bytes) */
+    /* Determine instruction size: bits[1:0]==11 → 32-bit, else 16-bit (C.EBREAK) */
+    uint16_t inst = *(volatile uint16_t *)mepc;
+    return mepc + (((inst & 3u) == 3u) ? 4u : 2u);
 }
 
 static uint32_t on_load_misalign(uint32_t mcause, uint32_t mepc, uint32_t mtval)
@@ -61,7 +63,9 @@ static uint32_t on_illegal(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
     (void)mcause; (void)mtval;
     g_trap_illegal = 1;
-    return mepc + 4;        /* skip 4-byte illegal encoding */
+    /* Determine instruction size: bits[1:0]==11 → 32-bit, else 16-bit */
+    uint16_t inst = *(volatile uint16_t *)mepc;
+    return mepc + (((inst & 3u) == 3u) ? 4u : 2u);
 }
 
 /* ── interrupt handler ─────────────────────────────────────────────────────── */

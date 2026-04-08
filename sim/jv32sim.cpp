@@ -7,7 +7,12 @@
 // filtered trace format (only retired instructions that write rd != x0).
 //
 // Usage:
-//   ./jv32sim [--trace <file>] [--max-insns <N>] <elf>
+//   ./jv32sim [--trace <file>] [--max-insns <N>] [--debug=<N>] <elf>
+//
+// Debug levels (--debug=N):
+//   0  silent — no informational messages (default)
+//   1  info   — lifecycle events: ELF loaded, EXIT, insn count, trap taken
+//   2  verbose — unmapped memory accesses, segment warnings, CSR details
 // ============================================================================
 
 #include <cassert>
@@ -17,8 +22,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "riscv-dis.h"
 
 // ============================================================================
 // Memory map
@@ -151,6 +160,13 @@ static FILE  *trace_fp   = nullptr;
 static bool   trace_on   = false;
 static uint64_t max_insns = 0;  // 0 = unlimited
 
+// Debug level (0=silent, 1=info, 2=verbose)
+static int debug_level = 0;
+
+// DBG(level, fmt, ...) — emit to stderr when debug_level >= level
+#define DBG(lvl, ...) \
+    do { if (debug_level >= (lvl)) fprintf(stderr, "[SIM] " __VA_ARGS__); } while (0)
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -159,10 +175,44 @@ static inline int32_t sign_extend(uint32_t v, int bits) {
     return (int32_t)((int32_t)(v << shift) >> shift);
 }
 
-static void emit_trace(uint32_t instr_pc, uint32_t rd, uint32_t rd_data) {
-    if (!trace_on || rd == 0) return;
-    fprintf(trace_fp, "PC=%08x rd=x%02u rd_data=%08x\n",
-            (unsigned)instr_pc, (unsigned)rd, (unsigned)rd_data);
+// ABI register names (index = register number)
+static const char* const REG_ABI[32] = {
+    "zero", "ra",  "sp",  "gp",  "tp",  "t0",  "t1",  "t2",
+    "s0",   "s1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",
+    "a6",   "a7",  "s2",  "s3",  "s4",  "s5",  "s6",  "s7",
+    "s8",   "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6"
+};
+
+// kv32 RTL format: INSN_COUNT 0xPC (0xINSTR) [abi_reg 0xVAL] [mem 0xADDR [0xVAL]] ; disasm
+static RiscvDisassembler disassembler;
+
+static void emit_trace(uint32_t instr_pc, uint32_t raw_instr,
+                       int rd, uint32_t result,
+                       bool has_mem, uint32_t mem_addr,
+                       uint32_t mem_val, bool is_store) {
+    if (!trace_on) return;
+    if (rd == 0 && !has_mem) return;  // nothing to log
+
+    std::ostringstream oss;
+    oss << std::dec << insn_count << " "
+        << "0x" << std::hex << std::setfill('0') << std::setw(8) << instr_pc << " "
+        << "(0x" << std::setw(8) << raw_instr << ")";
+
+    if (rd > 0) {
+        oss << " " << REG_ABI[rd]
+            << " 0x" << std::setfill('0') << std::setw(8) << result;
+    }
+    if (has_mem) {
+        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr;
+        if (is_store)
+            oss << " 0x" << std::setw(8) << mem_val;
+    }
+
+    std::string base = oss.str();
+    std::string disasm = disassembler.disassemble(raw_instr, instr_pc);
+    int pad = 72 - (int)base.size();
+    if (pad < 2) pad = 2;
+    fprintf(trace_fp, "%s%*s; %s\n", base.c_str(), pad, "", disasm.c_str());
 }
 
 // ============================================================================
@@ -222,7 +272,7 @@ static uint32_t mem_read(uint32_t addr, int size) {
     if (addr >= MAGIC_BASE && addr < MAGIC_BASE + 0x10000U) {
         return 0;
     }
-    fprintf(stderr, "[SIM] mem_read: unmapped addr 0x%08x size=%d\n", (unsigned)addr, size);
+    DBG(2, "mem_read: unmapped addr 0x%08x size=%d\n", (unsigned)addr, size);
     return 0;
 }
 
@@ -273,7 +323,7 @@ static void mem_write(uint32_t addr, uint32_t val, int size) {
             // exit — value>>1 is the exit code
             exit_code = (int)(val >> 1);
             running   = false;
-            fprintf(stderr, "[SIM] EXIT requested: code=%d\n", exit_code);
+            DBG(1, "EXIT requested: code=%d\n", exit_code);
         }
         return;
     }
@@ -377,6 +427,8 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
     } else {
         pc = base;
     }
+    DBG(1, "trap: cause=0x%08x tval=0x%08x pc=0x%08x -> vec=0x%08x\n",
+        (unsigned)cause, (unsigned)tval, (unsigned)trap_pc, (unsigned)pc);
 }
 
 static void check_interrupts() {
@@ -665,7 +717,7 @@ static uint32_t expand_rvc(uint16_t ci) {
 static void step() {
     // ── 1. Advance counters and check interrupts ──────────────────────────
     csr_mcycle++;
-    mtime++;  // approximate: 1 CLINT tick per instruction
+    // mtime is incremented on instruction retirement (below), not here
 
     check_interrupts();
     if (!running) return;
@@ -677,9 +729,11 @@ static void step() {
 
     // Read first halfword
     uint16_t half0 = (uint16_t)mem_read(instr_pc & ~1u, 2);
+    uint32_t raw_instr;  // original encoding passed to disassembler
 
     if ((half0 & 3u) != 3u) {
         // Compressed 16-bit instruction
+        raw_instr = (uint32_t)half0;
         instr   = expand_rvc(half0);
         pc_step = 2;
         if (instr == 0) {
@@ -691,7 +745,8 @@ static void step() {
     } else {
         // Full 32-bit instruction
         uint16_t half1 = (uint16_t)mem_read((instr_pc & ~1u) + 2, 2);
-        instr   = ((uint32_t)half1 << 16) | half0;
+        instr     = ((uint32_t)half1 << 16) | half0;
+        raw_instr = instr;
         pc_step = 4;
     }
 
@@ -717,6 +772,12 @@ static void step() {
     bool     do_write      = false;
     uint32_t new_pc        = instr_pc + pc_step;
     bool     retired       = true;   // most instructions retire normally
+
+    // Memory-access trace fields
+    uint32_t trace_mem_addr = 0;
+    uint32_t trace_mem_val  = 0;
+    bool     trace_has_mem  = false;
+    bool     trace_is_store = false;
 
     // I-type immediate (sign-extended)
     auto imm_i = [&]() -> uint32_t {
@@ -810,6 +871,11 @@ static void step() {
         // fix LW for aligned access
         if (funct3 == 2 && byte_off == 0) result = mem_read(addr, 4);
         do_write = !exc_pending;
+        if (do_write) {
+            trace_has_mem  = true;
+            trace_mem_addr = addr;
+            trace_is_store = false;
+        }
         break;
     }
 
@@ -823,6 +889,12 @@ static void step() {
         case 1: mem_write(addr, b & 0xFFFF, 2); break; // SH
         case 2: mem_write(addr, b, 4);           break; // SW
         default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
+        }
+        if (!exc_pending) {
+            trace_has_mem  = true;
+            trace_mem_addr = addr;
+            trace_mem_val  = b;
+            trace_is_store = true;
         }
         // stores do NOT write rd
         break;
@@ -961,7 +1033,13 @@ static void step() {
             exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
             do_write = false; break;
         }
-        if (!exc_pending) mem_write(addr, new_val, 4);
+        if (!exc_pending) {
+            mem_write(addr, new_val, 4);
+            trace_has_mem  = true;
+            trace_mem_addr = addr;
+            trace_mem_val  = new_val;
+            trace_is_store = true;
+        }
         break;
     }
 
@@ -982,14 +1060,16 @@ static void step() {
 
     // ── 5. Write result and emit trace ─────────────────────────────────────
     if (retired) {
-        if (do_write && rd != 0) {
+        if (do_write && rd != 0)
             regs[rd] = result;
-            emit_trace(instr_pc, rd, result);
-        }
         regs[0] = 0;  // x0 always zero
         pc = new_pc;
+        mtime++;  // increment mtime on retirement to match RTL instret_inc
         csr_minstret++;
         insn_count++;
+        emit_trace(instr_pc, raw_instr,
+                   (do_write && rd != 0) ? (int)rd : 0, result,
+                   trace_has_mem, trace_mem_addr, trace_mem_val, trace_is_store);
     }
 }
 
@@ -1030,7 +1110,7 @@ static bool load_elf(const char *path, uint32_t *entry) {
             dst    = dram + (vaddr - DRAM_BASE);
             max_sz = DRAM_SIZE - (vaddr - DRAM_BASE);
         } else {
-            fprintf(stderr, "[SIM] Warning: PT_LOAD segment at 0x%08x outside known regions\n", (unsigned)vaddr);
+            DBG(2, "Warning: PT_LOAD segment at 0x%08x outside known regions\n", (unsigned)vaddr);
             continue;
         }
 
@@ -1049,7 +1129,7 @@ static bool load_elf(const char *path, uint32_t *entry) {
     }
 
     fclose(f);
-    fprintf(stderr, "[SIM] ELF loaded: %s (entry=0x%08x)\n", path, (unsigned)*entry);
+    DBG(1, "ELF loaded: %s (entry=0x%08x)\n", path, (unsigned)*entry);
     return true;
 }
 
@@ -1065,6 +1145,10 @@ int main(int argc, char **argv) {
             trace_path = argv[++i];
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
             max_insns = (uint64_t)strtoull(argv[++i], nullptr, 10);
+        } else if (strncmp(argv[i], "--debug=", 8) == 0) {
+            debug_level = (int)strtol(argv[i] + 8, nullptr, 10);
+        } else if (strcmp(argv[i], "--debug") == 0 && i + 1 < argc) {
+            debug_level = (int)strtol(argv[++i], nullptr, 10);
         } else if (!elf_path) {
             elf_path = argv[i];
         } else {
@@ -1074,21 +1158,19 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--debug=<N>] <elf>\n", argv[0]);
         return 1;
     }
 
-    // Open trace file
+    // Open trace file (only enabled when --trace is given)
     if (trace_path) {
         trace_fp = fopen(trace_path, "w");
         if (!trace_fp) {
             fprintf(stderr, "[SIM] Cannot open trace file: %s\n", trace_path);
             return 1;
         }
-    } else {
-        trace_fp = stdout;
+        trace_on = true;
     }
-    trace_on = true;
 
     // Initialise state
     memset(regs, 0, sizeof(regs));
@@ -1119,14 +1201,14 @@ int main(int argc, char **argv) {
     // Run
     while (running) {
         if (max_insns && insn_count >= max_insns) {
-            fprintf(stderr, "[SIM] Reached max-insns limit (%llu)\n",
+            DBG(1, "Reached max-insns limit (%llu)\n",
                     (unsigned long long)max_insns);
             break;
         }
         step();
     }
 
-    fprintf(stderr, "[SIM] %llu instructions retired\n",
+    DBG(1, "%llu instructions retired\n",
             (unsigned long long)insn_count);
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);

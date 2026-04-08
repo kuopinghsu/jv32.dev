@@ -67,7 +67,12 @@ module jv32_core #(
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
-    output logic [31:0] trace_rd_data
+    output logic [31:0] trace_rd_data,
+    output logic [31:0] trace_instr,
+    output logic        trace_mem_we,
+    output logic        trace_mem_re,
+    output logic [31:0] trace_mem_addr,
+    output logic [31:0] trace_mem_data
 );
 `ifndef SYNTHESIS
     import jv32_pkg::*;
@@ -217,6 +222,8 @@ module jv32_core #(
     logic [31:0] csr_irq_pc;
     logic        csr_tail_chain;
     logic [31:0] csr_tail_chain_pc;
+    // irq_cancel declared here (defined in Trace output section below)
+    logic        irq_cancel;
 
     // EX→WB pipeline register
     ex_wb_t ex_wb_r;
@@ -235,6 +242,7 @@ module jv32_core #(
         .exception_tval   (ex_wb_r.exc_tval),
         .mret             (ex_wb_r.valid && ex_wb_r.mret),
         .wb_valid         (ex_wb_r.valid),
+        .irq_mepc         (ex_wb_r.pc),
         .mtvec_o          (mtvec_csr),
         .mepc_o           (mepc_csr),
         .timer_irq        (timer_irq),
@@ -250,7 +258,7 @@ module jv32_core #(
         .irq_pending      (csr_irq_pending),
         .irq_cause        (csr_irq_cause),
         .irq_pc           (csr_irq_pc),
-        .instret_inc      (ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret)
+        .instret_inc      (ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret && !irq_cancel)
     );
 
     // =====================================================================
@@ -349,7 +357,7 @@ module jv32_core #(
     logic [31:0] wb_rd_data;
     always_comb begin
         if (ex_wb_r.mem_read)
-            wb_rd_data = dmem_resp_data; // load data (already available in WB)
+            wb_rd_data = load_result; // sign/zero-extended byte/half/word load result
         else
             wb_rd_data = ex_wb_r.rd_data;
     end
@@ -544,7 +552,7 @@ module jv32_core #(
         dmem_req_addr  = 32'h0; dmem_req_wdata = 32'h0; dmem_req_wstrb = 4'h0;
         dmem_stall     = 1'b0;
 
-        if (ex_wb_r.valid && !alu_stall) begin
+        if (ex_wb_r.valid && !alu_stall && !irq_cancel) begin
             if (ex_wb_r.is_amo) begin
                 case (amo_state)
                     AMO_IDLE: begin
@@ -662,7 +670,7 @@ module jv32_core #(
             // Tail-chain: if a CLIC IRQ is pending above threshold, redirect
             // directly to the next handler instead of returning to mepc.
             if_flush_pc = csr_tail_chain ? csr_tail_chain_pc : mepc_csr;
-        end else if (csr_irq_pending) begin
+        end else if (csr_irq_pending && ex_wb_r.valid) begin
             if_flush    = 1'b1;
             if_flush_pc = csr_irq_pc;
         end else if (redirect_ex && !ex_stall) begin
@@ -671,8 +679,12 @@ module jv32_core #(
         end
     end
 
-    // ex_flush: squash IF/EX content (branch resolved, inserting bubble)
-    assign ex_flush = redirect_ex && !ex_stall;
+    // ex_flush: squash IF/EX content (branch resolved OR WB-stage redirect)
+    // Must also squash on exception/mret/irq to prevent the instruction
+    // currently in IF/EX from advancing into WB and mistakenly retiring.
+    assign ex_flush = (redirect_ex && !ex_stall)
+                    || (ex_wb_r.valid && (ex_wb_r.exception || ex_wb_r.mret))
+                    || (csr_irq_pending && ex_wb_r.valid);
 
     // RVC stall/flush
     // bp_redirect also flushes the RVC buffer to discard the instruction
@@ -691,7 +703,7 @@ module jv32_core #(
         if (!rst_n) begin
             ex_wb_r <= '0;
         end else if (!ex_stall) begin
-            if (load_use_stall || !if_ex_r.valid) begin
+            if (load_use_stall || !if_ex_r.valid || ex_flush) begin
                 // inject bubble
                 ex_wb_r <= '0;
             end else begin
@@ -745,7 +757,7 @@ module jv32_core #(
         rf_we    = 1'b0;
         rf_rd    = ex_wb_r.rd_addr;
         rf_wdata = ex_wb_r.rd_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel) begin
             rf_we = 1'b1;
             if (ex_wb_r.mem_read) rf_wdata = load_result;
             else if (ex_wb_r.is_amo) begin
@@ -759,13 +771,28 @@ module jv32_core #(
     // =====================================================================
     // Trace output
     // =====================================================================
-    assign trace_valid   = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall;
-    assign trace_reg_we  = ex_wb_r.valid && ex_wb_r.reg_we
-                           && (ex_wb_r.rd_addr != 5'd0)
-                           && !ex_wb_r.exception && !dmem_stall;
-    assign trace_pc      = ex_wb_r.pc;
-    assign trace_rd      = ex_wb_r.rd_addr;
-    assign trace_rd_data = rf_wdata;
+    // irq_cancel: instruction in WB is canceled by a pending interrupt.
+    // The interrupt is serviced instead; the WB instruction is NOT retired
+    // (no register write, no trace) but its PC is saved as mepc so that
+    // it re-executes after mret — matching software-simulator behaviour.
+    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret;
+
+    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+    assign trace_reg_we   = ex_wb_r.valid && ex_wb_r.reg_we
+                            && (ex_wb_r.rd_addr != 5'd0)
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+    assign trace_pc       = ex_wb_r.pc;
+    assign trace_rd       = ex_wb_r.rd_addr;
+    assign trace_rd_data  = rf_wdata;
+    assign trace_instr    = ex_wb_r.orig_instr;
+    assign trace_mem_we   = ex_wb_r.valid && ex_wb_r.mem_write
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+    assign trace_mem_re   = ex_wb_r.valid && ex_wb_r.mem_read
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+    assign trace_mem_addr = ex_wb_r.mem_addr;
+    assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
+                            ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
+                                                         ex_wb_r.store_data;
 
     // Suppress unused warnings for WFI/fence/fence_i (treated as NOPs here)
     logic _unused;
@@ -784,8 +811,8 @@ module jv32_core #(
                 rvc_instr_pc, rvc_instr_data));
 
         // CORE IF: pc_if advancement trace
-        $display("[IFT] pc_if=%08x if_stall=%b bp_redir=%b if_flush=%b mr=%b rvc_valid=%b",
-            pc_if, if_stall, bp_redirect, if_flush, rvc_mem_ready, rvc_instr_valid);
+        `DEBUG2(`DBG_GRP_FETCH, ("[IFT] pc_if=%08x if_stall=%b bp_redir=%b if_flush=%b mr=%b rvc_valid=%b",
+            pc_if, if_stall, bp_redirect, if_flush, rvc_mem_ready, rvc_instr_valid));
 
         // PIPE: pipeline flush events
         if (if_flush) begin

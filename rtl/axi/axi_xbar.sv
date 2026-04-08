@@ -124,18 +124,22 @@ module axi_xbar #(
     logic        wr_active;
     logic [31:0] wr_addr_r;
     logic        wr_err;
+    logic        aw_sent;  // AW handshake with slave has completed
 
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin wr_active <= 1'b0; wr_sel <= '0; wr_err <= 1'b0; wr_addr_r <= 32'h0; end
+        if (!rst_n) begin wr_active <= 1'b0; wr_sel <= '0; wr_err <= 1'b0; wr_addr_r <= 32'h0; aw_sent <= 1'b0; end
         else if (!wr_active) begin
             if (m_awvalid) begin
                 automatic int s = decode_addr(m_awaddr);
                 wr_active <= 1'b1;
                 wr_addr_r <= m_awaddr;
+                aw_sent   <= 1'b0;
                 if (s < 0) begin wr_sel <= '0; wr_err <= 1'b1; end
                 else begin wr_sel <= $clog2(N_SLAVES)'(s); wr_err <= 1'b0; end
             end
         end else begin
+            // Deassert s_awvalid after slave accepts the AW transaction
+            if (!aw_sent && s_awvalid[wr_sel] && s_awready[wr_sel]) aw_sent <= 1'b1;
             if (m_bvalid && m_bready) wr_active <= 1'b0;
         end
     end
@@ -145,7 +149,7 @@ module axi_xbar #(
     always_comb begin
         for (int i = 0; i < N_SLAVES; i++) begin
             s_awaddr[i]  = wr_addr_r;
-            s_awvalid[i] = wr_active && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel);
+            s_awvalid[i] = wr_active && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel) && !aw_sent;
             s_wdata[i]   = m_wdata;
             s_wstrb[i]   = m_wstrb;
             s_wvalid[i]  = m_wvalid && wr_active && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel);

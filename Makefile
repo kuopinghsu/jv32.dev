@@ -12,7 +12,7 @@ MAKE := $(shell command -v gmake 2>/dev/null || command -v make)
 ifeq ($(wildcard env.config),)
 $(shell cp env.config.template env.config)
 $(info NOTE: env.config was created from env.config.template.)
-$(info      Edit env.config to set your tool paths before rebuilding.)
+$(info Edit env.config to set your tool paths before rebuilding.)
 endif
 
 # Load environment configuration (tool paths)
@@ -37,6 +37,7 @@ AXI_DIR  = $(RTL_DIR)/axi
 MEM_DIR  = $(RTL_DIR)/memories
 TB_DIR   = testbench
 SW_DIR   = sw
+SIM_DIR  = sim
 BUILD_DIR ?= build
 
 BUILD_DIR_ABS := $(abspath $(BUILD_DIR))
@@ -56,6 +57,7 @@ VERILATOR_JOBS ?= 0
 SVLINT         ?= None
 
 VERILATOR_FLAGS  = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
+VERILATOR_FLAGS += -CFLAGS "-I$(abspath $(SIM_DIR))"
 VERILATOR_FLAGS += -sv --timescale 1ns/1ps
 VERILATOR_FLAGS += --top-module tb_jv32_soc
 VERILATOR_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL -Wno-DECLFILENAME -Wno-SYNCASYNCNET -Wno-PINCONNECTEMPTY -Wno-UNOPTFLAT
@@ -142,7 +144,8 @@ RTL_SOURCES = \
 
 TB_SOURCES = \
     $(TB_DIR)/tb_jv32_soc.cpp \
-    $(TB_DIR)/elfloader.cpp
+    $(TB_DIR)/elfloader.cpp \
+    $(SIM_DIR)/riscv-dis.cpp
 
 # Output binary
 BUILD_TARGET = $(BUILD_DIR)/jv32soc
@@ -154,7 +157,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 # ============================================================================
 # Phony targets
 # ============================================================================
-.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-trap_test FORCE
+.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% sim-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-% FORCE
 
 # Default: build RTL simulator
 all: build-rtl
@@ -325,6 +328,7 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
 	    $(TIMEOUT_ARG) \
 	    $*.elf
 	@echo "=========================================="
@@ -361,58 +365,54 @@ wave:
 # Software simulator
 # ============================================================================
 JV32SIM = $(BUILD_DIR)/jv32sim
-SIM_DIR  = sim
 
-$(JV32SIM): $(SIM_DIR)/jv32sim.cpp
+$(JV32SIM): $(SIM_DIR)/jv32sim.cpp $(SIM_DIR)/riscv-dis.cpp
 	@mkdir -p $(BUILD_DIR)
-	g++ -O2 -Wall -Wextra -std=c++14 -o $@ $<
+	g++ -O2 -Wall -Wextra -std=c++14 -o $@ $(SIM_DIR)/jv32sim.cpp $(SIM_DIR)/riscv-dis.cpp
 
 sim-build: $(JV32SIM)
+
+# Convenience pattern: build sw/<test>.elf then simulate with software simulator
+# Examples: make sim-hello, make sim-trap_test
+# Optional: MAX_INSNS=N
+SIM_MAX_INSNS_ARG = $(if $(MAX_INSNS),--max-insns=$(MAX_INSNS))
+
+sim-%: $(BUILD_DIR)/%.elf $(JV32SIM)
+	@echo "=========================================="
+	@echo "Running test '$*' with software simulator"
+	@echo "=========================================="
+	$(JV32SIM) $(SIM_MAX_INSNS_ARG) $(BUILD_DIR)/$*.elf
+	@echo "=========================================="
+	@echo "Done."
+	@echo "=========================================="
 
 # ============================================================================
 # Trace comparison: software simulator vs RTL simulator
 # Usage:
-#   make compare-trap_test
+#   make compare-<test>     e.g. make compare-hello, make compare-trap_test
 #
-# Builds trap_test.elf, jv32sim, and the RTL simulation binary, then runs
+# Builds <test>.elf, jv32sim, and the RTL simulation binary, then runs
 # both and diffs the instruction traces (only non-x0 register writes).
 # ============================================================================
-compare-trap_test: $(BUILD_DIR)/trap_test.elf $(JV32SIM) build-rtl
+compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo "=========================================="
-	@echo " JV32 Trace Comparison: trap_test"
+	@echo " JV32 Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
 	@echo "[1/3] Running software simulator..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/trap_test.elf \
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/$*.elf \
 	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[2/3] Running RTL simulator..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
-	    $(BUILD_DIR)/trap_test.elf 2>/dev/null \
+	    $(BUILD_DIR)/$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
 	@echo ""
-	@echo "[3/3] Comparing traces..."
-	@sim_lines=$$(wc -l < $(BUILD_DIR)/sim_trace.txt); \
-	rtl_lines=$$(wc -l < $(BUILD_DIR)/rtl_trace.txt); \
-	echo "  sim: $$sim_lines lines   rtl: $$rtl_lines lines"; \
-	if diff -u $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/rtl_trace.txt \
-	      > $(BUILD_DIR)/trace_diff.txt 2>&1; then \
-	    echo ""; \
-	    echo "=========================================="; \
-	    echo "PASS: traces match exactly"; \
-	    echo "=========================================="; \
-	else \
-	    echo ""; \
-	    head -80 $(BUILD_DIR)/trace_diff.txt; \
-	    echo ""; \
-	    diff_lines=$$(wc -l < $(BUILD_DIR)/trace_diff.txt); \
-	    echo "Full diff saved to: $(BUILD_DIR)/trace_diff.txt ($$diff_lines lines)"; \
-	    echo ""; \
-	    echo "=========================================="; \
-	    echo "FAIL: traces differ"; \
-	    echo "=========================================="; \
-	    exit 1; \
-	fi
+	@echo "[3/3] Comparing traces (sim=RTL-format vs rtl=Spike-format)..."
+	@python3 scripts/trace_compare.py \
+	    $(BUILD_DIR)/sim_trace.txt \
+	    $(BUILD_DIR)/rtl_trace.txt \
+	    || exit 1
 
 # ============================================================================
 # Clean
@@ -452,7 +452,9 @@ help:
 	@echo "Targets:"
 	@echo "  build-rtl            Build Verilator RTL simulator (default)"
 	@echo "  sim ELF=<path>       Run simulation with given ELF"
-	@echo "  rtl-<test>           Build & run sw/tests/<test>.elf"
+	@echo "  sim-<test>           Build & run <test>.elf with software simulator"
+	@echo "  rtl-<test>           Build & run <test>.elf with RTL simulator"
+	@echo "  compare-<test>       Build & compare traces: software vs RTL simulator"
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"

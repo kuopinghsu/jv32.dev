@@ -15,10 +15,47 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <sstream>
+#include <iomanip>
 #include <iostream>
 #include <fstream>
 #include <inttypes.h>
 #include <csignal>
+#include "riscv-dis.h"
+
+static const char* const RTL_REG_ABI[32] = {
+    "zero","ra","sp","gp","tp","t0","t1","t2",
+    "s0","s1","a0","a1","a2","a3","a4","a5",
+    "a6","a7","s2","s3","s4","s5","s6","s7",
+    "s8","s9","s10","s11","t3","t4","t5","t6"
+};
+static RiscvDisassembler rtl_disasm;
+
+static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
+                           uint32_t rd, uint32_t rddata,
+                           bool mem_we, bool mem_re, uint32_t mem_addr, uint32_t mem_data) {
+    std::ostringstream oss;
+    oss << std::dec << n << " "
+        << "0x" << std::hex << std::setfill('0') << std::setw(8) << pc << " "
+        << "(0x" << std::setw(8) << instr << ")";
+    if (rd != 0) {
+        oss << " " << RTL_REG_ABI[rd]
+            << " 0x" << std::setfill('0') << std::setw(8) << rddata;
+    }
+    if (mem_we) {
+        // Store: emit addr and data
+        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr
+            << " 0x" << std::setw(8) << mem_data;
+    } else if (mem_re) {
+        // Load: emit addr only (no data, matching SW sim format)
+        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr;
+    }
+    std::string base = oss.str();
+    std::string disasm = rtl_disasm.disassemble(instr, pc);
+    int pad = 72 - (int)base.size();
+    if (pad < 2) pad = 2;
+    fprintf(fp, "%s%*s; %s\n", base.c_str(), pad, "", disasm.c_str());
+}
 
 #define CLK_PERIOD_NS  10ULL
 #define CLK_HALF_PS    (CLK_PERIOD_NS * 500ULL)   // half period in ps
@@ -139,11 +176,17 @@ int main(int argc, char** argv) {
     // Open RTL trace file
     // -------------------------------------------------------------------------
     FILE* rtl_tfp = nullptr;
+    bool  rtl_tfp_is_stdout = false;
     if (rtl_trace_file) {
-        rtl_tfp = fopen(rtl_trace_file, "w");
-        if (!rtl_tfp) {
-            fprintf(stderr, "Cannot open rtl-trace file: %s\n", rtl_trace_file);
-            return 1;
+        if (strcmp(rtl_trace_file, "-") == 0) {
+            rtl_tfp = stdout;
+            rtl_tfp_is_stdout = true;
+        } else {
+            rtl_tfp = fopen(rtl_trace_file, "w");
+            if (!rtl_tfp) {
+                fprintf(stderr, "Cannot open rtl-trace file: %s\n", rtl_trace_file);
+                return 1;
+            }
         }
     }
 
@@ -157,20 +200,25 @@ int main(int argc, char** argv) {
         tick(dut, tfp);
         cycle++;
 
-        // Print trace on retired instruction that writes a register
-        if (dut->trace_reg_we) {
+        // Count all retired instructions; emit trace for register-writing and memory-access ones
+        if (dut->trace_valid) {
             instret++;
-            uint32_t pc  = dut->trace_pc;
-            uint32_t rd  = dut->trace_rd;
-            uint32_t rdd = dut->trace_rd_data;
-            FILE* out = rtl_tfp ? rtl_tfp : stdout;
-            fprintf(out, "PC=%08" PRIx32 " rd=x%02" PRIu32 " rd_data=%08" PRIx32 "\n",
-                    pc, rd, rdd);
+            if ((dut->trace_reg_we || dut->trace_mem_we || dut->trace_mem_re) && rtl_tfp) {
+                emit_rtl_trace(rtl_tfp, instret,
+                               dut->trace_pc, dut->trace_instr,
+                               dut->trace_reg_we ? dut->trace_rd : 0,
+                               dut->trace_rd_data,
+                               dut->trace_mem_we,
+                               dut->trace_mem_re,
+                               dut->trace_mem_addr,
+                               dut->trace_mem_data);
+            }
         }
     }
 
     if (tfp) { tfp->flush(); tfp->close(); }
-    if (rtl_tfp) { fflush(rtl_tfp); fclose(rtl_tfp); }
+    if (rtl_tfp && !rtl_tfp_is_stdout) { fflush(rtl_tfp); fclose(rtl_tfp); }
+    else if (rtl_tfp) { fflush(rtl_tfp); }
 
     printf("[SIM] %llu cycles, %llu instructions retired\n",
            (unsigned long long)cycle, (unsigned long long)instret);

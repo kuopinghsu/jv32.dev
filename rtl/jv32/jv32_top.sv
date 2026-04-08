@@ -123,7 +123,10 @@ module jv32_top #(
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
-    output logic [31:0] trace_rd_data
+    output logic [31:0] trace_rd_data,
+    output logic [31:0] trace_instr,
+    output logic        trace_mem_we,    output logic        trace_mem_re,    output logic [31:0] trace_mem_addr,
+    output logic [31:0] trace_mem_data
 );
 `ifndef SYNTHESIS
     import jv32_pkg::*;
@@ -201,7 +204,12 @@ module jv32_top #(
         .trace_reg_we    (trace_reg_we),
         .trace_pc        (trace_pc),
         .trace_rd        (trace_rd),
-        .trace_rd_data   (trace_rd_data)
+        .trace_rd_data   (trace_rd_data),
+        .trace_instr     (trace_instr),
+        .trace_mem_we    (trace_mem_we),
+        .trace_mem_re    (trace_mem_re),
+        .trace_mem_addr  (trace_mem_addr),
+        .trace_mem_data  (trace_mem_data)
     );
 
     // =========================================================================
@@ -448,8 +456,13 @@ module jv32_top #(
                                      & ~(core_d_iram_re | core_d_iram_we);
             // Core D-path used IRAM this cycle
             iram_used_by_core_d_d <= core_d_iram_re | core_d_iram_we;
-            // Core D-path used DRAM this cycle
-            dram_used_by_core_d_d <= core_d_dram_re | core_d_dram_we;
+            // Core D-path used DRAM this cycle.
+            // Gate out the spurious re-assertion that occurs on the response cycle:
+            // when dram_used_by_core_d_d is already high (TCM response in flight),
+            // ex_wb_r still holds the completing instruction and would re-drive
+            // core_d_dram_re/we with the same old address, causing the SRAM to
+            // capture the old address again and return stale data to the next load.
+            dram_used_by_core_d_d <= (core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d;
             // Was the D-path a write?
             dmem_was_write_d      <= dmem_req_write;
             // Flush invalidates in-flight I-fetch response
@@ -606,5 +619,29 @@ module jv32_top #(
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (bus_state == BUS_IDLE && core_d_axi && dmem_req_write)
+            `DEBUG1(("[TOP] AXI WR latch: addr=0x%h data=0x%h strb=%b",
+                dmem_req_addr, dmem_req_wdata, dmem_req_wstrb));
+        if (m_axi_awvalid && m_axi_awready)
+            `DEBUG1(("[TOP] AXI AW: addr=0x%h", m_axi_awaddr));
+        if (m_axi_wvalid && m_axi_wready)
+            `DEBUG1(("[TOP] AXI W:  data=0x%h", m_axi_wdata));
+        if (m_axi_bvalid && m_axi_bready)
+            `DEBUG1(("[TOP] AXI B:  done"));
+        // Monitor DRAM writes to watch for stack corruption
+        if (|dram_we)
+            `DEBUG1(("[TOP] DRAM WR: addr=0x%h data=0x%h strb=%b",
+                (DRAM_BASE | 32'({dram_addr, 2'b00})), dram_wdata, dram_we));
+        // Monitor DRAM reads - log address issued and, one cycle later, returned data
+        if (core_d_dram_re)
+            `DEBUG1(("[TOP] DRAM RD req: addr=0x%h",
+                (DRAM_BASE | 32'({dram_addr, 2'b00}))));
+        if (dram_used_by_core_d_d)
+            `DEBUG1(("[TOP] DRAM RD rsp: data=0x%h", dram_rdata));
+    end
+`endif
 
 endmodule

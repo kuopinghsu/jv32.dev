@@ -31,10 +31,11 @@ import jv32_pkg::*;
 `endif
 
 module jv32_soc #(
-    parameter int unsigned CLK_FREQ    = 100_000_000,
-    parameter int unsigned BAUD_RATE   = 115_200,
-    parameter int unsigned IRAM_SIZE   = 65536,        // bytes
-    parameter int unsigned DRAM_SIZE   = 65536,        // bytes
+    parameter int unsigned CLK_FREQ       = 100_000_000,
+    parameter int unsigned BAUD_RATE      = 115_200,
+    parameter int unsigned UART_FIFO_DEPTH = 16,        // TX/RX FIFO depth (power of 2)
+    parameter int unsigned IRAM_SIZE      = 65536,      // bytes
+    parameter int unsigned DRAM_SIZE      = 65536,      // bytes
     parameter bit          FAST_MUL    = 1'b1,
     parameter bit          FAST_DIV    = 1'b1,
     parameter bit          FAST_SHIFT  = 1'b1,
@@ -77,7 +78,10 @@ module jv32_soc #(
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
-    output logic [31:0] trace_rd_data
+    output logic [31:0] trace_rd_data,
+    output logic [31:0] trace_instr,
+    output logic        trace_mem_we,    output logic        trace_mem_re,    output logic [31:0] trace_mem_addr,
+    output logic [31:0] trace_mem_data
 );
 `ifndef SYNTHESIS
     import jv32_pkg::*;
@@ -166,7 +170,12 @@ module jv32_soc #(
         .trace_reg_we     (trace_reg_we),
         .trace_pc         (trace_pc),
         .trace_rd         (trace_rd),
-        .trace_rd_data    (trace_rd_data)
+        .trace_rd_data    (trace_rd_data),
+        .trace_instr      (trace_instr),
+        .trace_mem_we     (trace_mem_we),
+        .trace_mem_re     (trace_mem_re),
+        .trace_mem_addr   (trace_mem_addr),
+        .trace_mem_data   (trace_mem_data)
     );
 
     // =====================================================================
@@ -211,7 +220,7 @@ module jv32_soc #(
     // =====================================================================
     // UART — slave 0
     // =====================================================================
-    axi_uart #(.CLK_FREQ(CLK_FREQ), .BAUD_RATE(BAUD_RATE)) u_uart (
+    axi_uart #(.CLK_FREQ(CLK_FREQ), .BAUD_RATE(BAUD_RATE), .FIFO_DEPTH(UART_FIFO_DEPTH)) u_uart (
         .clk(clk), .rst_n(rst_n),
         .axi_awaddr(xs_awaddr[0]),.axi_awvalid(xs_awvalid[0]),.axi_awready(xs_awready[0]),
         .axi_wdata (xs_wdata[0]), .axi_wstrb  (xs_wstrb[0]),  .axi_wvalid (xs_wvalid[0]),
@@ -229,6 +238,7 @@ module jv32_soc #(
     // =====================================================================
     axi_clic #(.CLK_FREQ(CLK_FREQ)) u_clic (
         .clk(clk), .rst_n(rst_n),
+        .instret_inc      (trace_valid),
         .s_awaddr(xs_awaddr[1]),.s_awvalid(xs_awvalid[1]),.s_awready(xs_awready[1]),
         .s_wdata (xs_wdata[1]), .s_wstrb  (xs_wstrb[1]),  .s_wvalid (xs_wvalid[1]),
         .s_wready(xs_wready[1]),.s_bresp  (xs_bresp[1]),  .s_bvalid (xs_bvalid[1]),

@@ -27,6 +27,11 @@ module tb_jv32_soc #(
     output logic [31:0] trace_pc,
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data,
+    output logic [31:0] trace_instr,
+    output logic        trace_mem_we,
+    output logic        trace_mem_re,
+    output logic [31:0] trace_mem_addr,
+    output logic [31:0] trace_mem_data,
 
     // DPI-C memory init
     input  logic        uart_rx_i
@@ -100,16 +105,17 @@ module tb_jv32_soc #(
     logic uart_tx_o;
 
     jv32_soc #(
-        .CLK_FREQ   (CLK_FREQ),
-        .BAUD_RATE  (BAUD_RATE),
-        .IRAM_SIZE  (IRAM_SIZE),
-        .DRAM_SIZE  (DRAM_SIZE),
-        .FAST_MUL   (FAST_MUL),
-        .FAST_DIV   (FAST_DIV),
-        .FAST_SHIFT (FAST_SHIFT),
-        .BP_EN      (BP_EN),
-        .BOOT_ADDR  (BOOT_ADDR),
-        .DRAM_BASE  (DRAM_BASE)
+        .CLK_FREQ        (CLK_FREQ),
+        .BAUD_RATE       (CLK_FREQ),  // max baud rate (1 cycle/bit) so UART never stalls
+        .UART_FIFO_DEPTH (256),       // large FIFO so TX never stalls in simulation
+        .IRAM_SIZE       (IRAM_SIZE),
+        .DRAM_SIZE       (DRAM_SIZE),
+        .FAST_MUL        (FAST_MUL),
+        .FAST_DIV        (FAST_DIV),
+        .FAST_SHIFT      (FAST_SHIFT),
+        .BP_EN           (BP_EN),
+        .BOOT_ADDR       (BOOT_ADDR),
+        .DRAM_BASE       (DRAM_BASE)
     ) u_soc (
         .clk            (clk),
         .rst_n          (rst_n),
@@ -126,7 +132,12 @@ module tb_jv32_soc #(
         .trace_reg_we   (trace_reg_we),
         .trace_pc       (trace_pc),
         .trace_rd       (trace_rd),
-        .trace_rd_data  (trace_rd_data)
+        .trace_rd_data  (trace_rd_data),
+        .trace_instr    (trace_instr),
+        .trace_mem_we   (trace_mem_we),
+        .trace_mem_re   (trace_mem_re),
+        .trace_mem_addr (trace_mem_addr),
+        .trace_mem_data (trace_mem_data)
     );
 
 endmodule

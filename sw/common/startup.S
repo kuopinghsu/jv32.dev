@@ -76,10 +76,17 @@ _spin:
     .global  _exit
     .type    _exit, @function
 _exit:
-    /* magic peripheral at 0x4000_0000:
-     *   offset 0x00 = exit request register
-     *   write non-zero value triggers sim_request_exit() DPI-C call */
-    li      t0, 0x40000000
+    /* magic peripheral EXIT register at 0x4000_0004:
+     *   encoding: PASS (code=0) → write 1; FAIL (code≠0) → write (code<<1)|1
+     *   write non-zero value triggers sim_request_exit(value>>1) DPI-C call */
+    li      t0, 0x40000004
+    beqz    a0, .Lexit_pass
+    slli    a0, a0, 1
+    ori     a0, a0, 1
+    j       .Lexit_write
+.Lexit_pass:
+    li      a0, 1
+.Lexit_write:
     sw      a0, 0(t0)
     j       _spin             /* should not reach here; DPI exits sim */
     .size _exit, . - _exit

@@ -35,6 +35,11 @@ module jv32_csr (
     input  logic        mret,
     input  logic        wb_valid,         // gate counter increment
 
+    // PC of the instruction squashed due to interrupt (EX-stage PC).
+    // Saved as mepc when taking an interrupt so that the squashed instruction
+    // is re-executed after mret, not the already-retired WB instruction.
+    input  logic [31:0] irq_mepc,
+
     output logic [31:0] mtvec_o,
     output logic [31:0] mepc_o,
 
@@ -192,10 +197,12 @@ module jv32_csr (
                 `DEBUG1(("[TRAP] Exception: cause=%0d pc=0x%h tval=0x%h mie=%b->0",
                     exception_cause, exception_pc, exception_tval, mstatus_mie));
             // ---- interrupt trap ----
-            end else if (irq_pending && mstatus_mie) begin
+            // Only accept interrupt when a valid instruction occupies WB
+            // (so irq_mepc = ex_wb_r.pc is the correct return address).
+            end else if (irq_pending && mstatus_mie && wb_valid) begin
                 mstatus_mpie <= mstatus_mie;
                 mstatus_mie  <= 1'b0;
-                mepc_reg     <= exception_pc;
+                mepc_reg     <= irq_mepc;
                 mcause_reg   <= irq_cause;
                 mtval_reg    <= 32'h0;
                 // CLIC: update mintstatus with the level of the accepted interrupt

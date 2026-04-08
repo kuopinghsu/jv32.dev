@@ -28,6 +28,11 @@ module axi_clic #(
     input  logic        clk,
     input  logic        rst_n,
 
+    // Instruction retirement pulse: when 1, mtime increments by 1.
+    // Connect to trace_valid from the CPU core so that mtime advances at
+    // instruction-retire rate (matching the software simulator).
+    input  logic        instret_inc,
+
     // AXI4-Lite slave
     input  logic [31:0] s_awaddr,
     input  logic        s_awvalid,
@@ -75,7 +80,7 @@ module axi_clic #(
     // =====================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) mtime <= 64'h0;
-        else        mtime <= mtime + 64'd1;
+        else if (instret_inc) mtime <= mtime + 64'd1;
     end
 
     assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
@@ -116,6 +121,8 @@ module axi_clic #(
             aw_active <= 1'b0; aw_addr_r <= 32'h0;
             w_active  <= 1'b0; w_data_r  <= 32'h0; w_strb_r <= 4'h0;
             s_bvalid  <= 1'b0;
+            mtimecmp  <= 64'hFFFF_FFFF_FFFF_FFFF;
+            msip      <= 1'b0;
         end else begin
             // Accept AW
             if (s_awvalid && s_awready) begin aw_active <= 1'b1; aw_addr_r <= s_awaddr; end
@@ -132,11 +139,15 @@ module axi_clic #(
                     automatic logic [3:0]  strb = w_active  ? w_strb_r  : s_wstrb;
                     // byte-enable helper
                     logic [31:0] msk;
+`ifndef SYNTHESIS
+                    `DEBUG1(("[CLIC] AXI write: addr=0x%h data=0x%h aw_active=%b w_active=%b s_awaddr=0x%h aw_addr_r=0x%h",
+                        addr, dat, aw_active, w_active, s_awaddr, aw_addr_r));
+`endif
                     msk = {{8{strb[3]}},{8{strb[2]}},{8{strb[1]}},{8{strb[0]}}};
                     casez (addr[15:0])
                         16'h0000: msip <= dat[0];
-                        16'h4000: mtimecmp[31:0]  <= (mtimecmp[31:0]  & ~msk) | (dat & msk);
-                        16'h4004: mtimecmp[63:32] <= (mtimecmp[63:32] & ~msk) | (dat & msk);
+                        16'h4000: mtime[31:0]     <= (mtime[31:0]     & ~msk) | (dat & msk);
+                        16'h4004: mtime[63:32]    <= (mtime[63:32]    & ~msk) | (dat & msk);
                         16'h4008: mtimecmp[31:0]  <= (mtimecmp[31:0]  & ~msk) | (dat & msk);
                         16'h400C: mtimecmp[63:32] <= (mtimecmp[63:32] & ~msk) | (dat & msk);
                         default: begin
@@ -155,7 +166,7 @@ module axi_clic #(
         end
     end
 
-    assign s_awready = !aw_active;
+    assign s_awready = !aw_active && !s_bvalid;
     assign s_wready  = !w_active;
     assign s_bresp   = 2'b00;
 
@@ -191,9 +202,11 @@ module axi_clic #(
 `ifndef SYNTHESIS
     // Debug: log CLIC arbiter state changes on clock edges
     logic clic_irq_r;
+    logic timer_irq_r;
+    logic [63:0] mtimecmp_r;
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) clic_irq_r <= 1'b0;
-        else        clic_irq_r <= clic_irq_o;
+        if (!rst_n) begin clic_irq_r <= 1'b0; timer_irq_r <= 1'b0; mtimecmp_r <= 64'hFFFF_FFFF_FFFF_FFFF; end
+        else        begin clic_irq_r <= clic_irq_o; timer_irq_r <= timer_irq_o; mtimecmp_r <= mtimecmp; end
     end
     always_ff @(posedge clk) begin
         if (clic_irq_o && !clic_irq_r)
@@ -202,6 +215,12 @@ module axi_clic #(
         if (!clic_irq_o && clic_irq_r)
             `DEBUG2(`DBG_GRP_CLIC, ("IRQ cleared:  id=%0d",
                 clic_id_o));
+        if (timer_irq_o && !timer_irq_r)
+            `DEBUG1(("[CLIC] timer_irq ASSERTED: mtime=0x%h mtimecmp=0x%h", mtime, mtimecmp));
+        if (!timer_irq_o && timer_irq_r)
+            `DEBUG1(("[CLIC] timer_irq CLEARED: mtime=0x%h mtimecmp=0x%h", mtime, mtimecmp));
+        if (mtimecmp != mtimecmp_r)
+            `DEBUG1(("[CLIC] mtimecmp written: old=0x%h new=0x%h mtime=0x%h", mtimecmp_r, mtimecmp, mtime));
     end
 `endif
 

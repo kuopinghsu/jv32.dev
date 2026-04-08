@@ -308,9 +308,9 @@ module jv32_rvc #(
     always_ff @(posedge clk) begin
         if (!rst_n) ;
         else begin
-            $display("[RVC] pc=%08x iv=%b mr=%b hv=%b s32=%b io=%b stl=%b fl=%b fl_pc=%08x eff_pc=%08x eff_data=%08x eff_v=%b",
+            `DEBUG2(`DBG_GRP_FETCH, ("[RVC] pc=%08x iv=%b mr=%b hv=%b s32=%b io=%b stl=%b fl=%b fl_pc=%08x eff_pc=%08x eff_data=%08x eff_v=%b",
                      instr_pc, instr_valid, mem_ready, hold_valid, split32, init_offset, stall,
-                     flush, flush_pc, eff_pc, eff_data, eff_valid);
+                     flush, flush_pc, eff_pc, eff_data, eff_valid));
         end
     end
 `endif
