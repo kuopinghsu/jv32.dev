@@ -37,6 +37,8 @@ module jv32_core #(
     input  logic        imem_resp_valid,
     input  logic [31:0] imem_resp_data,
     input  logic [31:0] imem_resp_pc,
+    input  logic        imem_resp_fault,      // AXI DECERR on I-fetch
+    input  logic [31:0] imem_resp_fault_pc,   // exact request PC for the faulting fetch
 
     // Data memory request/response
     output logic        dmem_req_valid,
@@ -94,7 +96,9 @@ module jv32_core #(
     jv32_rvc #(.RVM23_EN(1'b1)) u_rvc (
         .clk              (clk),
         .rst_n            (rst_n),
-        .imem_resp_valid  (imem_resp_valid),
+        // A faulting I-fetch response must not be decompressed/consumed as a
+        // real instruction; the IF/EX fault slot is injected separately below.
+        .imem_resp_valid  (imem_resp_valid && !imem_resp_fault),
         .imem_resp_data   (imem_resp_data),
         .imem_resp_pc     (imem_resp_pc),
         .stall            (rvc_stall),
@@ -335,13 +339,24 @@ module jv32_core #(
         end else if (!ex_stall) begin
             if (ex_flush || if_flush) begin
                 if_ex_r <= '0;
+            end else if (imem_resp_fault) begin
+                // Preserve the original request PC for an instruction-access fault
+                // without letting the RVC path consume/advance the bad fetch word.
+                if_ex_r.valid         <= 1'b1;
+                if_ex_r.pc            <= imem_resp_fault_pc;
+                if_ex_r.instr         <= 32'h0000_0013;
+                if_ex_r.orig_instr    <= 32'h0000_0000;
+                if_ex_r.is_compressed <= imem_resp_fault_pc[1];
+                if_ex_r.bp_taken      <= 1'b0;
+                if_ex_r.ifetch_fault  <= 1'b1;
             end else if (rvc_instr_valid) begin
                 if_ex_r.valid         <= 1'b1;
                 if_ex_r.pc            <= rvc_instr_pc;
                 if_ex_r.instr         <= rvc_instr_data;
                 if_ex_r.orig_instr    <= rvc_orig_instr;
                 if_ex_r.is_compressed <= rvc_is_compressed;
-                if_ex_r.bp_taken      <= bp_redirect; // BTFNT: record prediction
+                if_ex_r.bp_taken      <= bp_redirect;     // BTFNT: record prediction
+                if_ex_r.ifetch_fault  <= 1'b0;
             end else begin
                 if_ex_r <= '0;
             end
@@ -356,7 +371,14 @@ module jv32_core #(
     // =====================================================================
     logic [31:0] wb_rd_data;
     always_comb begin
-        if (ex_wb_r.mem_read)
+        // AMO checked first: decoder sets mem_read=1 for AMO too,
+        // but the writeback result is the old (pre-operation) loaded value.
+        if (ex_wb_r.is_amo)
+            wb_rd_data = (ex_wb_r.amo_op == AMO_SC) ?
+                         ((lr_valid && (lr_addr == ex_wb_r.mem_addr)) ? 32'd0 : 32'd1) :
+                         (ex_wb_r.amo_op == AMO_LR) ? load_result :  // LR returns loaded value
+                         amo_load_data; // AMO forwards old memory value
+        else if (ex_wb_r.mem_read)
             wb_rd_data = load_result; // sign/zero-extended byte/half/word load result
         else
             wb_rd_data = ex_wb_r.rd_data;
@@ -492,7 +514,14 @@ module jv32_core #(
         ex_exc_cause = EXC_ILLEGAL_INSTR;
         ex_exc_tval  = if_ex_r.orig_instr;
         if (if_ex_r.valid) begin
-            if (dec_illegal) begin
+            if (if_ex_r.ifetch_fault) begin
+                // AXI DECERR on I-fetch raises EXC_INSTR_ACCESS_FAULT (cause=1).
+                // Checked before dec_illegal since the instruction data is meaningless.
+                // `mepc` already records the faulting PC; ACT4 expects `mtval=0` here.
+                ex_exception = 1'b1;
+                ex_exc_cause = EXC_INSTR_ACCESS_FAULT;
+                ex_exc_tval  = 32'h0;
+            end else if (dec_illegal) begin
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_ILLEGAL_INSTR;
                 ex_exc_tval  = if_ex_r.orig_instr;
@@ -561,17 +590,17 @@ module jv32_core #(
     assign msa_hi_wdata    = ex_wb_r.store_data >> msa_hi_shift[4:0];
 
     always_comb begin
-        case (dec_amo_op)
-            AMO_SWAP: amo_store_val = fwd_rs2;
-            AMO_ADD:  amo_store_val = amo_load_data + fwd_rs2;
-            AMO_XOR:  amo_store_val = amo_load_data ^ fwd_rs2;
-            AMO_AND:  amo_store_val = amo_load_data & fwd_rs2;
-            AMO_OR:   amo_store_val = amo_load_data | fwd_rs2;
-            AMO_MIN:  amo_store_val = ($signed(amo_load_data) < $signed(fwd_rs2)) ? amo_load_data : fwd_rs2;
-            AMO_MAX:  amo_store_val = ($signed(amo_load_data) > $signed(fwd_rs2)) ? amo_load_data : fwd_rs2;
-            AMO_MINU: amo_store_val = (amo_load_data < fwd_rs2) ? amo_load_data : fwd_rs2;
-            AMO_MAXU: amo_store_val = (amo_load_data > fwd_rs2) ? amo_load_data : fwd_rs2;
-            default:  amo_store_val = fwd_rs2;
+        case (ex_wb_r.amo_op)
+            AMO_SWAP: amo_store_val = ex_wb_r.store_data;
+            AMO_ADD:  amo_store_val = amo_load_data + ex_wb_r.store_data;
+            AMO_XOR:  amo_store_val = amo_load_data ^ ex_wb_r.store_data;
+            AMO_AND:  amo_store_val = amo_load_data & ex_wb_r.store_data;
+            AMO_OR:   amo_store_val = amo_load_data | ex_wb_r.store_data;
+            AMO_MIN:  amo_store_val = ($signed(amo_load_data) < $signed(ex_wb_r.store_data)) ? amo_load_data : ex_wb_r.store_data;
+            AMO_MAX:  amo_store_val = ($signed(amo_load_data) > $signed(ex_wb_r.store_data)) ? amo_load_data : ex_wb_r.store_data;
+            AMO_MINU: amo_store_val = (amo_load_data < ex_wb_r.store_data) ? amo_load_data : ex_wb_r.store_data;
+            AMO_MAXU: amo_store_val = (amo_load_data > ex_wb_r.store_data) ? amo_load_data : ex_wb_r.store_data;
+            default:  amo_store_val = ex_wb_r.store_data;
         endcase
     end
 
@@ -876,11 +905,15 @@ module jv32_core #(
         rf_wdata = ex_wb_r.rd_data;
         if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel) begin
             rf_we = 1'b1;
-            if (ex_wb_r.mem_read) rf_wdata = load_result;
-            else if (ex_wb_r.is_amo) begin
+            // AMO checked first: decoder sets mem_read=1 for AMO too.
+            if (ex_wb_r.is_amo) begin
                 if (ex_wb_r.amo_op == AMO_SC)
                     rf_wdata = (lr_valid && (lr_addr == ex_wb_r.mem_addr)) ? 32'd0 : 32'd1;
-                else rf_wdata = load_result; // AMO returns old value
+                else if (ex_wb_r.amo_op == AMO_LR)
+                    rf_wdata = load_result; // LR returns loaded value (amo_load_data never set for LR)
+                else rf_wdata = amo_load_data; // AMO returns old (pre-operation) value
+            end else if (ex_wb_r.mem_read) begin
+                rf_wdata = load_result;
             end
         end
     end

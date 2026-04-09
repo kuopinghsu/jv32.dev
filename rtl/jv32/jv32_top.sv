@@ -161,7 +161,9 @@ module jv32_top #(
     logic        imem_resp_valid;
     logic [31:0] imem_resp_data;
     logic [31:0] imem_resp_pc;
-    logic        imem_flush_core;   // rvc_flush from core
+    logic        imem_resp_fault;      // AXI I-fetch returned non-OKAY response (DECERR)
+    logic [31:0] imem_resp_fault_pc;   // exact request PC for the faulting AXI response
+    logic        imem_flush_core;      // rvc_flush from core
 
     logic        dmem_req_valid;
     logic        dmem_req_write;
@@ -183,9 +185,11 @@ module jv32_top #(
         .imem_req_valid  (imem_req_valid),
         .imem_req_addr   (imem_req_addr),
         .imem_resp_valid (imem_resp_valid),
-        .imem_resp_data  (imem_resp_data),
-        .imem_resp_pc    (imem_resp_pc),
-        .imem_flush      (imem_flush_core),
+        .imem_resp_data     (imem_resp_data),
+        .imem_resp_pc       (imem_resp_pc),
+        .imem_resp_fault    (imem_resp_fault),
+        .imem_resp_fault_pc (imem_resp_fault_pc),
+        .imem_flush         (imem_flush_core),
         .dmem_req_valid  (dmem_req_valid),
         .dmem_req_write  (dmem_req_write),
         .dmem_req_addr   (dmem_req_addr),
@@ -606,6 +610,8 @@ module jv32_top #(
     assign imem_resp_valid_axi = (bus_state == BUS_IR) & m_axi_rvalid;
     assign imem_resp_data_axi  = m_axi_rdata;
     assign imem_resp_pc_axi    = ibus_pc_r;
+    assign imem_resp_fault     = (bus_state == BUS_IR) & m_axi_rvalid & (m_axi_rresp != 2'b00);
+    assign imem_resp_fault_pc  = ibus_pc_r;
 
     assign dmem_resp_valid_axi = ((bus_state == BUS_DR) & m_axi_rvalid)
                                | ((bus_state == BUS_DB) & m_axi_bvalid);

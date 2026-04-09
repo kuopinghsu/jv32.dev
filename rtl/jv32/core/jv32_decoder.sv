@@ -234,7 +234,8 @@ module jv32_decoder (
                             (funct3[1:0] == 2'b01 || rs1_addr != 5'd0))
                             illegal = 1'b1;
                         // Unknown CSR → illegal
-                        if (instr[31:20] != CSR_MSTATUS   &&
+                        if (instr[31:20] != CSR_MSTATUS    &&
+                            instr[31:20] != CSR_MSTATUSH   &&
                             instr[31:20] != CSR_MISA       &&
                             instr[31:20] != CSR_MIE        &&
                             instr[31:20] != CSR_MTVEC      &&

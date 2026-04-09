@@ -26,7 +26,8 @@ ACT_SENTINEL := $(ACT_VENV)/.act-setup-done
 
 # ── JV32 DUT config ──────────────────────────────────────────────────────────
 DUT_CONFIG   := $(VERIF_DIR)config/jv32-rv32imac
-WORKDIR      := $(VERIF_DIR)work
+WORKDIR      ?= $(JV32_ROOT)/build/arch-test-work
+ARCH_TEST_JOBS ?= $(if $(JOBS),$(JOBS),$(shell nproc))
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
@@ -75,16 +76,27 @@ arch-test-setup: $(ACT_SENTINEL)
 # Variables:
 #   EXTENSIONS        — comma-separated list (default: all in UDB config)
 #   JOBS              — parallel build jobs (default: nproc)
-#   WORKDIR           — build/output dir (default: verif/work)
+#   WORKDIR           — build/output dir (default: build/arch-test-work)
 # ============================================================================
 arch-test-run: $(ACT_SENTINEL)
-	@echo "[arch-test] Generating self-checking ELFs (reference: Sail, DUT: JV32)..."
+	@mkdir -p "$(WORKDIR)"
+	@echo "=========================================="
+	@echo "[arch-test] Work directory: $(WORKDIR)"
+	@echo "[arch-test] Phase 1/3: building RTL simulator"
+	@echo "=========================================="
+	@$(MAKE) -C $(JV32_ROOT) --no-print-directory build-rtl
+	@echo "=========================================="
+	@echo "[arch-test] Phase 2/3: generating self-checking ELFs"
+	@echo "=========================================="
 	@$(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(DUT_CONFIG)/test_config.yaml \
 	    WORKDIR=$(WORKDIR) \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
-	    --jobs $(if $(JOBS),$(JOBS),$(shell nproc))
-	@echo "[arch-test] Running ELFs on JV32 RTL simulator..."
+	    --jobs $(ARCH_TEST_JOBS)
+	@elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
+	  echo "[arch-test] Phase 3/3: running $$elf_count ELF tests on JV32 RTL"; \
+	  echo "[arch-test] Logs: $(WORKDIR)/jv32-rv32imac/logs"; \
+	  echo "[arch-test] Summary: $(WORKDIR)/jv32-rv32imac/summary.log"
 	@cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
 	    "$(JV32_ROOT)/build/jv32soc" \
 	    "$(WORKDIR)/jv32-rv32imac/elfs"
@@ -123,5 +135,5 @@ help:
 	@echo "Variables:"
 	@echo "  DUT_CONFIG=<dir>   Path to DUT config dir (default: verif/config/jv32-rv32imac)"
 	@echo "  EXTENSIONS=<list>  Comma-separated extension list (default: all)"
-	@echo "  WORKDIR=<dir>      Build/output dir (default: verif/work)"
+	@echo "  WORKDIR=<dir>      Build/output dir (default: build/arch-test-work)"
 	@echo "  JOBS=<n>           Parallel build jobs (default: nproc)"

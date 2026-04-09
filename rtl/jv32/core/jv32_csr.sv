@@ -128,6 +128,7 @@ module jv32_csr (
         csr_rdata = 32'd0;
         case (csr_addr)
             CSR_MSTATUS:   csr_rdata = {19'd0, 2'b11, 3'd0, mstatus_mpie, 3'd0, mstatus_mie, 3'd0};
+            CSR_MSTATUSH:  csr_rdata = 32'h0;  // RV32 little-endian M-mode: MBE=0, all bits 0
             CSR_MISA:      csr_rdata = 32'h4000_1105; // RV32IMAC
             CSR_MIE:       csr_rdata = mie_reg;
             CSR_MTVEC:     csr_rdata = mtvec_reg;

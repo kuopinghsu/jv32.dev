@@ -61,16 +61,22 @@ params:
   REPORT_ENCODING_IN_MTVAL_ON_ILLEGAL_INSTRUCTION: true
   MTVAL_WIDTH: 32
 
-  # ── Misaligned load/store ─────────────────────────────────────────────────
-  # JV32 handles misaligned accesses in hardware as two-cycle bus transactions.
-  # No misaligned address exception is raised.
+  # ── Misaligned load/store / atomics ──────────────────────────────────────
+  # JV32 handles misaligned loads/stores transparently in hardware, but does
+  # not support misaligned AMOs or any special LR/SC VA-synonym behavior.
   MISALIGNED_LDST: true
   MISALIGNED_LDST_EXCEPTION_PRIORITY: low
   MISALIGNED_MAX_ATOMICITY_GRANULE_SIZE: 0
   MISALIGNED_SPLIT_STRATEGY: custom
+  MISALIGNED_AMO: false
+  LRSC_RESERVATION_STRATEGY: "reserve exactly enough to cover the access"
+  LRSC_FAIL_ON_VA_SYNONYM: false
+  LRSC_MISALIGNED_BEHAVIOR: "always raise access fault"
+  LRSC_FAIL_ON_NON_EXACT_LRSC: false
 
   # ── CSR / implementation IDs ──────────────────────────────────────────────
-  ARCH_ID_VALUE: 0x00000000   # marchid = 0 (custom/unregistered)
+  # `marchid` reads as 0 on JV32, which per the spec means "not implemented".
+  MARCHID_IMPLEMENTED: false
   IMP_ID_VALUE:  0x00000001   # mimpid  = 1
   VENDOR_ID_BANK:   0x0       # mvendorid[31:7] = 0
   VENDOR_ID_OFFSET: 0x0       # mvendorid[6:0]  = 0
@@ -87,14 +93,16 @@ params:
 
   # ── Sm params ─────────────────────────────────────────────────────────────
   PRECISE_SYNCHRONOUS_EXCEPTIONS: true
-  MARCHID_IMPLEMENTED: true
   MIMPID_IMPLEMENTED: true
   PMA_GRANULARITY: 2         # Minimum 4-byte granularity (AXI4-Lite byte-enables)
 
+  # JV32 does not implement `mcountinhibit`; all bits behave as read-only 0.
+  COUNTINHIBIT_EN: [false, false, false, false, false, false, false, false,
+                    false, false, false, false, false, false, false, false,
+                    false, false, false, false, false, false, false, false,
+                    false, false, false, false, false, false, false, false]
+
   # ── Zicntr params ─────────────────────────────────────────────────────────
   # JV32 implements mcycle, mcycleh, minstret, minstreth, cycle, cycleh,
-  # instret, instreth.  time/timeh alias to mcycle (not a real timer).
-  # No custom HPM counters (mhpmcounter3..31 = 0, mhpmevent3..31 = 0).
+  # instret, instreth. `time/timeh` alias to mcycle (not a real timer).
   TIME_CSR_IMPLEMENTED: true
-  MCYCLE_PRESENT: true
-  MINSTRET_PRESENT: true

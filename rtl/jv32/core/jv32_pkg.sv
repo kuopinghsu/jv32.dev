@@ -204,6 +204,7 @@ package jv32_pkg;
         CSR_MISA       = 12'h301,
         CSR_MIE        = 12'h304,
         CSR_MTVEC      = 12'h305,
+        CSR_MSTATUSH   = 12'h310,   // RV32 high bits of mstatus (MBE=0, all others 0)
         // Machine Trap Handling
         CSR_MSCRATCH   = 12'h340,
         CSR_MEPC       = 12'h341,
@@ -246,6 +247,7 @@ package jv32_pkg;
         logic [31:0] orig_instr;     // original encoding (16-bit zero-ext for RVC)
         logic        is_compressed;  // was originally 16-bit RVC
         logic        bp_taken;       // branch was predicted taken by BTFNT predictor
+        logic        ifetch_fault;   // AXI DECERR on I-fetch → EXC_INSTR_ACCESS_FAULT
     } if_ex_t;
 
     // EX → WB pipeline register

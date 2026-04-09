@@ -94,7 +94,10 @@ module axi_xbar #(
                 else begin rd_sel <= $clog2(N_SLAVES)'(s); rd_err <= 1'b0; end
             end
         end else begin
-            if (m_rvalid && m_rready) rd_active <= 1'b0;
+            if (m_rvalid && m_rready) begin
+                rd_active <= 1'b0;
+                rd_err    <= 1'b0;
+            end
         end
     end
 
@@ -110,12 +113,12 @@ module axi_xbar #(
         end
     end
 
-    // Route R back to master
-    assign m_rvalid = rd_err ? 1'b1 :
-                      (rd_active ? s_rvalid[rd_sel] : 1'b0);
-    assign m_rdata  = rd_active && !rd_err ? s_rdata[rd_sel] : 32'hDEAD_BEEF;
-    assign m_rresp  = rd_err ? 2'b11 :  // DECERR
-                      (rd_active ? s_rresp[rd_sel] : 2'b00);
+    // Route R back to master.
+    // Gate by rd_active so a completed DECERR does not leak into the next
+    // fetch/read cycle and look like a second stale response.
+    assign m_rvalid = rd_active ? (rd_err ? 1'b1 : s_rvalid[rd_sel]) : 1'b0;
+    assign m_rdata  = (rd_active && !rd_err) ? s_rdata[rd_sel] : 32'h0000_0000;
+    assign m_rresp  = rd_active ? (rd_err ? 2'b11 : s_rresp[rd_sel]) : 2'b00;
 
     // =====================================================================
     // Write channel routing
@@ -157,11 +160,10 @@ module axi_xbar #(
         end
     end
 
-    assign m_wready = wr_err ? 1'b1 :
-                      (wr_active ? s_wready[wr_sel] : 1'b0);
-    assign m_bvalid = wr_err ? 1'b1 :
-                      (wr_active ? s_bvalid[wr_sel] : 1'b0);
-    assign m_bresp  = wr_err ? 2'b11 :
-                      (wr_active ? s_bresp[wr_sel] : 2'b00);
+    // Gate m_wready and m_bvalid by wr_active to prevent stale wr_err
+    // from the previous transaction from leaking into a new one.
+    assign m_wready = wr_active ? (wr_err ? 1'b1 : s_wready[wr_sel]) : 1'b0;
+    assign m_bvalid = wr_active ? (wr_err ? 1'b1 : s_bvalid[wr_sel]) : 1'b0;
+    assign m_bresp  = wr_active ? (wr_err ? 2'b11 : s_bresp[wr_sel]) : 2'b00;
 
 endmodule
