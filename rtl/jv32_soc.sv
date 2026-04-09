@@ -13,7 +13,7 @@
 // Memory map
 // ----------
 //  0x8000_0000  IRAM (TCM, inside jv32_top, 256 KB)  — I-fetch + data read
-//  0xC000_0000  DRAM (TCM, inside jv32_top, 64 KB)  — data read/write
+//  0xC000_0000  DRAM (TCM, inside jv32_top, 256 KB)  — data read/write
 //  0x2001_0000  UART
 //  0x0200_0000  CLIC / CLINT
 //  0x4000_0000  Magic exit + MMIO
@@ -31,17 +31,18 @@ import jv32_pkg::*;
 `endif
 
 module jv32_soc #(
-    parameter int unsigned CLK_FREQ       = 100_000_000,
-    parameter int unsigned BAUD_RATE      = 115_200,
+    parameter int unsigned CLK_FREQ        = 100_000_000,
+    parameter int unsigned BAUD_RATE       = 115_200,
     parameter int unsigned UART_FIFO_DEPTH = 16,        // TX/RX FIFO depth (power of 2)
-    parameter int unsigned IRAM_SIZE      = 262144,     // bytes (256 KB)
-    parameter int unsigned DRAM_SIZE      = 262144,     // bytes (256 KB)
-    parameter bit          FAST_MUL    = 1'b1,
-    parameter bit          FAST_DIV    = 1'b1,
-    parameter bit          FAST_SHIFT  = 1'b1,
-    parameter bit          BP_EN       = 1'b1,
-    parameter logic [31:0] BOOT_ADDR   = 32'h8000_0000,
-    parameter logic [31:0] DRAM_BASE   = 32'hC000_0000
+    parameter int unsigned IRAM_SIZE       = 256*1024,  // bytes (256 KB)
+    parameter int unsigned DRAM_SIZE       = 256*1024,  // bytes (256 KB)
+    parameter bit          FAST_MUL        = 1'b1,
+    parameter bit          FAST_DIV        = 1'b1,
+    parameter bit          FAST_SHIFT      = 1'b1,
+    parameter bit          BP_EN           = 1'b1,
+    parameter logic [31:0] BOOT_ADDR       = 32'h8000_0000,
+    parameter logic [31:0] IRAM_BASE       = 32'h8000_0000,
+    parameter logic [31:0] DRAM_BASE       = 32'hC000_0000
 ) (
     input  logic        clk,
     input  logic        rst_n,

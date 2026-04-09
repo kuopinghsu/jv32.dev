@@ -16,6 +16,7 @@ module tb_jv32_soc #(
     parameter bit          FAST_SHIFT= 1'b1,
     parameter bit          BP_EN     = 1'b1,
     parameter logic [31:0] BOOT_ADDR = 32'h8000_0000,
+    parameter logic [31:0] IRAM_BASE = 32'h8000_0000,
     parameter logic [31:0] DRAM_BASE = 32'hC000_0000
 )(
     input  logic clk,
@@ -43,8 +44,7 @@ module tb_jv32_soc #(
     export "DPI-C" function mem_write_byte;
     export "DPI-C" function mem_read_byte;
 
-    localparam int unsigned IRAM_BASE  = 32'h8000_0000;
-    localparam int unsigned IRAM_LIMIT = 32'h8000_0000 + IRAM_SIZE;
+    localparam int unsigned IRAM_LIMIT = IRAM_BASE + IRAM_SIZE;
     localparam int unsigned DRAM_LIMIT = DRAM_BASE + DRAM_SIZE;
 
     function void mem_write_byte(input int addr, input byte data);
@@ -133,6 +133,7 @@ module tb_jv32_soc #(
         .FAST_SHIFT      (FAST_SHIFT),
         .BP_EN           (BP_EN),
         .BOOT_ADDR       (BOOT_ADDR),
+        .IRAM_BASE       (IRAM_BASE),
         .DRAM_BASE       (DRAM_BASE)
     ) u_soc (
         .clk            (clk),

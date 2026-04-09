@@ -22,11 +22,11 @@ import jv32_pkg::*;
 `endif
 
 module jv32_core #(
-    parameter bit        FAST_MUL   = 1'b1,
-    parameter bit        FAST_DIV   = 1'b1,
-    parameter bit        FAST_SHIFT = 1'b1,
-    parameter bit        BP_EN      = 1'b1,
-    parameter logic [31:0] BOOT_ADDR = 32'h8000_0000
+    parameter bit          FAST_MUL   = 1'b1,
+    parameter bit          FAST_DIV   = 1'b1,
+    parameter bit          FAST_SHIFT = 1'b1,
+    parameter bit          BP_EN      = 1'b1,
+    parameter logic [31:0] BOOT_ADDR  = 32'h8000_0000
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -538,10 +538,10 @@ module jv32_core #(
     logic msa_cross;    // access spans two aligned words: needs 2 accesses
     assign msa_detect = !ex_wb_r.exception && !ex_wb_r.is_amo &&
                         ((ex_wb_r.mem_read || ex_wb_r.mem_write)) &&
-                        ((ex_wb_r.mem_op == MEM_HALF && ex_wb_r.mem_addr[0]) ||
+                        (((ex_wb_r.mem_op == MEM_HALF || ex_wb_r.mem_op == MEM_HALF_U) && ex_wb_r.mem_addr[0]) ||
                          (ex_wb_r.mem_op == MEM_WORD && ex_wb_r.mem_addr[1:0] != 2'b00));
     assign msa_within = msa_detect &&
-                        (ex_wb_r.mem_op == MEM_HALF && ex_wb_r.mem_addr[1:0] == 2'b01);
+                        ((ex_wb_r.mem_op == MEM_HALF || ex_wb_r.mem_op == MEM_HALF_U) && ex_wb_r.mem_addr[1:0] == 2'b01);
     assign msa_cross  = msa_detect && !msa_within;
 
     // Precomputed shift amounts and wstrb masks for cross-word accesses
@@ -554,7 +554,7 @@ module jv32_core #(
     logic [31:0] msa_hi_wdata;   // write data for high word (cross-word store)
     assign msa_lo_shift    = {1'b0, ex_wb_r.mem_addr[1:0], 3'b0};
     assign msa_hi_shift    = 6'd32 - msa_lo_shift;
-    assign msa_base_wstrb  = (ex_wb_r.mem_op == MEM_HALF) ? 4'b0011 : 4'b1111;
+    assign msa_base_wstrb  = ((ex_wb_r.mem_op == MEM_HALF) || (ex_wb_r.mem_op == MEM_HALF_U)) ? 4'b0011 : 4'b1111;
     assign msa_lo_wstrb    = msa_base_wstrb << ex_wb_r.mem_addr[1:0];
     assign msa_hi_wstrb    = msa_base_wstrb >> (3'd4 - {1'b0, ex_wb_r.mem_addr[1:0]});
     assign msa_lo_wdata    = ex_wb_r.store_data << msa_lo_shift[4:0];
@@ -659,14 +659,14 @@ module jv32_core #(
                 // -------------------------------------------------------
                 // Within-word misaligned halfword (A[1:0]=01):
                 // Single read/write to the containing aligned word.
-                // Byte extraction is fixed in load_result below.
+                // For stores: shift data so low byte lands at byte 1, high at byte 2.
                 // -------------------------------------------------------
                 dmem_req_valid = 1'b1;
                 dmem_req_addr  = {ex_wb_r.mem_addr[31:2], 2'b00};
                 if (ex_wb_r.mem_write) begin
                     dmem_req_write = 1'b1;
-                    dmem_req_wdata = ex_wb_r.store_data;  // already duplicated
-                    dmem_req_wstrb = 4'b0110;              // bytes 1 & 2
+                    dmem_req_wdata = msa_lo_wdata;  // store_data << 8: [lo,hi] at bytes [1,2]
+                    dmem_req_wstrb = 4'b0110;        // bytes 1 & 2
                 end
                 if (!dmem_resp_valid) dmem_stall = 1'b1;
             end else if (ex_wb_r.mem_read) begin

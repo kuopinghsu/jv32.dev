@@ -52,9 +52,10 @@ module jv32_top #(
     parameter bit          FAST_DIV   = 1'b1,
     parameter bit          FAST_SHIFT = 1'b1,
     parameter bit          BP_EN      = 1'b1,
-    parameter int unsigned IRAM_SIZE  = 262144,      // bytes, power-of-2 (256 KB)
-    parameter int unsigned DRAM_SIZE  = 262144,      // bytes, power-of-2 (256 KB)
+    parameter int unsigned IRAM_SIZE  = 256*1024,   // bytes, power-of-2 (256 KB)
+    parameter int unsigned DRAM_SIZE  = 256*1024,   // bytes, power-of-2 (256 KB)
     parameter logic [31:0] BOOT_ADDR  = 32'h8000_0000,
+    parameter logic [31:0] IRAM_BASE  = 32'h8000_0000,
     parameter logic [31:0] DRAM_BASE  = 32'hC000_0000
 ) (
     input  logic        clk,
@@ -143,7 +144,7 @@ module jv32_top #(
 
     // Address decode: power-of-2 regions
     function automatic logic in_iram(input logic [31:0] addr);
-        return (addr & ~(32'(IRAM_SIZE) - 32'h1)) == (BOOT_ADDR & ~(32'(IRAM_SIZE) - 32'h1));
+        return (addr & ~(32'(IRAM_SIZE) - 32'h1)) == (IRAM_BASE & ~(32'(IRAM_SIZE) - 32'h1));
     endfunction
     function automatic logic in_dram(input logic [31:0] addr);
         return (addr & ~(32'(DRAM_SIZE) - 32'h1)) == (DRAM_BASE & ~(32'(DRAM_SIZE) - 32'h1));
