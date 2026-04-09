@@ -3,7 +3,7 @@
 // Project: JV32 RISC-V Processor
 // Description: Verilator C++ Testbench Driver
 //
-// Usage: ./sim.exe <elf> [--trace <file.fst>] [--max-cycles <N>]
+// Usage: ./sim.exe <elf> [--trace <file.fst>] [--max-cycles <N>] [--timeout=<sec>]
 // ============================================================================
 
 #include <verilated.h>
@@ -20,6 +20,7 @@
 #include <iostream>
 #include <fstream>
 #include <inttypes.h>
+#include <chrono>
 #include <csignal>
 #include "riscv-dis.h"
 
@@ -59,7 +60,6 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
 
 #define CLK_PERIOD_NS  10ULL
 #define CLK_HALF_PS    (CLK_PERIOD_NS * 500ULL)   // half period in ps
-#define MAX_CYCLES_DEF 10000000ULL
 
 // Magic exit address
 #define MAGIC_EXIT_ADDR  0x40000000U
@@ -113,10 +113,11 @@ int main(int argc, char** argv) {
     // -------------------------------------------------------------------------
     // Parse arguments
     // -------------------------------------------------------------------------
-    const char* elf_path      = nullptr;
-    const char* trace_file    = nullptr;
-    const char* rtl_trace_file= nullptr;
-    uint64_t    max_cycles    = MAX_CYCLES_DEF;
+    const char* elf_path        = nullptr;
+    const char* trace_file      = nullptr;
+    const char* rtl_trace_file  = nullptr;
+    uint64_t    max_cycles      = 0;   // 0 = unlimited
+    uint64_t    timeout_seconds = 0;   // 0 = no timeout
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i+1 < argc) {
@@ -125,6 +126,8 @@ int main(int argc, char** argv) {
             rtl_trace_file = argv[++i];
         } else if (strcmp(argv[i], "--max-cycles") == 0 && i+1 < argc) {
             max_cycles = (uint64_t)strtoull(argv[++i], nullptr, 10);
+        } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
+            timeout_seconds = (uint64_t)strtoull(argv[i] + 10, nullptr, 10);
         } else if (!elf_path) {
             elf_path = argv[i];
         } else {
@@ -134,7 +137,7 @@ int main(int argc, char** argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--max-cycles <N>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--max-cycles <N>] [--timeout=<sec>]\n", argv[0]);
         return 1;
     }
 
@@ -201,8 +204,21 @@ int main(int argc, char** argv) {
     // -------------------------------------------------------------------------
     uint64_t cycle = 0;
     uint64_t instret = 0;
+    bool     timeout_hit = false;
+    auto     time_begin  = std::chrono::steady_clock::now();
 
-    while (!g_abort && !g_exit_requested && !ctx->gotFinish() && cycle < max_cycles) {
+    while (!g_abort && !g_exit_requested && !ctx->gotFinish() &&
+           (max_cycles == 0 || cycle < max_cycles)) {
+        if (timeout_seconds > 0) {
+            uint64_t elapsed = (uint64_t)std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - time_begin).count();
+            if (elapsed >= timeout_seconds) {
+                fprintf(stderr, "\n*** TIMEOUT: Simulation exceeded %llu seconds (--timeout) ***\n",
+                        (unsigned long long)timeout_seconds);
+                timeout_hit = true;
+                break;
+            }
+        }
         tick(dut, tfp);
         cycle++;
 
@@ -232,7 +248,8 @@ int main(int argc, char** argv) {
     static constexpr uint64_t UART_IDLE_THRESH = 160;
     if (g_exit_requested && !g_abort) {
         uint64_t idle_count = 0;
-        while (idle_count < UART_IDLE_THRESH && cycle < max_cycles) {
+        while (idle_count < UART_IDLE_THRESH &&
+               (max_cycles == 0 || cycle < max_cycles)) {
             tick(dut, tfp);
             cycle++;
             if (dut->uart_tx_o_monitor) idle_count++;
@@ -253,7 +270,11 @@ int main(int argc, char** argv) {
     if (tfp) delete tfp;
 
     if (g_exit_requested) return g_exit_code;
-    fprintf(stderr, "[SIM] TIMEOUT or max-cycles reached\n");
+    if (timeout_hit) {
+        fprintf(stderr, "[SIM] Terminated due to --timeout\n");
+        return 1;
+    }
+    fprintf(stderr, "[SIM] max-cycles reached\n");
     return 1;
 }
 

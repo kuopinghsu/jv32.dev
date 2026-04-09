@@ -459,8 +459,13 @@ module jv32_top #(
             // Core I-fetch used IRAM this cycle (D-path didn't steal it)
             iram_used_by_core_i_d <= core_if_iram
                                      & ~(core_d_iram_re | core_d_iram_we);
-            // Core D-path used IRAM this cycle
-            iram_used_by_core_d_d <= core_d_iram_re | core_d_iram_we;
+            // Core D-path used IRAM this cycle.
+            // Gate out the spurious re-assertion that occurs on the response cycle:
+            // when iram_used_by_core_d_d is already high (TCM response in flight),
+            // ex_wb_r still holds the completing instruction and would re-drive
+            // core_d_iram_re/we with the same old address, causing the SRAM to
+            // capture the old address again and return stale data to the next load.
+            iram_used_by_core_d_d <= (core_d_iram_re | core_d_iram_we) & ~iram_used_by_core_d_d;
             // Core D-path used DRAM this cycle.
             // Gate out the spurious re-assertion that occurs on the response cycle:
             // when dram_used_by_core_d_d is already high (TCM response in flight),

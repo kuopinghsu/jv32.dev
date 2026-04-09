@@ -159,10 +159,14 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 # ============================================================================
 # Phony targets
 # ============================================================================
-.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% sim-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-% arch-test-% FORCE
+.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
+        rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl \
+        lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
+        rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
+        compare-freertos-% compare-freertos-all freertos-list-tests
 
 # Default: build RTL simulator
-all: build-rtl
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
 
 # ============================================================================
 # Build RTL simulator
@@ -300,9 +304,11 @@ lint-svlint:
 # Optional:
 #   WAVE=fst    — dump FST waveform to $(BUILD_DIR)/jv32soc.fst
 #   TRACE=1     — print instruction trace
-#   MAX_CYCLES=N — stop after N cycles (default: 10 000 000)
+#   MAX_CYCLES=N — stop after N cycles (default: unlimited)
+#   TIMEOUT=N    — wall-clock timeout in seconds (default: 120; 0=no limit)
 # ============================================================================
-TIMEOUT_ARG = $(if $(MAX_CYCLES),--max-cycles=$(MAX_CYCLES))
+TIMEOUT     ?= 120
+TIMEOUT_ARG  = $(if $(MAX_CYCLES),--max-cycles=$(MAX_CYCLES)) $(if $(TIMEOUT),--timeout=$(TIMEOUT))
 
 sim: build-rtl
 ifndef ELF
@@ -322,7 +328,7 @@ endif
 
 # Convenience pattern: build sw/<test> then simulate with RTL
 # Examples: make rtl-hello, make rtl-coremark, make rtl-dhry
-# Optional: WAVE=fst, TRACE=1, MAX_CYCLES=N
+# Optional: WAVE=fst, TRACE=1, MAX_CYCLES=N, TIMEOUT=N
 rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	@echo "=========================================="
 	@echo "Running test '$*' with RTL simulator"
@@ -346,9 +352,80 @@ $(BUILD_DIR)/%.elf:
 # Software build
 # ============================================================================
 
+# Discover top-level software tests under sw/ (exclude shared support dirs).
+SW_TESTS := $(sort $(notdir $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d \
+                  ! -name common ! -name include 2>/dev/null)))
+SW_TEST_COUNT := $(words $(SW_TESTS))
+
 # Build all software tests
 sw-all:
 	@$(MAKE) -C $(SW_DIR) --no-print-directory all BUILD_DIR=$(BUILD_DIR_ABS)
+
+# Run all software tests with the RTL simulator
+rtl-all: build-rtl
+	@echo "=========================================="
+	@echo "Running all software tests with RTL simulator"
+	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
+	@echo "=========================================="
+	@failed=0; idx=0; \
+	for test in $(SW_TESTS); do \
+		idx=$$((idx+1)); \
+		echo ""; \
+		echo "[rtl-all $$idx/$(SW_TEST_COUNT)] $$test"; \
+		if ! $(MAKE) --no-print-directory rtl-$$test; then \
+			failed=1; \
+		fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "rtl-all: one or more tests failed."; \
+		exit 1; \
+	fi; \
+	echo "rtl-all: all $(SW_TEST_COUNT) tests passed."
+
+# Run all software tests with the software simulator
+sim-all: sim-build
+	@echo "=========================================="
+	@echo "Running all software tests with software simulator"
+	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
+	@echo "=========================================="
+	@failed=0; idx=0; \
+	for test in $(SW_TESTS); do \
+		idx=$$((idx+1)); \
+		echo ""; \
+		echo "[sim-all $$idx/$(SW_TEST_COUNT)] $$test"; \
+		if ! $(MAKE) --no-print-directory sim-$$test; then \
+			failed=1; \
+		fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "sim-all: one or more tests failed."; \
+		exit 1; \
+	fi; \
+	echo "sim-all: all $(SW_TEST_COUNT) tests passed."
+
+# Compare software-vs-RTL traces for all software tests
+compare-all: $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo "Comparing traces for all software tests"
+	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
+	@echo "=========================================="
+	@failed=0; idx=0; \
+	for test in $(SW_TESTS); do \
+		idx=$$((idx+1)); \
+		echo ""; \
+		echo "[compare-all $$idx/$(SW_TEST_COUNT)] $$test"; \
+		if ! $(MAKE) --no-print-directory compare-$$test; then \
+			failed=1; \
+		fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "compare-all: one or more tests failed."; \
+		exit 1; \
+	fi; \
+	echo "compare-all: all $(SW_TEST_COUNT) tests passed."
 
 # Build a specific software test: make sw-hello, make sw-coremark, make sw-dhry
 sw-%:
@@ -376,8 +453,8 @@ sim-build: $(JV32SIM)
 
 # Convenience pattern: build sw/<test>.elf then simulate with software simulator
 # Examples: make sim-hello, make sim-trap_test
-# Optional: MAX_INSNS=N
-SIM_MAX_INSNS_ARG = $(if $(MAX_INSNS),--max-insns=$(MAX_INSNS))
+# Optional: MAX_INSNS=N, TIMEOUT=N
+SIM_MAX_INSNS_ARG = $(if $(MAX_INSNS),--max-insns=$(MAX_INSNS)) $(if $(TIMEOUT),--timeout=$(TIMEOUT))
 
 sim-%: $(BUILD_DIR)/%.elf $(JV32SIM)
 	@echo "=========================================="
@@ -415,6 +492,116 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	    $(BUILD_DIR)/sim_trace.txt \
 	    $(BUILD_DIR)/rtl_trace.txt \
 	    || exit 1
+
+# ============================================================================
+# FreeRTOS tests
+# ============================================================================
+FREERTOS_DIR = rtos/freertos
+
+# Build a FreeRTOS ELF via the FreeRTOS Makefile
+$(BUILD_DIR)/freertos-%.elf: FORCE
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
+freertos-list-tests:
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory list-tests
+
+# Run a FreeRTOS test with the RTL simulator
+rtl-freertos-%: build-rtl $(BUILD_DIR)/freertos-%.elf
+	@echo "=========================================="
+	@echo "Running FreeRTOS test '$*' with RTL simulator"
+	@echo "=========================================="
+	@cd $(BUILD_DIR) && ./jv32soc \
+	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
+	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
+	    $(TIMEOUT_ARG) \
+	    freertos-$*.elf
+	@echo "=========================================="
+	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
+	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+
+# Run all FreeRTOS tests with the RTL simulator
+rtl-freertos-all: build-rtl
+	@echo "=========================================="
+	@echo "Running all FreeRTOS tests with RTL simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(FREERTOS_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[rtl-freertos-all] $$t"; \
+		if ! $(MAKE) --no-print-directory rtl-freertos-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "rtl-freertos-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "rtl-freertos-all: all tests passed."
+
+# Run a FreeRTOS test with the software simulator
+sim-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM)
+	@echo "=========================================="
+	@echo "Running FreeRTOS test '$*' with software simulator"
+	@echo "=========================================="
+	$(JV32SIM) $(SIM_MAX_INSNS_ARG) $(BUILD_DIR)/freertos-$*.elf
+	@echo "=========================================="
+	@echo "Done."
+	@echo "=========================================="
+
+# Run all FreeRTOS tests with the software simulator
+sim-freertos-all: sim-build
+	@echo "=========================================="
+	@echo "Running all FreeRTOS tests with software simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(FREERTOS_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[sim-freertos-all] $$t"; \
+		if ! $(MAKE) --no-print-directory sim-freertos-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "sim-freertos-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "sim-freertos-all: all tests passed."
+
+# Compare software-vs-RTL traces for a FreeRTOS test
+compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo " JV32 FreeRTOS Trace Comparison: $*"
+	@echo "=========================================="
+	@echo ""
+	@echo "[1/3] Running software simulator..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/freertos-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running RTL simulator..."
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
+	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[3/3] Comparing traces..."
+	@python3 scripts/trace_compare.py \
+	    $(BUILD_DIR)/sim_trace.txt \
+	    $(BUILD_DIR)/rtl_trace.txt \
+	    || exit 1
+
+# Compare software-vs-RTL traces for all FreeRTOS tests
+compare-freertos-all:
+	@echo "=========================================="
+	@echo "Comparing FreeRTOS traces for all tests"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(FREERTOS_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[compare-freertos-all] $$t"; \
+		if ! $(MAKE) --no-print-directory compare-freertos-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "compare-freertos-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "compare-freertos-all: all tests passed."
 
 # ============================================================================
 # Arch-test (ACT4) — delegated to verif/Makefile
@@ -468,8 +655,11 @@ help:
 	@echo "  build-rtl            Build Verilator RTL simulator (default)"
 	@echo "  sim ELF=<path>       Run simulation with given ELF"
 	@echo "  sim-<test>           Build & run <test>.elf with software simulator"
+	@echo "  sim-all              Build & run all tests under sw/ with software simulator"
 	@echo "  rtl-<test>           Build & run <test>.elf with RTL simulator"
+	@echo "  rtl-all              Build & run all tests under sw/ with RTL simulator"
 	@echo "  compare-<test>       Build & compare traces: software vs RTL simulator"
+	@echo "  compare-all          Build & compare traces for all tests under sw/"
 	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
 	@echo "  arch-test-run        Generate self-checking ELFs and run on JV32 RTL sim"
 	@echo "  arch-test-<tgt>      Forward <tgt> to verif/Makefile (see make -C verif help)"
@@ -487,7 +677,8 @@ help:
 	@echo "Simulation variables:"
 	@echo "  ELF=<path>           ELF to load (required for 'sim')"
 	@echo "  WAVE=fst|vcd         Enable waveform dump"
-	@echo "  MAX_CYCLES=<N>       Cycle limit (default: 10 000 000)"
+	@echo "  MAX_CYCLES=<N>       RTL cycle limit (default: unlimited)"
+	@echo "  TIMEOUT=<sec>        Wall-clock timeout in seconds (default: 120; 0=no limit)"
 	@echo "  DEBUG=1              Enable RTL debug output"
 	@echo ""
 	@echo "Toolchain variables (set in env.config or command line):"

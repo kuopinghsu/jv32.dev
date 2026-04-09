@@ -7,7 +7,7 @@
 // filtered trace format (only retired instructions that write rd != x0).
 //
 // Usage:
-//   ./jv32sim [--trace <file>] [--max-insns <N>] [--debug=<N>] <elf>
+//   ./jv32sim [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>
 //
 // Debug levels (--debug=N):
 //   0  silent — no informational messages (default)
@@ -17,6 +17,7 @@
 
 #include <cassert>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,9 +34,9 @@
 // Memory map
 // ============================================================================
 static const uint32_t IRAM_BASE  = 0x80000000U;
-static const uint32_t IRAM_SIZE  = 0x00010000U;  // 64 KiB
+static const uint32_t IRAM_SIZE  = 256*1024;
 static const uint32_t DRAM_BASE  = 0xC0000000U;
-static const uint32_t DRAM_SIZE  = 0x00010000U;  // 64 KiB
+static const uint32_t DRAM_SIZE  = 256*1024;
 static const uint32_t CLIC_BASE  = 0x02000000U;
 static const uint32_t UART_BASE  = 0x20010000U;
 static const uint32_t MAGIC_BASE = 0x40000000U;
@@ -158,7 +159,8 @@ static uint8_t  csr_mintstatus;
 // Trace
 static FILE  *trace_fp   = nullptr;
 static bool   trace_on   = false;
-static uint64_t max_insns = 0;  // 0 = unlimited
+static uint64_t max_insns        = 0;  // 0 = unlimited
+static uint64_t timeout_seconds  = 0;  // 0 = no timeout
 
 // Debug level (0=silent, 1=info, 2=verbose)
 static int debug_level = 0;
@@ -838,12 +840,12 @@ static void step() {
     case 0x63: {
         bool taken = false;
         switch (funct3) {
-        case 0: taken = (a == b);                                 break; // BEQ
-        case 1: taken = (a != b);                                 break; // BNE
-        case 4: taken = ((int32_t)a < (int32_t)b);               break; // BLT
-        case 5: taken = ((int32_t)a >= (int32_t)b);              break; // BGE
-        case 6: taken = (a < b);                                  break; // BLTU
-        case 7: taken = (a >= b);                                 break; // BGEU
+        case 0: taken = (a == b);                    break; // BEQ
+        case 1: taken = (a != b);                    break; // BNE
+        case 4: taken = ((int32_t)a < (int32_t)b);   break; // BLT
+        case 5: taken = ((int32_t)a >= (int32_t)b);  break; // BGE
+        case 6: taken = (a < b);                     break; // BLTU
+        case 7: taken = (a >= b);                    break; // BGEU
         default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
         }
         if (taken) new_pc = instr_pc + imm_b();
@@ -854,21 +856,16 @@ static void step() {
     // ── Loads ─────────────────────────────────────────────────────────────
     case 0x03: {
         uint32_t addr = a + imm_i();
-        // misalignment check
-        int sz = (funct3 == 2) ? 4 : (funct3 == 1 || funct3 == 5) ? 2 : 1;
-        if (!check_align(addr, sz, true)) break;
-        uint32_t raw = mem_read(addr & ~3u, 4);
-        uint32_t byte_off = addr & 3u;
+        // JV32 handles misaligned loads transparently, so model loads directly
+        // at the requested byte address instead of raising misalignment traps.
         switch (funct3) {
-        case 0: result = (uint32_t)sign_extend((raw >> (byte_off * 8)) & 0xFF, 8);  break; // LB
-        case 1: result = (uint32_t)sign_extend((raw >> (byte_off * 8)) & 0xFFFF, 16); break; // LH
-        case 2: result = raw; if (byte_off) result = mem_read(addr, 4); break; // LW (word-aligned expected)
-        case 4: result = (raw >> (byte_off * 8)) & 0xFF;     break; // LBU
-        case 5: result = (raw >> (byte_off * 8)) & 0xFFFF;   break; // LHU
-        default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
+        case 0: result = (uint32_t)sign_extend(mem_read(addr, 1) & 0xFFu, 8);      break; // LB
+        case 1: result = (uint32_t)sign_extend(mem_read(addr, 2) & 0xFFFFu, 16);   break; // LH
+        case 2: result = mem_read(addr, 4);                                        break; // LW
+        case 4: result = mem_read(addr, 1) & 0xFFu;                                break; // LBU
+        case 5: result = mem_read(addr, 2) & 0xFFFFu;                              break; // LHU
+        default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;   break;
         }
-        // fix LW for aligned access
-        if (funct3 == 2 && byte_off == 0) result = mem_read(addr, 4);
         do_write = !exc_pending;
         if (do_write) {
             trace_has_mem  = true;
@@ -881,18 +878,22 @@ static void step() {
     // ── Stores ────────────────────────────────────────────────────────────
     case 0x23: {
         uint32_t addr = a + imm_s();
-        int sz = (funct3 == 2) ? 4 : (funct3 == 1) ? 2 : 1;
-        if (!check_align(addr, sz, false)) break;
+        // JV32 handles misaligned stores transparently as byte-lane writes.
         switch (funct3) {
-        case 0: mem_write(addr, b & 0xFF, 1);   break; // SB
-        case 1: mem_write(addr, b & 0xFFFF, 2); break; // SH
-        case 2: mem_write(addr, b, 4);           break; // SW
+        case 0: mem_write(addr, b & 0xFFu,   1); break; // SB
+        case 1: mem_write(addr, b & 0xFFFFu, 2); break; // SH
+        case 2: mem_write(addr, b,           4); break; // SW
         default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
         }
         if (!exc_pending) {
             trace_has_mem  = true;
             trace_mem_addr = addr;
-            trace_mem_val  = b;
+            // Mask to store width to match RTL trace format: SB→byte, SH→halfword, SW→word
+            switch (funct3) {
+            case 0:  trace_mem_val = b & 0xFFu;   break; // SB
+            case 1:  trace_mem_val = b & 0xFFFFu; break; // SH
+            default: trace_mem_val = b;            break; // SW
+            }
             trace_is_store = true;
         }
         // stores do NOT write rd
@@ -903,12 +904,12 @@ static void step() {
     case 0x13: {
         uint32_t imm = imm_i();
         switch (funct3) {
-        case 0: result = a + imm;                                        break; // ADDI
-        case 2: result = ((int32_t)a < (int32_t)imm) ? 1u : 0u;         break; // SLTI
-        case 3: result = (a < imm) ? 1u : 0u;                            break; // SLTIU
-        case 4: result = a ^ imm;                                         break; // XORI
-        case 6: result = a | imm;                                         break; // ORI
-        case 7: result = a & imm;                                         break; // ANDI
+        case 0: result = a + imm;                               break; // ADDI
+        case 2: result = ((int32_t)a < (int32_t)imm) ? 1u : 0u; break; // SLTI
+        case 3: result = (a < imm) ? 1u : 0u;                   break; // SLTIU
+        case 4: result = a ^ imm;                               break; // XORI
+        case 6: result = a | imm;                               break; // ORI
+        case 7: result = a & imm;                               break; // ANDI
         case 1: // SLLI
             if (funct7 == 0) result = a << (imm & 0x1Fu);
             else { exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; }
@@ -941,16 +942,16 @@ static void step() {
             do_write = true;
         } else {
             switch ((funct7 << 3) | funct3) {
-            case 0x000: result = a + b;                                    break; // ADD
-            case 0x100: result = a - b;                                    break; // SUB
-            case 0x001: result = a << (b & 0x1Fu);                        break; // SLL
+            case 0x000: result = a + b;                                  break; // ADD
+            case 0x100: result = a - b;                                  break; // SUB
+            case 0x001: result = a << (b & 0x1Fu);                       break; // SLL
             case 0x002: result = ((int32_t)a < (int32_t)b) ? 1u : 0u;    break; // SLT
-            case 0x003: result = (a < b) ? 1u : 0u;                       break; // SLTU
-            case 0x004: result = a ^ b;                                    break; // XOR
-            case 0x005: result = a >> (b & 0x1Fu);                        break; // SRL
+            case 0x003: result = (a < b) ? 1u : 0u;                      break; // SLTU
+            case 0x004: result = a ^ b;                                  break; // XOR
+            case 0x005: result = a >> (b & 0x1Fu);                       break; // SRL
             case 0x105: result = (uint32_t)((int32_t)a >> (b & 0x1Fu));  break; // SRA
-            case 0x006: result = a | b;                                    break; // OR
-            case 0x007: result = a & b;                                    break; // AND
+            case 0x006: result = a | b;                                  break; // OR
+            case 0x007: result = a & b;                                  break; // AND
             default:
                 exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
                 break;
@@ -1145,6 +1146,8 @@ int main(int argc, char **argv) {
             trace_path = argv[++i];
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
             max_insns = (uint64_t)strtoull(argv[++i], nullptr, 10);
+        } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
+            timeout_seconds = (uint64_t)strtoull(argv[i] + 10, nullptr, 10);
         } else if (strncmp(argv[i], "--debug=", 8) == 0) {
             debug_level = (int)strtol(argv[i] + 8, nullptr, 10);
         } else if (strcmp(argv[i], "--debug") == 0 && i + 1 < argc) {
@@ -1158,7 +1161,7 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--debug=<N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
         return 1;
     }
 
@@ -1199,11 +1202,22 @@ int main(int argc, char **argv) {
     pc = entry;
 
     // Run
+    auto time_begin = std::chrono::steady_clock::now();
     while (running) {
         if (max_insns && insn_count >= max_insns) {
             DBG(1, "Reached max-insns limit (%llu)\n",
                     (unsigned long long)max_insns);
             break;
+        }
+        if (timeout_seconds > 0) {
+            uint64_t elapsed = (uint64_t)std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - time_begin).count();
+            if (elapsed >= timeout_seconds) {
+                fprintf(stderr, "\n*** TIMEOUT: Simulation exceeded %llu seconds (--timeout) ***\n",
+                        (unsigned long long)timeout_seconds);
+                exit_code = 1;
+                break;
+            }
         }
         step();
     }

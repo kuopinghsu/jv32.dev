@@ -6,7 +6,8 @@
  * Tests covered:
  *   1. ecall              – mcause = 11 (JV_EXC_ECALL_M)
  *   2. ebreak             – mcause =  3 (JV_EXC_BREAKPOINT)
- *   3. Misaligned load    – mcause =  4 (JV_EXC_LOAD_MISALIGN)
+ *   3. Misaligned load    – accepted either as a legacy trap or as
+ *                           transparent hardware completion with correct data
  *   4. Illegal instruction– mcause =  2 (JV_EXC_ILLEGAL_INSN)
  *   5. Timer interrupt    – mcause =  7 (JV_CAUSE_MTI)
  *
@@ -102,14 +103,25 @@ int main(void)
     /* ── Test 3: misaligned load (DRAM base + 1) ───────────────────── */
     jv_uart_puts("Test 3: misaligned load\n");
     {
-        volatile uint32_t sink;
+        volatile uint32_t *dram = (volatile uint32_t *)JV_DRAM_BASE;
+        volatile uint32_t sink = 0;
+
+        /* Seed known bytes so transparent misaligned support can be checked
+         * deterministically. Little-endian word load at base+1 should read
+         * bytes 0x22,0x33,0x44,0x55 → 0x55443322.
+         */
+        dram[0] = 0x44332211u;
+        dram[1] = 0x88776655u;
+
         __asm__ volatile(
             "lw %0, 1(%1)"
             : "=r"(sink)
-            : "r"((uintptr_t)JV_DRAM_BASE)
+            : "r"((uintptr_t)dram)
             : "memory"
         );
-        (void)sink;
+
+        if (!g_trap_misalign && sink == 0x55443322u)
+            g_trap_misalign = 1;
     }
 
     /* ── Test 4: illegal instruction ───────────────────────────────── */

@@ -124,6 +124,14 @@ module jv32_csr (
     // =====================================================================
     // CSR read
     // =====================================================================
+    // Forward instret_inc into counter reads so the EX-stage sees the count
+    // including the preceding WB-stage instruction's retirement, matching
+    // the software-simulator model.
+    logic [63:0] mcycle_cnt_fwd;
+    logic [63:0] minstret_cnt_fwd;
+    assign mcycle_cnt_fwd   = mcycle_cnt   + {63'h0, instret_inc};
+    assign minstret_cnt_fwd = minstret_cnt + {63'h0, instret_inc};
+
     always_comb begin
         csr_rdata = 32'd0;
         case (csr_addr)
@@ -145,16 +153,20 @@ module jv32_csr (
             CSR_MINTSTATUS:csr_rdata = {mintstatus_mil, 24'd0};
             CSR_MINTTHRESH:csr_rdata = {24'd0, mintthresh_reg};
             // Counters
-            CSR_MCYCLE:    csr_rdata = mcycle_cnt[31:0];
-            CSR_MCYCLEH:   csr_rdata = mcycle_cnt[63:32];
-            CSR_MINSTRET:  csr_rdata = minstret_cnt[31:0];
-            CSR_MINSTRETH: csr_rdata = minstret_cnt[63:32];
-            CSR_CYCLE:     csr_rdata = mcycle_cnt[31:0];
-            CSR_TIME:      csr_rdata = mcycle_cnt[31:0];
-            CSR_INSTRET:   csr_rdata = minstret_cnt[31:0];
-            CSR_CYCLEH:    csr_rdata = mcycle_cnt[63:32];
-            CSR_TIMEH:     csr_rdata = mcycle_cnt[63:32];
-            CSR_INSTRETH:  csr_rdata = minstret_cnt[63:32];
+            // Forward instret_inc so the reading instruction sees the count
+            // including the preceding instruction's retirement, matching the
+            // software-simulator model where csr_minstret is incremented
+            // before the next instruction reads it.
+            CSR_MCYCLE:    csr_rdata = mcycle_cnt_fwd[31:0];
+            CSR_MCYCLEH:   csr_rdata = mcycle_cnt_fwd[63:32];
+            CSR_MINSTRET:  csr_rdata = minstret_cnt_fwd[31:0];
+            CSR_MINSTRETH: csr_rdata = minstret_cnt_fwd[63:32];
+            CSR_CYCLE:     csr_rdata = mcycle_cnt_fwd[31:0];
+            CSR_TIME:      csr_rdata = mcycle_cnt_fwd[31:0];
+            CSR_INSTRET:   csr_rdata = minstret_cnt_fwd[31:0];
+            CSR_CYCLEH:    csr_rdata = mcycle_cnt_fwd[63:32];
+            CSR_TIMEH:     csr_rdata = mcycle_cnt_fwd[63:32];
+            CSR_INSTRETH:  csr_rdata = minstret_cnt_fwd[63:32];
             // Machine info (read-only)
             CSR_MVENDORID: csr_rdata = 32'h0;
             CSR_MARCHID:   csr_rdata = 32'h0;
