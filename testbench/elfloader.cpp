@@ -115,8 +115,8 @@ bool load_elf(void* dut, const std::string& filename) {
         return false;
     }
 
-    printf("Loading ELF file: %s\n", filename.c_str());
-    printf("Entry point: 0x%08x\n", ehdr.e_entry);
+    fprintf(stderr, "Loading ELF file: %s\n", filename.c_str());
+    fprintf(stderr, "Entry point: 0x%08x\n", ehdr.e_entry);
 
     // Set the scope for DPI calls to the memory module
     svSetScope(svGetScopeFromName("TOP.tb_jv32_soc"));
@@ -161,7 +161,7 @@ bool load_elf(void* dut, const std::string& filename) {
         }
     }
 
-    printf("Loaded %zu bytes from ELF segments\n", total_bytes);
+    fprintf(stderr, "Loaded %zu bytes from ELF segments\n", total_bytes);
 
     // Parse symbol table
     for (int i = 0; i < ehdr.e_shnum; i++) {
@@ -223,14 +223,14 @@ bool load_elf(void* dut, const std::string& filename) {
                 printf("Found symbol 'tohost' at address 0x%08x\n", g_tohost_addr);
             } else if (strcmp(name, "fromhost") == 0) {
                 g_fromhost_addr = sym.st_value;
-                printf("Found symbol 'fromhost' at address 0x%08x\n", g_fromhost_addr);
+                fprintf(stderr, "Found symbol 'fromhost' at address 0x%08x\n", g_fromhost_addr);
             }
         }
 
         free(strtab);
     }
 
-    printf("Parsed %zu symbols from ELF file\n", g_symbols.size());
+    fprintf(stderr, "Parsed %zu symbols from ELF file\n", g_symbols.size());
 
     fclose(f);
     return true;
@@ -260,7 +260,7 @@ bool load_bin(void* dut, const std::string& filename) {
     }
 
     fclose(f);
-    printf("Loaded %zu bytes from %s\n", bytes_read, filename.c_str());
+    fprintf(stderr, "Loaded %zu bytes from %s\n", bytes_read, filename.c_str());
     return true;
 }
 

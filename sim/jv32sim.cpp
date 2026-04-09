@@ -716,8 +716,7 @@ static uint32_t expand_rvc(uint16_t ci) {
 // ============================================================================
 static void step() {
     // ── 1. Advance counters and check interrupts ──────────────────────────
-    csr_mcycle++;
-    // mtime is incremented on instruction retirement (below), not here
+    // mtime and mcycle are incremented on instruction retirement (below), not here
 
     check_interrupts();
     if (!running) return;
@@ -1064,7 +1063,8 @@ static void step() {
             regs[rd] = result;
         regs[0] = 0;  // x0 always zero
         pc = new_pc;
-        mtime++;  // increment mtime on retirement to match RTL instret_inc
+        mtime++;        // increment mtime on retirement to match RTL instret_inc
+        csr_mcycle++;   // increment mcycle on retirement to match RTL instret_inc gating
         csr_minstret++;
         insn_count++;
         emit_trace(instr_pc, raw_instr,

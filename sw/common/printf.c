@@ -22,8 +22,7 @@
 extern "C" {
 #endif
 
-// External write function from syscall.c
-extern int _write(int file, const void *ptr, size_t len);
+#include "jv_platform.h"
 
 // Buffer for number conversion
 #define PRINTF_BUFFER_SIZE 64
@@ -67,7 +66,8 @@ static size_t sprintf_max = 0;
 // Flush output buffer
 static void printf_flush(void) {
     if (!sprintf_dest && printf_buffer_pos > 0) {
-        _write(1, printf_output_buffer, printf_buffer_pos);
+        for (size_t i = 0; i < printf_buffer_pos; i++)
+            jv_putc(printf_output_buffer[i]);
         printf_buffer_pos = 0;
     }
 }

@@ -1,0 +1,100 @@
+# Copyright (c) 2026, JV32 Project
+# SPDX-License-Identifier: Apache-2.0
+
+# UDB Architecture Configuration for JV32 RV32IMAC processor.
+# JV32 is a custom 5-stage in-order 32-bit RISC-V processor (M-mode only).
+---
+$schema: config_schema.json#
+kind: architecture configuration
+type: fully configured
+name: jv32-rv32imac
+description: JV32 custom RV32IMAC processor — M-mode only, no PMP, CLIC interrupts
+
+implemented_extensions:
+  - { name: I,        version: "= 2.1"   }
+  - { name: M,        version: "= 2.0"   }
+  - { name: Zaamo,    version: "= 1.0.0" } # Atomic AMO instructions (part of A)
+  - { name: Zalrsc,   version: "= 1.0.0" } # LR/SC instructions (part of A)
+  - { name: C,        version: "= 2.0"   } # Compressed instructions
+  - { name: Zca,      version: "= 1.0.0" } # Zcx subset of C
+  - { name: Zicsr,    version: "= 2.0"   }
+  - { name: Zifencei, version: "= 2.0"   }
+  - { name: Zicntr,   version: "= 2.0"   } # mcycle, minstret, mcycleh, minstreth
+  - { name: Sm,       version: "= 1.11.0" } # Machine mode + interrupt/exception handling
+
+params:
+  # ── XLEN ──────────────────────────────────────────────────────────────────
+  MXLEN: 32
+
+  PHYS_ADDR_WIDTH: 32
+
+  # ── MISA ──────────────────────────────────────────────────────────────────
+  # misa is hard-wired to 0x4000_1105 (RV32IMAC); all bits are read-only.
+  MUTABLE_MISA_M: false
+  MUTABLE_MISA_C: false
+  MISA_CSR_IMPLEMENTED: true
+
+  # ── Endianness ────────────────────────────────────────────────────────────
+  M_MODE_ENDIANNESS: little
+
+  # ── Trap / exception behavior ─────────────────────────────────────────────
+  TRAP_ON_ECALL_FROM_M: true
+  TRAP_ON_EBREAK: true
+  TRAP_ON_UNIMPLEMENTED_INSTRUCTION: true
+  TRAP_ON_RESERVED_INSTRUCTION: true
+  TRAP_ON_UNIMPLEMENTED_CSR: true
+  # JV32 applies masking on CSR writes (no illegal-value trap for WLRL).
+  TRAP_ON_ILLEGAL_WLRL: false
+
+  # ── MTVAL reporting ───────────────────────────────────────────────────────
+  # EXC_ILLEGAL_INSTR  → mtval = orig_instr (instruction encoding)
+  # EXC_BREAKPOINT     → mtval = 0
+  # EXC_ECALL          → mtval = 0
+  # EXC_LOAD/STORE_MISALIGNED → mtval = fault_address
+  REPORT_VA_IN_MTVAL_ON_BREAKPOINT: false
+  REPORT_VA_IN_MTVAL_ON_LOAD_MISALIGNED: true
+  REPORT_VA_IN_MTVAL_ON_STORE_AMO_MISALIGNED: true
+  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_MISALIGNED: false
+  REPORT_VA_IN_MTVAL_ON_LOAD_ACCESS_FAULT: false
+  REPORT_VA_IN_MTVAL_ON_STORE_AMO_ACCESS_FAULT: false
+  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_ACCESS_FAULT: false
+  REPORT_ENCODING_IN_MTVAL_ON_ILLEGAL_INSTRUCTION: true
+  MTVAL_WIDTH: 32
+
+  # ── Misaligned load/store ─────────────────────────────────────────────────
+  # JV32 handles misaligned accesses in hardware as two-cycle bus transactions.
+  # No misaligned address exception is raised.
+  MISALIGNED_LDST: true
+  MISALIGNED_LDST_EXCEPTION_PRIORITY: low
+  MISALIGNED_MAX_ATOMICITY_GRANULE_SIZE: 0
+  MISALIGNED_SPLIT_STRATEGY: custom
+
+  # ── CSR / implementation IDs ──────────────────────────────────────────────
+  ARCH_ID_VALUE: 0x00000000   # marchid = 0 (custom/unregistered)
+  IMP_ID_VALUE:  0x00000001   # mimpid  = 1
+  VENDOR_ID_BANK:   0x0       # mvendorid[31:7] = 0
+  VENDOR_ID_OFFSET: 0x0       # mvendorid[6:0]  = 0
+
+  # ── MTVEC ─────────────────────────────────────────────────────────────────
+  # JV32 mtvec write: {wd[31:2], 1'b0, wd[0]}
+  # → bit[1] always 0, bit[0] = mode (0=direct, 1=vectored)
+  # → BASE is any 4-byte aligned address
+  MTVEC_MODES: [0, 1]
+  MTVEC_ACCESS: rw
+  MTVEC_ILLEGAL_WRITE_BEHAVIOR: custom
+  MTVEC_BASE_ALIGNMENT_DIRECT: 4
+  MTVEC_BASE_ALIGNMENT_VECTORED: 4
+
+  # ── Sm params ─────────────────────────────────────────────────────────────
+  PRECISE_SYNCHRONOUS_EXCEPTIONS: true
+  MARCHID_IMPLEMENTED: true
+  MIMPID_IMPLEMENTED: true
+  PMA_GRANULARITY: 2         # Minimum 4-byte granularity (AXI4-Lite byte-enables)
+
+  # ── Zicntr params ─────────────────────────────────────────────────────────
+  # JV32 implements mcycle, mcycleh, minstret, minstreth, cycle, cycleh,
+  # instret, instreth.  time/timeh alias to mcycle (not a real timer).
+  # No custom HPM counters (mhpmcounter3..31 = 0, mhpmevent3..31 = 0).
+  TIME_CSR_IMPLEMENTED: true
+  MCYCLE_PRESENT: true
+  MINSTRET_PRESENT: true

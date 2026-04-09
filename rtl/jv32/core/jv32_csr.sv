@@ -183,8 +183,10 @@ module jv32_csr (
             minstret_cnt  <= 64'h0;
         end else begin
             // ---- performance counters ----
-            mcycle_cnt <= mcycle_cnt + 64'd1;
-            if (instret_inc) minstret_cnt <= minstret_cnt + 64'd1;
+            // mcycle increments per retired instruction (like minstret), so
+            // it matches a software simulator that counts executed instructions.
+            if (instret_inc) mcycle_cnt    <= mcycle_cnt    + 64'd1;
+            if (instret_inc) minstret_cnt  <= minstret_cnt  + 64'd1;
 
             // ---- exception trap ----
             if (exception) begin

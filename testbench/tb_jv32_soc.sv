@@ -9,8 +9,8 @@
 module tb_jv32_soc #(
     parameter int unsigned CLK_FREQ  = 100_000_000,
     parameter int unsigned BAUD_RATE = 115_200,
-    parameter int unsigned IRAM_SIZE = 65536,
-    parameter int unsigned DRAM_SIZE = 65536,
+    parameter int unsigned IRAM_SIZE = 262144,
+    parameter int unsigned DRAM_SIZE = 262144,
     parameter bit          FAST_MUL  = 1'b1,
     parameter bit          FAST_DIV  = 1'b1,
     parameter bit          FAST_SHIFT= 1'b1,
@@ -34,7 +34,8 @@ module tb_jv32_soc #(
     output logic [31:0] trace_mem_data,
 
     // DPI-C memory init
-    input  logic        uart_rx_i
+    input  logic        uart_rx_i,
+    output logic        uart_tx_o_monitor  // UART TX line for exit-drain detection
 );
     import "DPI-C" function void sim_request_exit(input int exit_code);
 
@@ -103,11 +104,28 @@ module tb_jv32_soc #(
     endfunction
 
     logic uart_tx_o;
+    logic uart_loopback_tx;
+
+    assign uart_tx_o_monitor = uart_tx_o;
+
+    // SIM_CLKS_PER_BIT: must be >= 4 for uart_loopback to centre-sample correctly.
+    // Use 8 cycles/bit; the large TX FIFO prevents back-pressure on the CPU.
+    localparam int unsigned  SIM_CLKS_PER_BIT   = 8;
+    localparam int unsigned  SIM_BAUD_RATE       = CLK_FREQ / SIM_CLKS_PER_BIT;
+    localparam logic [15:0]  LOOPBACK_CLKS_PER_BIT = 16'(SIM_CLKS_PER_BIT);
+
+    uart_loopback u_uart_loopback (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .rx           (uart_tx_o),
+        .tx           (uart_loopback_tx),
+        .clks_per_bit (LOOPBACK_CLKS_PER_BIT)
+    );
 
     jv32_soc #(
         .CLK_FREQ        (CLK_FREQ),
-        .BAUD_RATE       (CLK_FREQ),  // max baud rate (1 cycle/bit) so UART never stalls
-        .UART_FIFO_DEPTH (256),       // large FIFO so TX never stalls in simulation
+        .BAUD_RATE       (SIM_BAUD_RATE),  // 8 cycles/bit — fast yet loopback-safe
+        .UART_FIFO_DEPTH (4096),           // deep FIFO; CPU never stalls on TX
         .IRAM_SIZE       (IRAM_SIZE),
         .DRAM_SIZE       (DRAM_SIZE),
         .FAST_MUL        (FAST_MUL),

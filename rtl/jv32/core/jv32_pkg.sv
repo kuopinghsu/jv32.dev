@@ -91,8 +91,8 @@ package jv32_pkg;
     localparam int unsigned FAST_DIV       = 1;                // 1=comb, 0=serial (33 cyc)
     localparam int unsigned FAST_SHIFT     = 1;                // 1=barrel, 0=serial 1-bit/cyc
     localparam int unsigned BP_EN          = 1;                // 1=BTB+RAS, 0=predict-not-taken
-    localparam int unsigned IRAM_SIZE      = 65536;            // bytes (default 64 KB)
-    localparam int unsigned DRAM_SIZE      = 65536;            // bytes (default 64 KB)
+    localparam int unsigned IRAM_SIZE      = 262144;           // bytes (256 KB)
+    localparam int unsigned DRAM_SIZE      = 262144;           // bytes (256 KB)
     localparam int unsigned AXI_DATA_WIDTH = 32;               // 32-bit AXI data bus
     localparam logic [31:0] BOOT_ADDR      = 32'h8000_0000;    // reset PC
 

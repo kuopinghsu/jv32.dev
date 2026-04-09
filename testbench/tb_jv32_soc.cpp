@@ -67,6 +67,9 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
 static volatile bool g_abort = false;
 static void sig_handler(int) { g_abort = true; }
 
+static bool g_exit_requested = false;
+static int  g_exit_code      = 0;
+
 // ============================================================================
 // SoC memory image (shared with SV via DPI or direct Verilator signal write)
 // The jv32_soc instantiates axi_ram_ctrl which wraps sram_1rw.
@@ -78,10 +81,13 @@ static void load_elf_to_dut(Vtb_jv32_soc* dut, const char* elf_path,
                              uint32_t iram_base, uint32_t iram_size,
                              uint32_t dram_base, uint32_t dram_size);
 
-// DPI-C: called by axi_magic when EXIT magic address is written
+// DPI-C: called by axi_magic when EXIT magic address is written.
+// Use a deferred exit so the main loop can sample trace_valid for the
+// exit-store instruction before terminating.
 extern "C" void sim_request_exit(int exit_code) {
-    std::cout << "[SIM] EXIT requested: code=" << exit_code << std::endl;
-    exit(exit_code);
+    fprintf(stderr, "[SIM] EXIT requested: code=%d\n", exit_code);
+    g_exit_requested = true;
+    g_exit_code      = exit_code;
 }
 
 // ============================================================================
@@ -163,8 +169,8 @@ int main(int argc, char** argv) {
     // Load ELF
     // -------------------------------------------------------------------------
     load_elf_to_dut(dut, elf_path,
-                    0x80000000U, 65536,
-                    0xC0000000U, 65536);
+                    0x80000000U, 262144,
+                    0xC0000000U, 262144);
 
     // -------------------------------------------------------------------------
     // Release reset
@@ -196,7 +202,7 @@ int main(int argc, char** argv) {
     uint64_t cycle = 0;
     uint64_t instret = 0;
 
-    while (!g_abort && !ctx->gotFinish() && cycle < max_cycles) {
+    while (!g_abort && !g_exit_requested && !ctx->gotFinish() && cycle < max_cycles) {
         tick(dut, tfp);
         cycle++;
 
@@ -216,18 +222,38 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Drain UART TX: keep ticking until the TX line has been idle (HIGH) for
+    // at least UART_IDLE_THRESH consecutive cycles.
+    //
+    // With SIM_CLKS_PER_BIT=8, the worst-case consecutive-HIGH window during
+    // active transmission is 8 data bits + 1 stop bit = 9 bit-periods × 8
+    // cycles = 72 cycles.  The idle threshold must exceed 72; use 160 (20
+    // bit-periods at 8 cycles/bit) so there is ample margin.
+    static constexpr uint64_t UART_IDLE_THRESH = 160;
+    if (g_exit_requested && !g_abort) {
+        uint64_t idle_count = 0;
+        while (idle_count < UART_IDLE_THRESH && cycle < max_cycles) {
+            tick(dut, tfp);
+            cycle++;
+            if (dut->uart_tx_o_monitor) idle_count++;
+            else idle_count = 0;
+        }
+    }
+
     if (tfp) { tfp->flush(); tfp->close(); }
     if (rtl_tfp && !rtl_tfp_is_stdout) { fflush(rtl_tfp); fclose(rtl_tfp); }
     else if (rtl_tfp) { fflush(rtl_tfp); }
 
-    printf("[SIM] %llu cycles, %llu instructions retired\n",
+    fprintf(stderr, "[SIM] %llu cycles, %llu instructions retired\n",
            (unsigned long long)cycle, (unsigned long long)instret);
-    printf("[SIM] TIMEOUT or max-cycles reached\n");
 
     dut->final();
     delete dut;
     delete ctx;
     if (tfp) delete tfp;
+
+    if (g_exit_requested) return g_exit_code;
+    fprintf(stderr, "[SIM] TIMEOUT or max-cycles reached\n");
     return 1;
 }
 
@@ -252,8 +278,8 @@ static void load_elf_to_dut(Vtb_jv32_soc* dut, const char* elf_path,
         exit(1);
     }
 
-    fprintf(stdout, "[SIM] ELF loaded: %s\n", elf_path);
+    fprintf(stderr, "[SIM] ELF loaded: %s\n", elf_path);
     if (g_tohost_addr)
-        fprintf(stdout, "[SIM]   tohost=0x%08x fromhost=0x%08x\n",
+        fprintf(stderr, "[SIM]   tohost=0x%08x fromhost=0x%08x\n",
                 g_tohost_addr, g_fromhost_addr);
 }

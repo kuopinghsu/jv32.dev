@@ -12,7 +12,7 @@
 //
 // Memory map
 // ----------
-//  0x8000_0000  IRAM (TCM, inside jv32_top, 64 KB)  — I-fetch + data read
+//  0x8000_0000  IRAM (TCM, inside jv32_top, 256 KB)  — I-fetch + data read
 //  0xC000_0000  DRAM (TCM, inside jv32_top, 64 KB)  — data read/write
 //  0x2001_0000  UART
 //  0x0200_0000  CLIC / CLINT
@@ -34,8 +34,8 @@ module jv32_soc #(
     parameter int unsigned CLK_FREQ       = 100_000_000,
     parameter int unsigned BAUD_RATE      = 115_200,
     parameter int unsigned UART_FIFO_DEPTH = 16,        // TX/RX FIFO depth (power of 2)
-    parameter int unsigned IRAM_SIZE      = 65536,      // bytes
-    parameter int unsigned DRAM_SIZE      = 65536,      // bytes
+    parameter int unsigned IRAM_SIZE      = 262144,     // bytes (256 KB)
+    parameter int unsigned DRAM_SIZE      = 262144,     // bytes (256 KB)
     parameter bit          FAST_MUL    = 1'b1,
     parameter bit          FAST_DIV    = 1'b1,
     parameter bit          FAST_SHIFT  = 1'b1,

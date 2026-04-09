@@ -33,7 +33,7 @@ ABI     := ilp32
 CFLAGS  := -march=$(ARCH) -mabi=$(ABI)
 CFLAGS  += -O2 -g
 CFLAGS  += -Wall -Wextra
-CFLAGS  += -nostdlib -nostartfiles -ffreestanding
+CFLAGS  += -nostartfiles -ffreestanding
 CFLAGS  += -ffunction-sections -fdata-sections
 CFLAGS  += -Iinclude
 
@@ -52,7 +52,7 @@ OBJ_DIR   := $(BUILD_DIR)/obj
 COMMON_LINK := common/link.ld
 
 LDFLAGS := -march=$(ARCH) -mabi=$(ABI)
-LDFLAGS += -nostdlib -nostartfiles
+LDFLAGS += -nostartfiles
 LDFLAGS += -T $(COMMON_LINK)
 LDFLAGS += -Wl,--gc-sections
 

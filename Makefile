@@ -35,9 +35,10 @@ CORE_DIR = $(RTL_DIR)/jv32/core
 JV32_DIR = $(RTL_DIR)/jv32
 AXI_DIR  = $(RTL_DIR)/axi
 MEM_DIR  = $(RTL_DIR)/memories
-TB_DIR   = testbench
-SW_DIR   = sw
-SIM_DIR  = sim
+TB_DIR    = testbench
+SW_DIR    = sw
+SIM_DIR   = sim
+VERIF_DIR = verif
 BUILD_DIR ?= build
 
 BUILD_DIR_ABS := $(abspath $(BUILD_DIR))
@@ -140,6 +141,7 @@ RTL_SOURCES = \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
     $(wildcard $(MEM_DIR)/*.sv) \
+    $(TB_DIR)/uart_loopback.sv \
     $(TB_DIR)/tb_jv32_soc.sv
 
 TB_SOURCES = \
@@ -157,7 +159,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 # ============================================================================
 # Phony targets
 # ============================================================================
-.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% sim-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-% FORCE
+.PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info rtl-% sim-% lint lint-full lint-modules lint-decl lint-svlint sim-build compare-% arch-test-% FORCE
 
 # Default: build RTL simulator
 all: build-rtl
@@ -415,7 +417,20 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	    || exit 1
 
 # ============================================================================
-# Clean
+# Arch-test (ACT4) — delegated to verif/Makefile
+# ============================================================================
+# All arch-test-* targets are implemented in verif/Makefile to keep this
+# file focused on RTL build and simulation.  Variables are passed through.
+# ============================================================================
+ARCH_TEST_PASSTHROUGH = \
+    $(if $(DUT_CONFIG),DUT_CONFIG=$(DUT_CONFIG),) \
+    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
+    $(if $(WORKDIR),WORKDIR=$(WORKDIR),) \
+    $(if $(JOBS),JOBS=$(JOBS),)
+
+arch-test-%:
+	@$(MAKE) -C $(VERIF_DIR) --no-print-directory $@ $(ARCH_TEST_PASSTHROUGH)
+
 # ============================================================================
 clean:
 	@rm -rf $(BUILD_DIR)
@@ -455,6 +470,9 @@ help:
 	@echo "  sim-<test>           Build & run <test>.elf with software simulator"
 	@echo "  rtl-<test>           Build & run <test>.elf with RTL simulator"
 	@echo "  compare-<test>       Build & compare traces: software vs RTL simulator"
+	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
+	@echo "  arch-test-run        Generate self-checking ELFs and run on JV32 RTL sim"
+	@echo "  arch-test-<tgt>      Forward <tgt> to verif/Makefile (see make -C verif help)"
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"

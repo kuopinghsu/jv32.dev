@@ -70,6 +70,5 @@ fpga/build_oss
 env.config
 rtos/zephyr/build.*
 
-/verif/riscof_targets/riscof_work_trace/
-/verif/riscof_targets/riscof_work/
+/verif/work
 

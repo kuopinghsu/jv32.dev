@@ -5,35 +5,28 @@
 // ============================================================================
 
 #include <stdio.h>
+#include <stdint.h>
+#include "jv_platform.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// External write function from syscall.c
-extern int _write(int file, const void *ptr, size_t len);
-
 int putc(int c, FILE *stream) {
-    // Ignore stream parameter in bare-metal (always write to stdout)
     (void)stream;
-
-    unsigned char ch = (unsigned char)c;
-    int result = _write(1, &ch, 1);
-
-    return (result == 1) ? c : EOF;
+    jv_putc((char)c);
+    return c;
 }
 
-// putchar is typically a macro for putc(c, stdout), but provide a function too
 int putchar(int c) {
-    unsigned char ch = (unsigned char)c;
-    int result = _write(1, &ch, 1);
-
-    return (result == 1) ? c : EOF;
+    jv_putc((char)c);
+    return c;
 }
 
-// fputc is an alias for putc
 int fputc(int c, FILE *stream) {
-    return putc(c, stream);
+    (void)stream;
+    jv_putc((char)c);
+    return c;
 }
 
 #ifdef __cplusplus

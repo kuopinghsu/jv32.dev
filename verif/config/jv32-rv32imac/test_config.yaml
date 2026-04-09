@@ -1,0 +1,16 @@
+# test_config.yaml for JV32 RV32IMAC
+# SPDX-License-Identifier: Apache-2.0
+#
+# DUT: JV32 — custom 5-stage in-order RV32IMAC processor
+# Reference model: sail_riscv_sim v0.10
+#
+# Note: ACT4 uses Sail as the reference model to generate expected signatures.
+# JV32 results are compared against Sail to verify architectural compliance.
+name: jv32-rv32imac
+compiler_exe: riscv-none-elf-gcc
+objdump_exe: riscv-none-elf-objdump
+ref_model_exe: sail_riscv_sim
+ref_model_type: sail
+udb_config: jv32-rv32imac.yaml
+linker_script: link.ld
+dut_include_dir: .

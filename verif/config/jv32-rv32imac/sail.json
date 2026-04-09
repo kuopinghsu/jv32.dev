@@ -1,0 +1,254 @@
+// sail.json — Sail reference model configuration for JV32 RV32IMAC
+// SPDX-License-Identifier: Apache-2.0
+//
+// This file configures sail_riscv_sim when it generates reference signatures
+// for JV32 arch tests.  It describes the ISA and memory layout that Sail
+// should emulate to produce results comparable with the JV32 RTL.
+//
+// JV32 addressable memory:
+//   0x80000000  IRAM  64KB  (code + data — arch tests live here)
+//   0xC0000000  DRAM  64KB  (not used by arch tests)
+//   0x02000000  CLIC  (MSIP, mtime, mtimecmp — compatible with CLINT layout)
+//   Unmapped regions → DECERR (no access-fault exception in JV32 core)
+{
+  "$schema": "/opt/riscv/share/sail-riscv/sail_riscv_config_schema.json",
+  "base": {
+    "xlen": 32,
+    "E": false,
+    // misa is read-only in JV32 (hardwired to 0x4000_1105 = RV32IMAC)
+    "writable_misa": false,
+    "writable_fiom": false,
+    "writable_hpm_counters": {
+      "len": 32,
+      // JV32 has no HPM counters (only mcycle and minstret, always counting)
+      "value": "0x00000000"
+    },
+    "xtval_nonzero": {
+      // JV32 mtval behavior (from jv32_core.sv):
+      //   EXC_ILLEGAL_INSTR     → mtval = orig_instr (encoding)
+      //   EXC_BREAKPOINT        → mtval = 0
+      //   EXC_ECALL_MMODE       → mtval = 0
+      //   EXC_LOAD/STORE_MISALIGNED → mtval = fault_address
+      //   IRQ                   → mtval = 0
+      "illegal_instruction": true,   // mtval = instruction encoding
+      "software_breakpoint": false,  // mtval = 0 (JV32 sets tval=0 for EBREAK)
+      "hardware_breakpoint": false,
+      "load_address_misaligned": true,   // mtval = fault address
+      "load_access_fault": false,        // not supported (DECERR not converted)
+      "load_page_fault": false,          // no MMU
+      "samo_address_misaligned": true,   // mtval = fault address
+      "samo_access_fault": false,        // not supported
+      "samo_page_fault": false,          // no MMU
+      "fetch_address_misaligned": false, // JV32 doesn't support fetch misalign
+      "fetch_access_fault": false,
+      "fetch_page_fault": false,
+      "software_check": false,
+      "reserved_exceptions": false
+    },
+    "reserved_behavior": {
+      "amocas_odd_register": "AMOCAS_Illegal",
+      "fcsr_rm": "Fcsr_RM_Illegal",
+      "pmpcfg_write_only": "PMP_ClearPermissions",
+      "xenvcfg_cbie": "Xenvcfg_ClearPermissions",
+      "rv32zdinx_odd_register": "Zdinx_Illegal"
+    }
+  },
+  "memory": {
+    "pmp": {
+      // JV32 has no PMP
+      "grain": 0,
+      "count": 0,
+      "usable_count": 0,
+      "tor_supported": false,
+      "na4_supported": false,
+      "napot_supported": false
+    },
+    "misaligned": {
+      // JV32 handles misaligned load/store in hardware (two-cycle access)
+      // No misaligned address exception is raised.
+      "supported": true,
+      "byte_by_byte": false,
+      "order_decreasing": false,
+      "allowed_within_exp": 0
+    },
+    "translation": {
+      "dirty_update": false
+    },
+    "dtb_address": {
+      "len": 64,
+      "value": "0x1000"
+    },
+    "regions": [
+      // MMIO: covers CLIC (0x02000000-0x03FFFFFF), MAGIC (0x40000000-0x4FFFFFFF),
+      //       UART (0x20010000), and other device spaces.
+      // Marked non-cacheable, non-idempotent with alignment-fault for misaligned.
+      {
+        "base": { "len": 64, "value": "0x0" },
+        "size": { "len": 64, "value": "0x80000000" },
+        "attributes": {
+          "cacheable": false,
+          "coherent": true,
+          "executable": false,
+          "readable": true,
+          "writable": true,
+          "read_idempotent": false,
+          "write_idempotent": false,
+          "misaligned_fault": "AlignmentFault",
+          "reservability": "RsrvNone",
+          "supports_cbo_zero": false
+        },
+        "include_in_device_tree": false
+      },
+      // RAM: covers JV32 IRAM (0x80000000-0x8000FFFF) and DRAM (0xC0000000-0xC000FFFF)
+      // and any other upper-half addresses.  Arch tests are loaded at 0x80000000.
+      {
+        "base": { "len": 64, "value": "0x80000000" },
+        "size": { "len": 64, "value": "0x80000000" },
+        "attributes": {
+          "cacheable": true,
+          "coherent": true,
+          "executable": true,
+          "readable": true,
+          "writable": true,
+          "read_idempotent": true,
+          "write_idempotent": true,
+          "misaligned_fault": "NoFault",
+          "reservability": "RsrvEventual",
+          "supports_cbo_zero": false
+        },
+        "include_in_device_tree": true
+      }
+    ]
+  },
+  "platform": {
+    "vendorid": 0,
+    "archid": 0,
+    "impid": 1,
+    "hartid": 0,
+    "cache_block_size_exp": 6,
+    "reservation_set_size_exp": 3,
+    // CLINT / CLIC at JV32 CLIC base (same layout as standard CLINT):
+    //   MSIP    @ 0x02000000
+    //   mtime   @ 0x02004000  (CLIC_BASE + 0x4000)
+    //   mtimecmp@ 0x02004008
+    "clint": {
+      "base": 33554432,   // 0x02000000
+      "size": 786432      // covers mtime at +0x4000 and mtimecmp at +0x4008
+    },
+    "clock_frequency": 50000000,
+    "instructions_per_tick": 2,
+    "wfi_is_nop": false
+  },
+  "extensions": {
+    "M": { "supported": true },
+    "A": { "supported": false },  // Handled as Zaamo + Zalrsc below
+    "F": { "supported": false },
+    "D": { "supported": false },
+    "V": {
+      "support_level": "Disabled",
+      "vlen_exp": 7,
+      "elen_exp": 6,
+      "vl_use_ceil": false
+    },
+    "B": { "supported": false },
+    "S": { "supported": false },
+    "U": { "supported": false },
+    "Zibi": { "supported": false },
+    "Zicbom": { "supported": false },
+    "Zicbop": { "supported": false },
+    "Zicboz": { "supported": false },
+    "Zic64b": { "supported": false },
+    "Zicfilp": { "supported": false },
+    "Zicond": { "supported": false },
+    "Zicntr": { "supported": true },
+    "Zicsr": { "supported": true },
+    "Zifencei": { "supported": true },
+    "Zihintntl": { "supported": false },
+    "Zihintpause": { "supported": false },
+    "Zihpm": { "supported": false },
+    "Zimop": { "supported": false },
+    "Zmmul": { "supported": false },
+    "Zaamo": { "supported": true },
+    "Zabha": { "supported": false },
+    "Zacas": { "supported": false },
+    "Zalrsc": { "supported": true },
+    "Zawrs": {
+      "supported": false,
+      "nto": { "is_nop": false },
+      "sto": { "is_nop": false }
+    },
+    "Zfa": { "supported": false },
+    "Zfbfmin": { "supported": false },
+    "Zfh": { "supported": false },
+    "Zfhmin": { "supported": false },
+    "Zfinx": { "supported": false },
+    "Zdinx": { "supported": false },
+    "Zca": { "supported": true },
+    "Zcf": { "supported": false },
+    "Zcd": { "supported": false },
+    "Zcb": { "supported": false },
+    "Zcmop": { "supported": false },
+    "Zba": { "supported": false },
+    "Zbb": { "supported": false },
+    "Zbs": { "supported": false },
+    "Zbc": { "supported": false },
+    "Zbkb": { "supported": false },
+    "Zbkc": { "supported": false },
+    "Zbkx": { "supported": false },
+    "Zknd": { "supported": false },
+    "Zkne": { "supported": false },
+    "Zknh": { "supported": false },
+    "Zkr": {
+      "supported": false,
+      "sseed_reset_value": false,
+      "useed_reset_value": false,
+      "sseed_read_only_zero": false,
+      "useed_read_only_zero": false
+    },
+    "Zksed": { "supported": false },
+    "Zksh": { "supported": false },
+    "Zkt": { "supported": false },
+    "Zhinx": { "supported": false },
+    "Zhinxmin": { "supported": false },
+    "Sscofpmf": { "supported": false },
+    "Sstc": { "supported": false },
+    "Sstvala": { "supported": false },
+    "Svinval": { "supported": false },
+    "Svrsw60t59b": { "supported": false },
+    "Smcntrpmf": { "supported": false },
+    "Svbare": {
+      "supported": false,
+      "sfence_vma_illegal_if_svbare_only": true
+    },
+    "Sv32": { "supported": false },
+    "Sv39": { "supported": false },
+    "Sv48": { "supported": false },
+    "Sv57": { "supported": false },
+    "Stateen": {
+      "Smstateen": { "supported": false },
+      "Ssstateen": { "supported": false },
+      "C_readonly_zero": true,
+      "SE0_readonly_zero": false
+    },
+    "Ssqosid": {
+      "supported": false,
+      "rcid_length": 12,
+      "mcid_length": 12
+    },
+    "Zvabd": { "supported": false },
+    "Zvbb": { "supported": false },
+    "Zvbc": { "supported": false },
+    "Zvfbfmin": { "supported": false },
+    "Zvfbfwma": { "supported": false },
+    "Zvfh": { "supported": false },
+    "Zvfhmin": { "supported": false },
+    "Zvkb": { "supported": false },
+    "Zvkg": { "supported": false },
+    "Zvkned": { "supported": false },
+    "Zvknha": { "supported": false },
+    "Zvknhb": { "supported": false },
+    "Zvksed": { "supported": false },
+    "Zvksh": { "supported": false },
+    "Zvkt": { "supported": false }
+  }
+}

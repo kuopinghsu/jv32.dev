@@ -118,6 +118,22 @@ static inline uint64_t read_csr_mcycle64(void)
 static inline uint32_t read_csr_minstret(void)  { return read_csr(minstret);  }
 static inline uint32_t read_csr_minstreth(void) { return read_csr(minstreth); }
 
+/** Read the full 64-bit instret counter (safe against carry-over). */
+static inline uint64_t read_csr_minstret64(void)
+{
+    uint32_t lo, hi, hi2;
+    do {
+        hi  = read_csr(minstreth);
+        lo  = read_csr(minstret);
+        hi2 = read_csr(minstreth);
+    } while (hi != hi2);
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Aliases matching the unprivileged cycle/instret CSR names */
+static inline uint64_t read_csr_cycle64(void)   { return read_csr_mcycle64();   }
+static inline uint64_t read_csr_instret64(void) { return read_csr_minstret64(); }
+
 /* ============================================================================
  * Custom jv32 CSRs (0x7C0–0x7FF range reserved for custom M-mode)
  *

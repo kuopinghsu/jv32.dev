@@ -52,8 +52,8 @@ module jv32_top #(
     parameter bit          FAST_DIV   = 1'b1,
     parameter bit          FAST_SHIFT = 1'b1,
     parameter bit          BP_EN      = 1'b1,
-    parameter int unsigned IRAM_SIZE  = 65536,       // bytes, power-of-2
-    parameter int unsigned DRAM_SIZE  = 65536,       // bytes, power-of-2
+    parameter int unsigned IRAM_SIZE  = 262144,      // bytes, power-of-2 (256 KB)
+    parameter int unsigned DRAM_SIZE  = 262144,      // bytes, power-of-2 (256 KB)
     parameter logic [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter logic [31:0] DRAM_BASE  = 32'hC000_0000
 ) (
