@@ -37,6 +37,19 @@ def log2(n):
     return v
 
 
+# OpenRAM 1.2.x hierarchical_decoder supports at most 12 address bits (4096 rows).
+OPENRAM_MAX_ROWS = 4096
+
+
+def min_words_per_row(num_words: int, max_rows: int = OPENRAM_MAX_ROWS) -> int:
+    """Return the smallest power-of-2 words_per_row such that
+    num_words / words_per_row <= max_rows."""
+    wpr = 1
+    while num_words // wpr > max_rows:
+        wpr *= 2
+    return wpr
+
+
 def make_config(name: str, num_words: int, word_size: int,
                 tech_name: str, supply_voltages: list,
                 words_per_row_cfg: str, corner_cfg: str,
@@ -84,9 +97,11 @@ def main():
     args = p.parse_args()
 
     # jv32_top byte-lane SRAM dimensions
-    # Each TCM bank is split into 4 byte-lane SRAMs: DEPTH=SIZE/4, WIDTH=8
-    iram_depth = args.iram_size // 4
-    dram_depth = args.dram_size // 4
+    # Each TCM bank is split into 4 byte-lane SRAMs (DEPTH=SIZE/4, WIDTH=8).
+    # Each byte-lane SRAM is further split into 4 sub-banks in the synthesis
+    # wrapper (sram_1rw.sv), so the OpenRAM macro depth is SIZE/4/4 = SIZE/16.
+    iram_depth = args.iram_size // 16
+    dram_depth = args.dram_size // 16
     word_size = 8
 
     # Sanity check: both must be powers of 2
@@ -104,15 +119,13 @@ def main():
         tech_name = args.pdk
         supply_voltages = [1.8]
 
-    # Optimization settings
+    # Collect unique depths first so we can compute words_per_row per macro.
+    # (done below, after we know the depths)
     if args.optimize == "speed":
-        words_per_row_cfg = "words_per_row   = 1       # no column mux → minimum bitline length\n"
-        corner_cfg = "# Generate TT + FF corners for timing sign-off\nprocess_corners = [\"TT\", \"FF\", \"SS\"]\n"
-        process_cfg = ""
+        corner_cfg = "# Generate TT + FF + SS corners for timing sign-off\nprocess_corners = [\"TT\", \"FF\", \"SS\"]\n"
     else:
-        words_per_row_cfg = "# words_per_row auto-selected by OpenRAM for balanced aspect-ratio\n"
         corner_cfg = "process_corners = [\"TT\"]\n"
-        process_cfg = ""
+    process_cfg = ""
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -125,6 +138,16 @@ def main():
 
     generated = []
     for (depth, width), label in configs.items():
+        # Compute minimum words_per_row so that num_rows ≤ OPENRAM_MAX_ROWS.
+        # OpenRAM's hierarchical_decoder supports at most 12 address bits
+        # (= 4096 rows).  Ignoring this causes "Invalid number of inputs"
+        # at compile time.
+        wpr = min_words_per_row(depth)
+        num_rows = depth // wpr
+        print(f"  {depth}×{width}: words_per_row={wpr} → {num_rows} rows "
+              f"({log2(num_rows)}-bit row decoder)")
+        words_per_row_cfg = f"words_per_row   = {wpr}  # {num_rows} rows, {log2(num_rows)}-bit decoder\n"
+
         name = f"sram_1rw_{depth}x{width}"
         cfg_path = os.path.join(args.output_dir, f"openram_{name}.py")
         content = make_config(
@@ -150,7 +173,8 @@ def main():
         print(f"    {name}")
     print()
     print("Both IRAM and DRAM byte lanes share the same macro —")
-    print("jv32_top instantiates 8 copies total (4 per TCM bank).")
+    print("sram_1rw.sv instantiates 4 sub-banks per byte lane,")
+    print("for 4 byte-lanes × 4 sub-banks × 2 TCMs = 32 macro instances total.")
 
 
 if __name__ == "__main__":

@@ -52,27 +52,28 @@ SIGNOFF_SDC_FILE: dir::jv32_soc_pnr.sdc
 # The paths below use the absolute output directory produced by 'make gen-mem'.
 # Override on the command line if the build directory differs.
 EXTRA_LEFS:
-  - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.lef
+  - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.lef
 
 EXTRA_LIBS:
-  - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_TT_1p1V_25C.lib
+  - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
 
-# MACROS describes each unique SRAM instance so OpenROAD can place them.
-# jv32_top instantiates 8 copies of sram_1rw_32768x8 (4 IRAM + 4 DRAM).
+# MACROS describes each unique SRAM macro so OpenROAD can place them.
+# sram_1rw.sv maps each RTL sram_1rw(DEPTH=32768) to 4 × sram_1rw_8192x8.
+# Total instances: 4 byte-lanes × 4 sub-banks × 2 TCMs = 32 macros.
 # Placement is left to OpenROAD automatic macro placement (no fixed coords).
 MACROS:
-  sram_1rw_32768x8:
+  sram_1rw_8192x8:
     gds:
-      - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.gds
+      - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.gds
     lef:
-      - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.lef
+      - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.lef
     lib:
       "tt_025C_1v10":
-        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_TT_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
       "ff_025C_1v10":
-        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_FF_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_FF_1p1V_25C.lib
       "ss_025C_1v10":
-        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_SS_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_SS_1p1V_25C.lib
 
 # ── Synthesis ─────────────────────────────────────────────────────────────────
 # Preprocessor defines for synthesis (disable simulation-only constructs)
@@ -84,9 +85,9 @@ VERILOG_DEFINES:
 SYNTH_STRATEGY: AREA 0
 
 # ── Floorplan ─────────────────────────────────────────────────────────────────
-# Die area in µm.  Sized to accommodate 8× sram_1rw_32768x8 + logic.
+# Die area in µm.  Sized to accommodate 32× sram_1rw_8192x8 + logic.
 # Adjust after reviewing macro dimensions from the OpenRAM LEF.
-# Rough estimate: each 32768x8 SRAM ~0.4 mm²; 8 macros → ~3.5 mm² + logic.
+# Rough estimate: each 8192x8 SRAM ~0.1 mm²; 32 macros → ~3.5 mm² + logic.
 FP_CORE_UTIL: 35
 FP_ASPECT_RATIO: 1
 

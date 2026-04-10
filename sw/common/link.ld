@@ -4,13 +4,13 @@
  * Description: Linker script for RV32IMAC bare-metal tests
  *
  * Memory map:
- *   IRAM: 0x80000000  64 KB  (executable, read-only at runtime)
- *   DRAM: 0xC0000000  64 KB  (read-write data, stack)
+ *   IRAM: 0x80000000  128 KB  (executable, read-only at runtime)
+ *   DRAM: 0xC0000000  128 KB  (read-write data, stack)
  * ============================================================================ */
 
 MEMORY {
-    IRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 64K
-    DRAM (rwx) : ORIGIN = 0xC0000000, LENGTH = 64K
+    IRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 128K
+    DRAM (rwx) : ORIGIN = 0xC0000000, LENGTH = 128K
 }
 
 ENTRY(_start)

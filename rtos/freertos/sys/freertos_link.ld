@@ -1,8 +1,8 @@
 /*
  * Linker script for FreeRTOS on JV32 RISC-V SoC
  * Memory layout:
- *   IRAM (rx)  : 0x80000000, 256 KB  — text + rodata
- *   DRAM (rwx) : 0xC0000000, 256 KB  — data + bss + heap + stack
+ *   IRAM (rx)  : 0x80000000, 128 KB  — text + rodata
+ *   DRAM (rwx) : 0xC0000000, 128 KB  — data + bss + heap + stack
  */
 
 OUTPUT_ARCH("riscv")
@@ -10,8 +10,8 @@ ENTRY(_start)
 
 MEMORY
 {
-    IRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 256K
-    DRAM (rwx) : ORIGIN = 0xC0000000, LENGTH = 256K
+    IRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 128K
+    DRAM (rwx) : ORIGIN = 0xC0000000, LENGTH = 128K
 }
 
 PHDRS

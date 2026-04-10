@@ -173,7 +173,7 @@ gen-mem:
 	    OPENRAM_HOME=$(OPENRAM)/compiler \
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
-	    $(PYTHON3) $(OPENRAM)/sram_compiler.py openram_sram_1rw_32768x8.py
+	    $(PYTHON3) $(OPENRAM)/sram_compiler.py openram_sram_1rw_8192x8.py
 	@echo "========================================"
 	@echo " OpenRAM macros compiled in $(OPENRAM_OUTDIR)/"
 	@echo " Run 'make synth' to proceed to OpenLane2."
@@ -185,7 +185,7 @@ OPENLANE_RUN_DIR := $(BUILD_DIR)/openlane_run
 $(BUILD_DIR):
 	mkdir -p $@
 
-SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_32768x8/sram_1rw_32768x8.lef
+SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8.lef
 
 synth: check $(BUILD_DIR)
 	@echo "========================================"
@@ -228,9 +228,9 @@ synth: check $(BUILD_DIR)
 NETLIST   ?= $(OPENLANE_RUN_DIR)/final/nl/jv32_soc.nl.v
 SDC_FILE  ?= $(OPENLANE_DIR)/jv32_soc_pnr.sdc
 
-SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_32768x8/sram_1rw_32768x8_TT_1p1V_25C.lib
-SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_32768x8/sram_1rw_32768x8_FF_1p1V_25C.lib
-SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_32768x8/sram_1rw_32768x8_SS_1p1V_25C.lib
+SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
+SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_FF_1p1V_25C.lib
+SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_SS_1p1V_25C.lib
 
 PNR_RESULTS := $(BUILD_DIR)/pnr/results
 PNR_REPORTS := $(BUILD_DIR)/pnr/reports

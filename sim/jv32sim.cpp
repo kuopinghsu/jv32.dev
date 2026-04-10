@@ -34,9 +34,9 @@
 // Memory map
 // ============================================================================
 static const uint32_t IRAM_BASE  = 0x80000000U;
-static const uint32_t IRAM_SIZE  = 256*1024;
+static const uint32_t IRAM_SIZE  = 128*1024;
 static const uint32_t DRAM_BASE  = 0xC0000000U;
-static const uint32_t DRAM_SIZE  = 256*1024;
+static const uint32_t DRAM_SIZE  = 128*1024;
 static const uint32_t CLIC_BASE  = 0x02000000U;
 static const uint32_t UART_BASE  = 0x20010000U;
 static const uint32_t MAGIC_BASE = 0x40000000U;

@@ -9,8 +9,8 @@
 module tb_jv32_soc #(
     parameter int unsigned CLK_FREQ  = 100_000_000,
     parameter int unsigned BAUD_RATE = 115_200,
-    parameter int unsigned IRAM_SIZE = 262144,
-    parameter int unsigned DRAM_SIZE = 262144,
+    parameter int unsigned IRAM_SIZE = 128*1024,
+    parameter int unsigned DRAM_SIZE = 128*1024,
     parameter bit          FAST_MUL  = 1'b1,
     parameter bit          FAST_DIV  = 1'b1,
     parameter bit          FAST_SHIFT= 1'b1,
