@@ -1,0 +1,117 @@
+# ============================================================================
+# OpenLane 2 Design Configuration for jv32_soc
+# Target PDK:  Nangate 45nm Open Cell Library (freepdk45)
+# Target flow: Classic (Synthesis → Floorplan → Place → CTS → Route → Signoff)
+# ============================================================================
+
+# ── Design identification ─────────────────────────────────────────────────────
+DESIGN_NAME: jv32_soc
+
+# ── PDK selection ─────────────────────────────────────────────────────────────
+# PDK_ROOT is set on the command line or via the PDK_ROOT env variable:
+#   openlane --pdk-root syn/pdk --pdk freepdk45 openlane/config.yaml
+PDK: freepdk45
+STD_CELL_LIBRARY: NangateOpenCellLibrary
+
+# ── RTL sources ───────────────────────────────────────────────────────────────
+# OpenLane2 'dir::' prefix resolves paths relative to the DESIGN_DIR
+# (= the directory containing this config.yaml = syn/openlane/).
+# So ../../rtl/ → project rtl/, and ../lib/ → syn/lib/.
+# The black-box wrapper (syn/lib/sram_1rw.sv) is included here so Yosys
+# can emit a correct black-box reference for sram_1rw_32768x8 during synthesis.
+VERILOG_FILES:
+  - dir::../../rtl/jv32/core/jv32_pkg.sv
+  - dir::../../rtl/jv32/core/jv32_rvc.sv
+  - dir::../../rtl/jv32/core/jv32_decoder.sv
+  - dir::../../rtl/jv32/core/jv32_alu.sv
+  - dir::../../rtl/jv32/core/jv32_regfile.sv
+  - dir::../../rtl/jv32/core/jv32_csr.sv
+  - dir::../../rtl/jv32/core/jv32_core.sv
+  - dir::../lib/sram_1rw.sv
+  - dir::../../rtl/axi/axi_pkg.sv
+  - dir::../../rtl/axi/axi_xbar.sv
+  - dir::../../rtl/axi/axi_uart.sv
+  - dir::../../rtl/axi/axi_clic.sv
+  - dir::../../rtl/axi/axi_ram_ctrl.sv
+  - dir::../../rtl/axi/axi_magic.sv
+  - dir::../../rtl/jv32/jv32_top.sv
+  - dir::../../rtl/jv32_soc.sv
+
+# ── Timing ────────────────────────────────────────────────────────────────────
+# 100 MHz target (10 ns period) for Nangate 45nm
+CLOCK_PERIOD: 10.0
+CLOCK_PORT: clk
+
+# SDC files fed directly to OpenROAD for PnR (not used for synthesis)
+PNR_SDC_FILE: dir::jv32_soc_pnr.sdc
+SIGNOFF_SDC_FILE: dir::jv32_soc_pnr.sdc
+
+# ── SRAM black-box macros ─────────────────────────────────────────────────────
+# EXTRA_LEFS: LEF abstracts for the OpenRAM-generated SRAM macros.
+# EXTRA_LIBS: Liberty timing models for the SRAM macros (TT/FF/SS corners).
+# The paths below use the absolute output directory produced by 'make gen-mem'.
+# Override on the command line if the build directory differs.
+EXTRA_LEFS:
+  - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.lef
+
+EXTRA_LIBS:
+  - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_TT_1p1V_25C.lib
+
+# MACROS describes each unique SRAM instance so OpenROAD can place them.
+# jv32_top instantiates 8 copies of sram_1rw_32768x8 (4 IRAM + 4 DRAM).
+# Placement is left to OpenROAD automatic macro placement (no fixed coords).
+MACROS:
+  sram_1rw_32768x8:
+    gds:
+      - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.gds
+    lef:
+      - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8.lef
+    lib:
+      "tt_025C_1v10":
+        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_TT_1p1V_25C.lib
+      "ff_025C_1v10":
+        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_FF_1p1V_25C.lib
+      "ss_025C_1v10":
+        - dir::../lib/openram/sram_1rw_32768x8/sram_1rw_32768x8_SS_1p1V_25C.lib
+
+# ── Synthesis ─────────────────────────────────────────────────────────────────
+# Preprocessor defines for synthesis (disable simulation-only constructs)
+VERILOG_DEFINES:
+  - SYNTHESIS
+  - NO_ASSERTION
+  - GENERIC_SRAM
+
+SYNTH_STRATEGY: AREA 0
+
+# ── Floorplan ─────────────────────────────────────────────────────────────────
+# Die area in µm.  Sized to accommodate 8× sram_1rw_32768x8 + logic.
+# Adjust after reviewing macro dimensions from the OpenRAM LEF.
+# Rough estimate: each 32768x8 SRAM ~0.4 mm²; 8 macros → ~3.5 mm² + logic.
+FP_CORE_UTIL: 35
+FP_ASPECT_RATIO: 1
+
+# Power-delivery network
+FP_PDN_VOFFSET: 10
+FP_PDN_HOFFSET: 10
+FP_PDN_VWIDTH: 3.1
+FP_PDN_HWIDTH: 4.6
+FP_PDN_VPITCH: 56
+FP_PDN_HPITCH: 56
+
+# ── Placement ─────────────────────────────────────────────────────────────────
+PL_TARGET_DENSITY: 0.4
+PL_MACRO_CHANNEL: [10, 10]
+
+# ── CTS ───────────────────────────────────────────────────────────────────────
+CLOCK_TREE_SYNTH: true
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+# Global routing: increase layer count for large die
+RT_MAX_LAYER: Metal9
+GRT_ALLOW_CONGESTION: true
+
+# ── Antenna diode insertion ───────────────────────────────────────────────────
+RUN_ANTENNA_REPAIR: true
+
+# ── Fill insertion ────────────────────────────────────────────────────────────
+RUN_FILL_INSERTION: true
