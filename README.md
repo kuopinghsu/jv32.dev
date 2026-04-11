@@ -1,7 +1,7 @@
-# JV32 RISC-V SoC
+# J<sub>V</sub>32 RISC-V SoC
 
 <p align="center">
-  <img src="docs/jv32-logo.png" alt="JV32 logo" width="260">
+  <img src="docs/jv32-logo.svg" alt="JV32 logo" width="260">
 </p>
 
 J<sub>V</sub>32 is a compact **RV32IMAC** RISC-V system-on-chip for RTL simulation, software bring-up, and ASIC/FPGA experimentation. The project includes a 3-stage in-order core, tightly-coupled memories, AXI peripherals, JTAG debug support, verification flows, and an OpenRAM/OpenLane-based synthesis path.
@@ -79,4 +79,4 @@ make synth
 
 ## Notes
 
-JV32 is geared toward **educational use, verification, and implementation exploration**. The repository is organized so the same RTL can be exercised in software simulation, RTL regression, and downstream synthesis flows.
+J<sub>V</sub>32 is geared toward **educational use, verification, and implementation exploration**. The repository is organized so the same RTL can be exercised in software simulation, RTL regression, and downstream synthesis flows.

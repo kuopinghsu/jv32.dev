@@ -13,6 +13,8 @@
 :figure-caption: Figure
 :appendix-caption: Appendix
 
+image::jv32-logo.svg[JV32 Logo,align=center,width=240]
+
 [abstract]
 --
 
