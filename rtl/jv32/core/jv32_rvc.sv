@@ -12,10 +12,6 @@
 // init_offset   → skip lower halfword on first post-flush fetch
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-`endif
-
 module jv32_rvc #(
     parameter bit RVM23_EN = 1'b1
 ) (
@@ -35,9 +31,7 @@ module jv32_rvc #(
     output logic        mem_ready
 );
 
-`ifndef SYNTHESIS
     import jv32_pkg::*;
-`endif
 
     logic        hold_valid;
     logic [15:0] hold;
@@ -80,14 +74,18 @@ module jv32_rvc #(
         logic [4:0]  rd_rs1, rs2, rd_p, rs1_p, rs2_p;
         logic [11:0] nzuimm12, uimm12;
         logic [31:0] nzimm, imm;
+        logic [31:0] _sext;  // intermediate for bit-slicing function results
         logic        f1;
         logic [1:0]  f2_low;
 
+        // Default all locals to silence Yosys latch inference on partial paths
+        funct2 = '0; rd_rs1 = '0; rs2 = '0; nzuimm12 = '0; uimm12 = '0;
+        nzimm = '0; imm = '0; _sext = '0; f1 = '0; f2_low = '0;
+        expand_c = 32'h0;
         quad   = ci[1:0]; funct3 = ci[15:13];
         rd_p   = {2'b01, ci[4:2]};
         rs1_p  = {2'b01, ci[9:7]};
         rs2_p  = {2'b01, ci[4:2]};
-        expand_c = 32'h0;
 
         case (quad)
         2'b00: case (funct3)
@@ -115,9 +113,9 @@ module jv32_rvc #(
         2'b01: begin
             rd_rs1 = ci[11:7];
             case (funct3)
-            3'h0: expand_c = {c_sext6({ci[12],ci[6:2]})[11:0],rd_rs1,3'h0,rd_rs1,7'h13};
+            3'h0: begin _sext = c_sext6({ci[12],ci[6:2]}); expand_c = {_sext[11:0],rd_rs1,3'h0,rd_rs1,7'h13}; end
             3'h1: expand_c = enc_jal(5'd1, c_j_off(ci));
-            3'h2: expand_c = {c_sext6({ci[12],ci[6:2]})[11:0],5'd0,3'h0,rd_rs1,7'h13};
+            3'h2: begin _sext = c_sext6({ci[12],ci[6:2]}); expand_c = {_sext[11:0],5'd0,3'h0,rd_rs1,7'h13}; end
             3'h3: begin
                 if (rd_rs1 == 5'd2) begin
                     nzimm = c_sext10({ci[12],ci[4:3],ci[5],ci[2],ci[6],4'b0});
@@ -133,7 +131,7 @@ module jv32_rvc #(
                 case (funct2)
                 2'h0: expand_c = {7'h00,ci[6:2],rd_p,3'h5,rd_p,7'h13};
                 2'h1: expand_c = {7'h20,ci[6:2],rd_p,3'h5,rd_p,7'h13};
-                2'h2: expand_c = {c_sext6({ci[12],ci[6:2]})[11:0],rd_p,3'h7,rd_p,7'h13};
+                2'h2: begin _sext = c_sext6({ci[12],ci[6:2]}); expand_c = {_sext[11:0],rd_p,3'h7,rd_p,7'h13}; end
                 2'h3: begin
                     f1=ci[12]; f2_low=ci[6:5];
                     if (!f1) case (f2_low)

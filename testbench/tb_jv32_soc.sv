@@ -9,6 +9,7 @@
 module tb_jv32_soc #(
     parameter int unsigned CLK_FREQ  = 100_000_000,
     parameter int unsigned BAUD_RATE = 115_200,
+    parameter bit          USE_CJTAG = 1'b0,
     parameter int unsigned IRAM_SIZE = 128*1024,
     parameter int unsigned DRAM_SIZE = 128*1024,
     parameter bit          FAST_MUL  = 1'b1,
@@ -36,7 +37,17 @@ module tb_jv32_soc #(
 
     // DPI-C memory init
     input  logic        uart_rx_i,
-    output logic        uart_tx_o_monitor  // UART TX line for exit-drain detection
+    output logic        uart_tx_o_monitor,  // UART TX line for exit-drain detection
+
+    // Exposed JTAG / cJTAG pins for debugger-driven simulation
+    input  logic        jtag_ntrst_i,
+    input  logic        jtag_pin0_tck_i,
+    input  logic        jtag_pin1_tms_i,
+    output logic        jtag_pin1_tms_o,
+    output logic        jtag_pin1_tms_oe,
+    input  logic        jtag_pin2_tdi_i,
+    output logic        jtag_pin3_tdo_o,
+    output logic        jtag_pin3_tdo_oe
 );
     import "DPI-C" function void sim_request_exit(input int exit_code);
 
@@ -53,25 +64,12 @@ module tb_jv32_soc #(
             automatic int offset = uaddr - IRAM_BASE;
             automatic int bank   = offset & 3;
             automatic int widx   = offset >> 2;
-            // Unrolled case: Verilator lint requires constant generate indices
-            case (bank)
-                0: u_soc.u_jv32.gen_iram_byte[0].u_sram.mem[widx] = data;
-                1: u_soc.u_jv32.gen_iram_byte[1].u_sram.mem[widx] = data;
-                2: u_soc.u_jv32.gen_iram_byte[2].u_sram.mem[widx] = data;
-                3: u_soc.u_jv32.gen_iram_byte[3].u_sram.mem[widx] = data;
-                default: ;
-            endcase
+            u_soc.u_jv32.u_iram.mem[widx][bank*8 +: 8] = data;
         end else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
             automatic int offset = uaddr - DRAM_BASE;
             automatic int bank   = offset & 3;
             automatic int widx   = offset >> 2;
-            case (bank)
-                0: u_soc.u_jv32.gen_dram_byte[0].u_sram.mem[widx] = data;
-                1: u_soc.u_jv32.gen_dram_byte[1].u_sram.mem[widx] = data;
-                2: u_soc.u_jv32.gen_dram_byte[2].u_sram.mem[widx] = data;
-                3: u_soc.u_jv32.gen_dram_byte[3].u_sram.mem[widx] = data;
-                default: ;
-            endcase
+            u_soc.u_jv32.u_dram.mem[widx][bank*8 +: 8] = data;
         end
     endfunction
 
@@ -81,24 +79,12 @@ module tb_jv32_soc #(
             automatic int offset = uaddr - IRAM_BASE;
             automatic int bank   = offset & 3;
             automatic int widx   = offset >> 2;
-            case (bank)
-                0: return byte'(u_soc.u_jv32.gen_iram_byte[0].u_sram.mem[widx]);
-                1: return byte'(u_soc.u_jv32.gen_iram_byte[1].u_sram.mem[widx]);
-                2: return byte'(u_soc.u_jv32.gen_iram_byte[2].u_sram.mem[widx]);
-                3: return byte'(u_soc.u_jv32.gen_iram_byte[3].u_sram.mem[widx]);
-                default: ;
-            endcase
+            return byte'(u_soc.u_jv32.u_iram.mem[widx][bank*8 +: 8]);
         end else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
             automatic int offset = uaddr - DRAM_BASE;
             automatic int bank   = offset & 3;
             automatic int widx   = offset >> 2;
-            case (bank)
-                0: return byte'(u_soc.u_jv32.gen_dram_byte[0].u_sram.mem[widx]);
-                1: return byte'(u_soc.u_jv32.gen_dram_byte[1].u_sram.mem[widx]);
-                2: return byte'(u_soc.u_jv32.gen_dram_byte[2].u_sram.mem[widx]);
-                3: return byte'(u_soc.u_jv32.gen_dram_byte[3].u_sram.mem[widx]);
-                default: ;
-            endcase
+            return byte'(u_soc.u_jv32.u_dram.mem[widx][bank*8 +: 8]);
         end
         return 8'hFF;
     endfunction
@@ -126,6 +112,7 @@ module tb_jv32_soc #(
         .CLK_FREQ        (CLK_FREQ),
         .BAUD_RATE       (SIM_BAUD_RATE),  // 8 cycles/bit — fast yet loopback-safe
         .UART_FIFO_DEPTH (4096),           // deep FIFO; CPU never stalls on TX
+        .USE_CJTAG       (USE_CJTAG),
         .IRAM_SIZE       (IRAM_SIZE),
         .DRAM_SIZE       (DRAM_SIZE),
         .FAST_MUL        (FAST_MUL),
@@ -136,11 +123,19 @@ module tb_jv32_soc #(
         .IRAM_BASE       (IRAM_BASE),
         .DRAM_BASE       (DRAM_BASE)
     ) u_soc (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .uart_rx_i      (uart_rx_i),
-        .uart_tx_o      (uart_tx_o),
-        .ext_irq_i      (16'h0),
+        .clk                (clk),
+        .rst_n              (rst_n),
+        .uart_rx_i          (uart_rx_i),
+        .uart_tx_o          (uart_tx_o),
+        .jtag_ntrst_i       (jtag_ntrst_i),
+        .jtag_pin0_tck_i    (jtag_pin0_tck_i),
+        .jtag_pin1_tms_i    (jtag_pin1_tms_i),
+        .jtag_pin1_tms_o    (jtag_pin1_tms_o),
+        .jtag_pin1_tms_oe   (jtag_pin1_tms_oe),
+        .jtag_pin2_tdi_i    (jtag_pin2_tdi_i),
+        .jtag_pin3_tdo_o    (jtag_pin3_tdo_o),
+        .jtag_pin3_tdo_oe   (jtag_pin3_tdo_oe),
+        .ext_irq_i          (16'h0),
         // TCM slave: tied off (ELF loading uses DPI mem_write_byte)
         .s_tcm_araddr   (32'h0), .s_tcm_arvalid (1'b0), .s_tcm_arready (),
         .s_tcm_rdata    (),      .s_tcm_rresp   (),     .s_tcm_rvalid  (), .s_tcm_rready(1'b1),

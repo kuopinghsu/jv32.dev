@@ -20,23 +20,38 @@ module jv32_regfile (
     // Write port (WB stage)
     input  logic        we,
     input  logic [4:0]  rd_addr,
-    input  logic [31:0] rd_data
+    input  logic [31:0] rd_data,
+
+    // Debug sideband access (used while the hart is halted)
+    input  logic [4:0]  dbg_addr,
+    input  logic        dbg_we,
+    input  logic [31:0] dbg_wdata,
+    output logic [31:0] dbg_rdata
 );
 
     logic [31:0] regs [31:1];   // x0 is hardwired to 0
 
     // Asynchronous read with write-through forwarding
-    assign rs1_data = (rs1_addr == 5'd0)                          ? 32'd0   :
-                      (we && (rs1_addr == rd_addr))               ? rd_data :
+    assign rs1_data = (rs1_addr == 5'd0)                          ? 32'd0     :
+                      (dbg_we && (rs1_addr == dbg_addr))          ? dbg_wdata :
+                      (we && (rs1_addr == rd_addr))               ? rd_data   :
                       regs[rs1_addr];
 
-    assign rs2_data = (rs2_addr == 5'd0)                          ? 32'd0   :
-                      (we && (rs2_addr == rd_addr))               ? rd_data :
+    assign rs2_data = (rs2_addr == 5'd0)                          ? 32'd0     :
+                      (dbg_we && (rs2_addr == dbg_addr))          ? dbg_wdata :
+                      (we && (rs2_addr == rd_addr))               ? rd_data   :
                       regs[rs2_addr];
+
+    assign dbg_rdata = (dbg_addr == 5'd0)                         ? 32'd0     :
+                       (dbg_we)                                   ? dbg_wdata :
+                       (we && (dbg_addr == rd_addr))              ? rd_data   :
+                       regs[dbg_addr];
 
     // Synchronous write
     always_ff @(posedge clk) begin
-        if (we && (rd_addr != 5'd0))
+        if (dbg_we && (dbg_addr != 5'd0))
+            regs[dbg_addr] <= dbg_wdata;
+        else if (we && (rd_addr != 5'd0))
             regs[rd_addr] <= rd_data;
     end
 

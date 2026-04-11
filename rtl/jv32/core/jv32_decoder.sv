@@ -7,10 +7,6 @@
 // by jv32_rvc) into control signals for the 3-stage pipeline.
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-`endif
-
 module jv32_decoder (
     input  logic [31:0] instr,
     input  logic        valid,
@@ -59,9 +55,7 @@ module jv32_decoder (
     output logic        is_fence_i,
     output logic        is_wfi
 );
-`ifndef SYNTHESIS
     import jv32_pkg::*;
-`endif
 
     logic [6:0] opcode;
     logic [2:0] funct3;

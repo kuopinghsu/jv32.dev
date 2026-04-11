@@ -23,6 +23,8 @@
 //   DBG_GRP_UART    6   — UART peripheral
 //   DBG_GRP_CLIC    7   — CLIC interrupt controller
 //   DBG_GRP_MAGIC   8   — Magic simulation device (exit, NCM)
+//   DBG_GRP_JTAG    9   — JTAG / cJTAG transport and TAP activity
+//   DBG_GRP_DTM    10   — RISC-V debug transport / debug-module activity
 //   DBG_GRP_ICACHE 13   — NCM / magic-device icache-bypass (legacy)
 // ============================================================================
 
@@ -36,6 +38,8 @@
 `define DBG_GRP_UART    6
 `define DBG_GRP_CLIC    7
 `define DBG_GRP_MAGIC   8
+`define DBG_GRP_JTAG    9
+`define DBG_GRP_DTM    10
 `define DBG_GRP_ICACHE 13   // legacy alias used by axi_magic.sv
 
 // Default: all groups enabled. Override with +define+DEBUG_GROUP=<decimal>
@@ -78,6 +82,8 @@ package jv32_pkg;
             `DBG_GRP_UART:   return "UART  ";
             `DBG_GRP_CLIC:   return "CLIC  ";
             `DBG_GRP_MAGIC:  return "MAGIC ";
+            `DBG_GRP_JTAG:   return "JTAG  ";
+            `DBG_GRP_DTM:    return "DTM   ";
             `DBG_GRP_ICACHE: return "ICACHE";
             default:         return "???   ";
         endcase

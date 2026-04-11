@@ -161,9 +161,13 @@ int main(int argc, char** argv) {
     // -------------------------------------------------------------------------
     // Reset
     // -------------------------------------------------------------------------
-    dut->rst_n    = 0;
-    dut->clk      = 0;
-    dut->uart_rx_i= 1; // idle
+    dut->rst_n             = 0;
+    dut->clk               = 0;
+    dut->uart_rx_i         = 1; // idle
+    dut->jtag_ntrst_i      = 0;
+    dut->jtag_pin0_tck_i   = 0;
+    dut->jtag_pin1_tms_i   = 1; // JTAG idle / TAP reset state
+    dut->jtag_pin2_tdi_i   = 0;
     dut->eval();
 
     for (int i = 0; i < 10; i++) tick(dut, tfp);
@@ -178,6 +182,7 @@ int main(int argc, char** argv) {
     // -------------------------------------------------------------------------
     // Release reset
     // -------------------------------------------------------------------------
+    dut->jtag_ntrst_i = 1;
     dut->rst_n = 1;
     dut->eval();
 

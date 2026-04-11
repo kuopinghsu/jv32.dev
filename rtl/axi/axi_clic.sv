@@ -75,14 +75,6 @@ module axi_clic #(
     logic [NUM_IRQ-1:0] clicint_ie;
     logic [7:0]         clicint_ctl [NUM_IRQ]; // priority/level
 
-    // =====================================================================
-    // mtime free-running counter
-    // =====================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) mtime <= 64'h0;
-        else if (instret_inc) mtime <= mtime + 64'd1;
-    end
-
     assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
     assign software_irq_o = msip;
 
@@ -121,9 +113,16 @@ module axi_clic #(
             aw_active <= 1'b0; aw_addr_r <= 32'h0;
             w_active  <= 1'b0; w_data_r  <= 32'h0; w_strb_r <= 4'h0;
             s_bvalid  <= 1'b0;
+            mtime     <= 64'h0;
             mtimecmp  <= 64'hFFFF_FFFF_FFFF_FFFF;
             msip      <= 1'b0;
+            for (int i = 0; i < NUM_IRQ; i++) begin
+                clicint_ie[i]  <= 1'b0;
+                clicint_ctl[i] <= 8'h0;
+            end
         end else begin
+            // Auto-increment mtime on instruction retirement
+            if (instret_inc) mtime <= mtime + 64'd1;
             // Accept AW
             if (s_awvalid && s_awready) begin aw_active <= 1'b1; aw_addr_r <= s_awaddr; end
             // Accept W

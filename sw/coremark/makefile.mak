@@ -1,4 +1,4 @@
-PORT_CFLAGS += -O3 -DITERATIONS=4 -DPERFORMANCE_RUN=1
+PORT_CFLAGS += -O3 -DITERATIONS=4 -DPERFORMANCE_RUN=1 -Wno-unused-parameter -Wno-unused-but-set-parameter
 
 #PORT_CFLAGS += -mtune=rocket -frename-registers -fselective-scheduling
 PORT_CFLAGS += -fno-common -funroll-loops -finline-functions -falign-functions=16

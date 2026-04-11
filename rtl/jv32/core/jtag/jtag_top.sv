@@ -49,10 +49,6 @@ module jtag_top #(
     output logic        pin3_tdo_o,     // JTAG TDO (cJTAG: 0)
     output logic        pin3_tdo_oe,    // Output enable: 0=drive output, 1=tristate
 
-    // Status outputs (cJTAG mode only)
-    output logic        cjtag_online_o, // cJTAG online status
-    output logic        cjtag_nsp_o,    // cJTAG standard protocol indicator
-
     // Debug interface to CPU
     output logic        halt_req_o,      // Request CPU to halt
     input  logic        halted_i,        // CPU is halted
@@ -148,11 +144,7 @@ module jtag_top #(
             .tck_o          (tap_tck),
             .tms_o          (tap_tms),
             .tdi_o          (tap_tdi),
-            .tdo_i          (tap_tdo),
-
-            // Status
-            .online_o       (cjtag_online_o),
-            .nsp_o          (cjtag_nsp_o)
+            .tdo_i          (tap_tdo)
         );
 
     end else begin : gen_jtag_mode
@@ -161,10 +153,6 @@ module jtag_top #(
         assign tap_tms = jtag_tms;
         assign tap_tdi = jtag_tdi;
         assign jtag_tdo = tap_tdo;
-
-        // Tie off unused cJTAG status outputs
-        assign cjtag_online_o = 1'b0;
-        assign cjtag_nsp_o = 1'b1;
     end
 
     // =========================================================================

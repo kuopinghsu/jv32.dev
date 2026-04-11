@@ -138,6 +138,7 @@ RTL_SOURCES = \
     $(AXI_DIR)/axi_pkg.sv \
     $(CORE_DIR)/jv32_pkg.sv \
     $(filter-out $(CORE_DIR)/jv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
+    $(wildcard $(CORE_DIR)/jtag/*.sv) \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
     $(wildcard $(MEM_DIR)/*.sv) \
@@ -160,7 +161,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 # Phony targets
 # ============================================================================
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
-        rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl \
+        rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
         lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests
@@ -214,7 +215,7 @@ FORCE:
 
 # Lint umbrella: runs all four lint passes in sequence.
 # Stops on the first failing pass.
-lint: lint-full lint-modules lint-decl lint-svlint
+lint: lint-full lint-modules lint-decl lint-ffreset lint-svlint
 
 # Full-design Verilator lint (all RTL + testbench compiled together)
 lint-full:
@@ -267,12 +268,25 @@ lint-modules:
 	fi
 
 # Declaration-order check: detect signals used before their declaration line.
-# Synthesis tools (DC, Genus, Vivado strict mode) reject such forward references.
+# Synthesis tools (DC, Genus, Vivado strict mode) reject such forward references
+# even though SV technically allows module-scope forward references.
+# Uses scripts/check_synth_style.py which does not require any extra tools.
 lint-decl:
 	@echo "=========================================="
 	@echo "Declaration-order check ($(words $(RTL_ONLY_SRCS)) files)"
 	@echo "=========================================="
-	@python3 scripts/check_decl_order.py $(RTL_ONLY_SRCS)
+	@python3 scripts/check_synth_style.py --no-reset $(RTL_ONLY_SRCS)
+
+# Partial-reset check: detect always_ff blocks where some signals are assigned
+# but not included in the reset branch.  Mixed reset/no-reset in a single
+# always_ff is a synthesis anti-pattern (Vivado Synth 8-489 / CDC warnings).
+# Fix by either resetting all signals in the block or splitting into separate
+# always_ff blocks (one with reset, one without).
+lint-ffreset:
+	@echo "=========================================="
+	@echo "Partial-reset check ($(words $(RTL_ONLY_SRCS)) files)"
+	@echo "=========================================="
+	@python3 scripts/check_synth_style.py --no-decl $(RTL_ONLY_SRCS)
 
 # svlint structural/intent lint of RTL source files.
 # Skipped automatically when SVLINT is 'None' or the binary does not exist.
@@ -666,7 +680,7 @@ help:
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"
-	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-svlint)"
+	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-svlint)"
 	@echo "  lint-full            Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules         Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
 	@echo "  lint-decl            Check signal declaration order (use-before-declare)"

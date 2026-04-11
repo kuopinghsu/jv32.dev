@@ -40,24 +40,17 @@ module axi_ram_ctrl #(
     logic                 ram_ce, ram_we;
     logic [ALEN-1:0]      ram_addr;
     logic [31:0]          ram_wdata, ram_rdata;
+    logic [3:0]           ram_wbe;
 
-    // Instantiate 4 byte-wide SRAMs to support byte enable
-    logic [3:0] byte_we;
-    logic [7:0] byte_rdata [4];
-    generate
-        for (genvar b = 0; b < 4; b++) begin : gen_byte_sram
-            sram_1rw #(.DEPTH(DEPTH), .WIDTH(8)) u_sram (
-                .clk   (clk),
-                .ce    (ram_ce),
-                .we    (byte_we[b]),
-                .addr  (ram_addr),
-                .wdata (ram_wdata[b*8+7:b*8]),
-                .rdata (byte_rdata[b])
-            );
-        end
-    endgenerate
-
-    assign ram_rdata = {byte_rdata[3], byte_rdata[2], byte_rdata[1], byte_rdata[0]};
+    sram_1rw #(.DEPTH(DEPTH), .WIDTH(32)) u_sram (
+        .clk   (clk),
+        .ce    (ram_ce),
+        .we    (ram_we),
+        .wbe   (ram_wbe),
+        .addr  (ram_addr),
+        .wdata (ram_wdata),
+        .rdata (ram_rdata)
+    );
 
     // =====================================================================
     // Write channel
@@ -96,7 +89,7 @@ module axi_ram_ctrl #(
 
     assign ram_ce    = do_write || (s_arvalid && s_arready);
     assign ram_we    = do_write;
-    assign byte_we   = do_write ? (w_active ? w_strb_r : s_wstrb) : 4'h0;
+    assign ram_wbe   = do_write ? (w_active ? w_strb_r : s_wstrb) : 4'h0;
     assign ram_addr  = do_write ? ALEN'((aw_active ? aw_addr_r : s_awaddr) >> 2) :
                                   ALEN'(s_araddr >> 2);
     assign ram_wdata = w_active ? w_data_r : s_wdata;

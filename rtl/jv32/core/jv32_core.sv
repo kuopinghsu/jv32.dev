@@ -17,10 +17,6 @@
 // Forwarding: WB→EX same-cycle forwarding (register data available in WB)
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-`endif
-
 module jv32_core #(
     parameter bit          FAST_MUL   = 1'b1,
     parameter bit          FAST_DIV   = 1'b1,
@@ -60,6 +56,21 @@ module jv32_core #(
     input  logic [4:0]  clic_id,            // winning IRQ index for mtvt table
     output logic        clic_ack,
 
+    // External debug interface (JTAG DM)
+    input  logic        halt_req_i,
+    output logic        halted_o,
+    input  logic        resume_req_i,
+    output logic        resumeack_o,
+    input  logic [4:0]  dbg_reg_addr_i,
+    input  logic [31:0] dbg_reg_wdata_i,
+    input  logic        dbg_reg_we_i,
+    output logic [31:0] dbg_reg_rdata_o,
+    input  logic [31:0] dbg_pc_wdata_i,
+    input  logic        dbg_pc_we_i,
+    output logic [31:0] dbg_pc_o,
+    input  logic        dbg_singlestep_i,
+    input  logic        dbg_ebreakm_i,
+
     // I-fetch flush: asserted on branch/jump/exception/mret/IRQ redirect.
     // Allows jv32_top to suppress the stale TCM response arriving one cycle later.
     output logic        imem_flush,
@@ -76,9 +87,9 @@ module jv32_core #(
     output logic [31:0] trace_mem_addr,
     output logic [31:0] trace_mem_data
 );
-`ifndef SYNTHESIS
     import jv32_pkg::*;
-`endif
+
+    localparam logic [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;
 
     // =====================================================================
     // RVC expander
@@ -121,16 +132,26 @@ module jv32_core #(
     logic [4:0]  rf_rd;
     logic [31:0] rf_wdata;
 
+    // Debug / halt control
+    logic dbg_halted_r;
+    logic dbg_resumeack_r;
+    logic dbg_step_pending_r;
+    logic dbg_enter_debug;
+
     jv32_regfile u_regfile (
-        .clk      (clk),
-        .rst_n    (rst_n),
-        .rs1_addr (rs1_addr_d),
-        .rs2_addr (rs2_addr_d),
-        .rs1_data (rs1_data),
-        .rs2_data (rs2_data),
-        .we       (rf_we),
-        .rd_addr  (rf_rd),
-        .rd_data  (rf_wdata)
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .rs1_addr  (rs1_addr_d),
+        .rs2_addr  (rs2_addr_d),
+        .rs1_data  (rs1_data),
+        .rs2_data  (rs2_data),
+        .we        (rf_we),
+        .rd_addr   (rf_rd),
+        .rd_data   (rf_wdata),
+        .dbg_addr  (dbg_reg_addr_i),
+        .dbg_we    (dbg_reg_we_i && dbg_halted_r),
+        .dbg_wdata (dbg_reg_wdata_i),
+        .dbg_rdata (dbg_reg_rdata_o)
     );
 
     // =====================================================================
@@ -141,6 +162,13 @@ module jv32_core #(
     logic        alu_operand_stall;
     logic [31:0] alu_result;
     logic        alu_ready;
+
+    // Forward-declared helpers used by earlier combinational blocks.
+    logic [31:0] amo_load_data;
+    logic        lr_valid;
+    logic [31:0] lr_addr;
+    logic [31:0] load_result;
+    logic        alu_stall;
 
     jv32_alu #(
         .FAST_MUL   (FAST_MUL),
@@ -273,7 +301,11 @@ module jv32_core #(
     logic        if_flush;
     logic [31:0] if_flush_pc;
 
-    assign imem_req_valid = 1'b1;
+    assign halted_o    = dbg_halted_r;
+    assign resumeack_o = dbg_resumeack_r;
+    assign dbg_pc_o    = pc_if;
+
+    assign imem_req_valid = !dbg_halted_r;
     assign imem_req_addr  = pc_if;
 
     // =====================================================================
@@ -324,9 +356,10 @@ module jv32_core #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) pc_if <= BOOT_ADDR;
+        else if (dbg_pc_we_i) pc_if <= dbg_pc_wdata_i;
         else if (!if_stall) begin
-            if      (if_flush)    pc_if <= if_flush_pc;
-            else if (bp_redirect) pc_if <= bp_redirect_pc;
+            if      (if_flush)      pc_if <= if_flush_pc;
+            else if (bp_redirect)   pc_if <= bp_redirect_pc;
             else if (rvc_mem_ready) pc_if <= pc_if + 32'd4;
         end
     end
@@ -335,9 +368,18 @@ module jv32_core #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            if_ex_r               <= '0;
+            if_ex_r.valid         <= 1'b0;
+            if_ex_r.pc            <= 32'h0;
+            if_ex_r.instr         <= 32'h0;
+            if_ex_r.orig_instr    <= 32'h0;
+            if_ex_r.is_compressed <= 1'b0;
+            if_ex_r.bp_taken      <= 1'b0;
+            if_ex_r.ifetch_fault  <= 1'b0;
+        end else if (dbg_pc_we_i) begin
             if_ex_r <= '0;
         end else if (!ex_stall) begin
-            if (ex_flush || if_flush) begin
+            if (ex_flush || if_flush || dbg_enter_debug) begin
                 if_ex_r <= '0;
             end else if (imem_resp_fault) begin
                 // Preserve the original request PC for an instruction-access fault
@@ -525,7 +567,7 @@ module jv32_core #(
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_ILLEGAL_INSTR;
                 ex_exc_tval  = if_ex_r.orig_instr;
-            end else if (dec_is_ebreak) begin
+            end else if (dec_is_ebreak && !dbg_enter_debug) begin
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_BREAKPOINT;
                 ex_exc_tval  = 32'h0;
@@ -539,6 +581,27 @@ module jv32_core #(
         end
     end
 
+    assign dbg_enter_debug = if_ex_r.valid && dec_is_ebreak
+                             && (dbg_ebreakm_i || (if_ex_r.pc[31:4] == DEBUG_ROM_BASE[31:4]));
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dbg_halted_r      <= 1'b0;
+            dbg_resumeack_r   <= 1'b0;
+            dbg_step_pending_r<= 1'b0;
+        end else if (resume_req_i && dbg_halted_r) begin
+            dbg_halted_r       <= 1'b0;
+            dbg_resumeack_r    <= 1'b1;
+            dbg_step_pending_r <= dbg_singlestep_i;
+        end else if (dbg_enter_debug
+                  || (halt_req_i && !dbg_halted_r)
+                  || (dbg_step_pending_r && trace_valid)) begin
+            dbg_halted_r       <= 1'b1;
+            dbg_resumeack_r    <= 1'b0;
+            dbg_step_pending_r <= 1'b0;
+        end
+    end
+
     // Load-use hazard: EX has a load, WB still waiting for data
     // (simplified: stall if previous instruction was a load targeting any rs of current)
     logic load_use_stall;
@@ -549,10 +612,7 @@ module jv32_core #(
     // AMO state machine
     typedef enum logic [1:0] {AMO_IDLE, AMO_LOAD_WAIT, AMO_STORE_WAIT} amo_state_e;
     amo_state_e amo_state;
-    logic [31:0] amo_load_data;
     logic [31:0] amo_store_val;
-    logic        lr_valid;
-    logic [31:0] lr_addr;
 
     // Misaligned-access (MSA) state machine
     // MSA_IDLE     : no misalign operation in progress
@@ -612,7 +672,7 @@ module jv32_core #(
         dmem_req_addr  = 32'h0; dmem_req_wdata = 32'h0; dmem_req_wstrb = 4'h0;
         dmem_stall     = 1'b0;
 
-        if (ex_wb_r.valid && !alu_stall && !irq_cancel) begin
+        if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
             if (ex_wb_r.is_amo) begin
                 case (amo_state)
                     AMO_IDLE: begin
@@ -769,7 +829,6 @@ module jv32_core #(
     end
 
     // Multi-cycle ALU stall
-    logic alu_stall;
     assign alu_stall = if_ex_r.valid && !alu_ready;
 
     // Operand stall: forwarding not yet available (load in WB not done)
@@ -779,7 +838,7 @@ module jv32_core #(
     // Hazard control
     // =====================================================================
     // ex_stall: stall EX stage (freeze EX/WB, freeze IF/EX, hold IF)
-    assign ex_stall = dmem_stall || alu_stall;
+    assign ex_stall = dmem_stall || alu_stall || dbg_halted_r;
 
     // if_stall: hold IF (do not advance PC or consume RVC output)
     assign if_stall = ex_stall || load_use_stall;
@@ -819,9 +878,12 @@ module jv32_core #(
     // RVC stall/flush
     // bp_redirect also flushes the RVC buffer to discard the instruction
     // speculatively fetched from PC+4 when a backward branch is predicted taken.
+    // Debug PC writes also flush any stale prefetched halfword(s).
     assign rvc_stall    = if_stall;
-    assign rvc_flush    = if_flush || bp_redirect;
-    assign rvc_flush_pc = if_flush ? if_flush_pc : bp_redirect_pc;
+    assign rvc_flush    = if_flush || bp_redirect || dbg_pc_we_i;
+    assign rvc_flush_pc = if_flush     ? if_flush_pc     :
+                          dbg_pc_we_i  ? dbg_pc_wdata_i  :
+                                         bp_redirect_pc;
 
     // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
@@ -831,9 +893,34 @@ module jv32_core #(
     // =====================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            ex_wb_r            <= '0;
+            ex_wb_r.valid       <= 1'b0;
+            ex_wb_r.pc          <= 32'h0;
+            ex_wb_r.orig_instr  <= 32'h0;
+            ex_wb_r.rd_addr     <= 5'd0;
+            ex_wb_r.reg_we      <= 1'b0;
+            ex_wb_r.rd_data     <= 32'h0;
+            ex_wb_r.mem_read    <= 1'b0;
+            ex_wb_r.mem_write   <= 1'b0;
+            ex_wb_r.mem_op      <= MEM_BYTE;
+            ex_wb_r.mem_addr    <= 32'h0;
+            ex_wb_r.store_data  <= 32'h0;
+            ex_wb_r.is_amo      <= 1'b0;
+            ex_wb_r.amo_op      <= AMO_ADD;
+            ex_wb_r.csr_op      <= 3'b000;
+            ex_wb_r.csr_addr    <= 12'h000;
+            ex_wb_r.csr_wdata   <= 32'h0;
+            ex_wb_r.csr_zimm    <= 5'd0;
+            ex_wb_r.exception   <= 1'b0;
+            ex_wb_r.exc_cause   <= EXC_INSTR_ADDR_MISALIGNED;
+            ex_wb_r.exc_tval    <= 32'h0;
+            ex_wb_r.mret        <= 1'b0;
+            ex_wb_r.redirect    <= 1'b0;
+            ex_wb_r.redirect_pc <= 32'h0;
+        end else if (dbg_pc_we_i) begin
             ex_wb_r <= '0;
         end else if (!ex_stall) begin
-            if (load_use_stall || !if_ex_r.valid || wb_redirect) begin
+            if (load_use_stall || !if_ex_r.valid || wb_redirect || dbg_enter_debug) begin
                 // inject bubble
                 ex_wb_r <= '0;
             end else begin
@@ -870,7 +957,6 @@ module jv32_core #(
     // Combined 64-bit window for cross-word loads: {hi_word, lo_word}
     // Shifted by byte offset to extract the misaligned value.
     logic [63:0] msa_window;
-    logic [31:0] load_result;
     logic  [7:0] load_byte;
     logic [15:0] load_half;
     assign msa_window = {dmem_resp_data, msa_lo_data};
@@ -903,7 +989,7 @@ module jv32_core #(
         rf_we    = 1'b0;
         rf_rd    = ex_wb_r.rd_addr;
         rf_wdata = ex_wb_r.rd_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel && !dbg_halted_r) begin
             rf_we = 1'b1;
             // AMO checked first: decoder sets mem_read=1 for AMO too.
             if (ex_wb_r.is_amo) begin
@@ -927,18 +1013,22 @@ module jv32_core #(
     // it re-executes after mret — matching software-simulator behaviour.
     assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret;
 
-    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !dbg_halted_r;
     assign trace_reg_we   = ex_wb_r.valid && ex_wb_r.reg_we
                             && (ex_wb_r.rd_addr != 5'd0)
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !dbg_halted_r;
     assign trace_pc       = ex_wb_r.pc;
     assign trace_rd       = ex_wb_r.rd_addr;
     assign trace_rd_data  = rf_wdata;
     assign trace_instr    = ex_wb_r.orig_instr;
     assign trace_mem_we   = ex_wb_r.valid && ex_wb_r.mem_write
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !dbg_halted_r;
     assign trace_mem_re   = ex_wb_r.valid && ex_wb_r.mem_read
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel;
+                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !dbg_halted_r;
     assign trace_mem_addr = ex_wb_r.mem_addr;
     assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
                             ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :

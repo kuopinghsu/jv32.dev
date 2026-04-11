@@ -14,10 +14,6 @@
 // FAST_SHIFT=0: 1-bit-per-cycle serial shifter
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-`endif
-
 module jv32_alu #(
     parameter bit FAST_MUL   = 1'b1,
     parameter bit FAST_DIV   = 1'b1,
@@ -36,9 +32,7 @@ module jv32_alu #(
     output logic [31:0] result,
     output logic        ready
 );
-`ifndef SYNTHESIS
     import jv32_pkg::*;
-`endif
 
     // ========================================================================
     // Shift Logic

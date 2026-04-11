@@ -46,11 +46,7 @@ module cjtag_bridge (
     output logic        tck_o,          // JTAG clock to TAP
     output logic        tms_o,          // JTAG TMS to TAP
     output logic        tdi_o,          // JTAG TDI to TAP
-    input  logic        tdo_i,          // JTAG TDO from TAP
-
-    // Status
-    output logic        online_o,       // 1=online, 0=offline
-    output logic        nsp_o           // Standard Protocol indicator
+    input  logic        tdo_i           // JTAG TDO from TAP
 );
 
     // =========================================================================
@@ -481,13 +477,6 @@ module cjtag_bridge (
     // TMSC output enable: Registered, changes on rising edge
     assign tmsc_oen = tmsc_oen_int;
 
-    // Status outputs
-    assign online_o = (state == ST_OSCAN1);
-    // nsp_o: Non-Standard Protocol indicator, per IEEE 1149.7 §12.
-    // HIGH when NOT in OScan1 (offline or activating) — i.e., legacy 4-wire JTAG is in use.
-    // LOW when in OScan1 — 2-wire cJTAG protocol is active.
-    assign nsp_o = (state != ST_OSCAN1);
-
     `ifdef DEBUG
     // Monitor state changes
     logic [2:0] prev_state;
@@ -610,27 +599,6 @@ module cjtag_bridge (
     endproperty
     assert property (bit_pos_advances)
         else $error("[ASSERT] Bit position did not advance after TCKC negedge");
-
-    // -------------------------------------------------------------------------
-    // Status Signal Assertions
-    // -------------------------------------------------------------------------
-
-    // Assert: online_o is high only in OSCAN1 state
-    property online_only_in_oscan1;
-        @(posedge clk_i) disable iff (!ntrst_i)
-        online_o == (state == ST_OSCAN1);
-    endproperty
-    assert property (online_only_in_oscan1)
-        else $error("[ASSERT] online_o mismatch: online_o=%b, state=%0d",
-                    online_o, state);
-
-    // Assert: nsp_o is inverse of online state
-    property nsp_inverse_of_online;
-        @(posedge clk_i) disable iff (!ntrst_i)
-        nsp_o == !online_o;
-    endproperty
-    assert property (nsp_inverse_of_online)
-        else $error("[ASSERT] nsp_o should be inverse of online_o");
 
     // -------------------------------------------------------------------------
     // TCK Generation Assertions

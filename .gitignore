@@ -3,6 +3,7 @@
 /build2/
 /build3/
 /syn/build/
+/syn/openlane/slpp_all/cache
 *.o
 *.d
 *.a
@@ -71,3 +72,4 @@ rtos/zephyr/build.*
 
 /verif/work
 
+syn/pdk/.nangate_home

@@ -8,10 +8,6 @@
 // plus read-only mvendorid/marchid/mimpid/mhartid.
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-`endif
-
 module jv32_csr (
     input  logic        clk,
     input  logic        rst_n,
@@ -67,9 +63,7 @@ module jv32_csr (
     // Instruction-retired pulse
     input  logic        instret_inc
 );
-`ifndef SYNTHESIS
     import jv32_pkg::*;
-`endif
 
     // =====================================================================
     // CSR registers
@@ -90,6 +84,7 @@ module jv32_csr (
     logic [31:0] mtvt_reg;
     logic [7:0]  mintthresh_reg; // current interrupt threshold
     logic [7:0]  mintstatus_mil; // current interrupt level (in mintstatus[31:24])
+    logic [31:0] clic_vec_pc;
 
     // Cycle / instret counters (64-bit)
     logic [63:0] mcycle_cnt;
@@ -287,7 +282,6 @@ module jv32_csr (
     // =====================================================================
     // CLIC vector PC: mtvt base + IRQ index * 4
     // =====================================================================
-    logic [31:0] clic_vec_pc;
     assign clic_vec_pc = mtvt_reg + {25'd0, clic_id, 2'b00};
 
     // Tail-chain: asserted the cycle mret fires if a CLIC IRQ above threshold is pending.

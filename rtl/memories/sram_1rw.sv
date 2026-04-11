@@ -36,15 +36,16 @@
 // ============================================================================
 
 module sram_1rw #(
-    parameter int DEPTH = 256,  // number of words
-    parameter int WIDTH = 32    // bits per word
+    parameter int DEPTH = 2048,  // number of words
+    parameter int WIDTH = 32     // bits per word
 ) (
-    input  logic                     clk,
-    input  logic                     ce,    // chip enable
-    input  logic                     we,    // write enable
-    input  logic [$clog2(DEPTH)-1:0] addr,
-    input  logic [WIDTH-1:0]         wdata,
-    output logic [WIDTH-1:0]         rdata
+    input  logic                       clk,
+    input  logic                       ce,    // chip enable
+    input  logic                       we,    // write enable (any byte active)
+    input  logic [(WIDTH/8)-1:0]       wbe,   // byte write enables (active-high)
+    input  logic [$clog2(DEPTH)-1:0]   addr,
+    input  logic [WIDTH-1:0]           wdata,
+    output logic [WIDTH-1:0]           rdata
 );
 
 `ifdef XILINX_FPGA
@@ -75,10 +76,12 @@ module sram_1rw #(
 
     always @(posedge clk) begin
         if (ce) begin
-            if (we)
-                mem[addr] <= wdata;
-            else
+            if (we) begin
+                for (int _b = 0; _b < WIDTH/8; _b++)
+                    if (wbe[_b]) mem[addr][_b*8 +: 8] <= wdata[_b*8 +: 8];
+            end else begin
                 ram_rdata <= mem[addr];  // NO_CHANGE: not updated on writes
+            end
         end
     end
 
@@ -118,7 +121,7 @@ module sram_1rw #(
         // unused ports
         .aclr0     (1'b0),  .aclr1   (1'b0),
         .addressstall_a (1'b0),
-        .byteena_a (1'b1),
+        .byteena_a (wbe),   // byte write enables
         .clocken1  (1'b1),
         .rden_a    (~we)     // optional read-enable for power saving
     );
@@ -150,20 +153,14 @@ module sram_1rw #(
     // cache configurations produced by icache.sv.  Un-comment the relevant
     // block and delete the behavioural section.
     //
-    // ── icache.sv SRAM dimensions ────────────────────────────────────────────
-    //
-    //  Instance        | DEPTH          | WIDTH
-    //  ────────────────┼────────────────┼──────────────────────────────────────
-    //  tag_sram[way]   | NUM_SETS       | TAG_BITS = 32-INDEX_BITS-OFF_BITS
-    //  data_sram[way]  | NUM_SETS×WPL   | 32 (one instruction word per entry)
-    //
-    //  Example: 4 KB / 64 B line / 2-way → NUM_SETS=32, TAG_BITS=21, WPL=16
-    //    tag_sram:  DEPTH=32,  WIDTH=21
-    //    data_sram: DEPTH=512, WIDTH=32
-    //
-    //  Example: 16 KB / 128 B line / 4-way → NUM_SETS=32, TAG_BITS=19, WPL=32
-    //    tag_sram:  DEPTH=32,   WIDTH=19
-    //    data_sram: DEPTH=1024, WIDTH=32
+// ── TCM SRAM dimensions (jv32_top) ──────────────────────────────────────
+//
+//  Instance | DEPTH | WIDTH | wbe bits
+//  ─────────┼───────┼───────┼──────────────
+//  u_iram   | 2048  |  32   | 4 (byte mask)
+//  u_dram   | 2048  |  32   | 4 (byte mask)
+//
+//  Total memory: 2048 × 32 bits = 8 KB per TCM (IRAM + DRAM = 16 KB)
     //
     // =========================================================================
 
@@ -173,8 +170,9 @@ module sram_1rw #(
     always_ff @(posedge clk) begin
         if (ce) begin
             if (we) begin
-                mem[addr] <= wdata;
-                rdata     <= {WIDTH{1'bx}};  // undefined during write (no-change)
+                for (int _b = 0; _b < WIDTH/8; _b++)
+                    if (wbe[_b]) mem[addr][_b*8 +: 8] <= wdata[_b*8 +: 8];
+                rdata <= {WIDTH{1'bx}};  // undefined during write (no-change)
             end else begin
                 rdata <= mem[addr];
             end
