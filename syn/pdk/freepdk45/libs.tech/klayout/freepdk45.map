@@ -1,0 +1,24 @@
+# FreePDK45 KLayout DEF layer map stub
+# Maps DEF/LEF layer names to GDS layer numbers for Nangate 45nm.
+# Synthesis-only flows do not invoke KLayout for stream-out.
+#
+# Format: <LEF_layer_name> <GDS_layer>/<GDS_datatype>
+metal1  34/0
+metal2  35/0
+metal3  36/0
+metal4  37/0
+metal5  38/0
+metal6  39/0
+metal7  40/0
+metal8  41/0
+metal9  42/0
+metal10 43/0
+via1    50/0
+via2    51/0
+via3    52/0
+via4    53/0
+via5    54/0
+via6    55/0
+via7    56/0
+via8    57/0
+via9    58/0

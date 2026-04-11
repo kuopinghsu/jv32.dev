@@ -1,0 +1,16 @@
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_pkg.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_rvc.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_decoder.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_alu.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_regfile.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_csr.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/core/jv32_core.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/sram_1rw.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_pkg.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_xbar.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_uart.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_clic.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_ram_ctrl.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/axi/axi_magic.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32/jv32_top.sv
+/home/kuoping/Projects/jv32/syn/openlane/slpp_all/lib/work/jv32_soc.sv

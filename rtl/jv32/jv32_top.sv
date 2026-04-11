@@ -42,11 +42,6 @@
 //  For ELF loading (pre-simulation), use DPI mem_write_byte instead.
 // ============================================================================
 
-`ifdef SYNTHESIS
-import jv32_pkg::*;
-import axi_pkg::*;
-`endif
-
 module jv32_top #(
     parameter bit          FAST_MUL   = 1'b1,
     parameter bit          FAST_DIV   = 1'b1,
@@ -118,6 +113,26 @@ module jv32_top #(
     output logic        clic_ack,
 
     // =========================================================================
+    // Debug interface from the JTAG debug module
+    // =========================================================================
+    input  logic        dbg_hartreset_i,
+    input  logic        dbg_halt_req_i,
+    output logic        dbg_halted_o,
+    input  logic        dbg_resume_req_i,
+    output logic        dbg_resumeack_o,
+    input  logic [4:0]  dbg_reg_addr_i,
+    input  logic [31:0] dbg_reg_wdata_i,
+    input  logic        dbg_reg_we_i,
+    output logic [31:0] dbg_reg_rdata_o,
+    input  logic [31:0] dbg_pc_wdata_i,
+    input  logic        dbg_pc_we_i,
+    output logic [31:0] dbg_pc_o,
+    input  logic        dbg_singlestep_i,
+    input  logic        dbg_ebreakm_i,
+    input  logic [31:0] progbuf0_i,
+    input  logic [31:0] progbuf1_i,
+
+    // =========================================================================
     // Trace
     // =========================================================================
     output logic        trace_valid,
@@ -129,10 +144,8 @@ module jv32_top #(
     output logic        trace_mem_we,    output logic        trace_mem_re,    output logic [31:0] trace_mem_addr,
     output logic [31:0] trace_mem_data
 );
-`ifndef SYNTHESIS
     import jv32_pkg::*;
     import axi_pkg::*;
-`endif
 
     // =========================================================================
     // TCM parameters
@@ -153,6 +166,9 @@ module jv32_top #(
         return in_iram(addr) | in_dram(addr);
     endfunction
 
+    localparam logic [31:0] DEBUG_ROM_BASE   = 32'h0F80_0000;
+    localparam logic [31:0] DEBUG_ROM_EBREAK = 32'h0010_0073;
+
     // =========================================================================
     // Core memory interface
     // =========================================================================
@@ -172,6 +188,9 @@ module jv32_top #(
     logic [3:0]  dmem_req_wstrb;
     logic        dmem_resp_valid;
     logic [31:0] dmem_resp_data;
+    logic        core_rst_n;
+
+    assign core_rst_n = rst_n & ~dbg_hartreset_i;
 
     jv32_core #(
         .FAST_MUL   (FAST_MUL),
@@ -181,7 +200,7 @@ module jv32_top #(
         .BOOT_ADDR  (BOOT_ADDR)
     ) u_core (
         .clk             (clk),
-        .rst_n           (rst_n),
+        .rst_n           (core_rst_n),
         .imem_req_valid  (imem_req_valid),
         .imem_req_addr   (imem_req_addr),
         .imem_resp_valid (imem_resp_valid),
@@ -189,14 +208,6 @@ module jv32_top #(
         .imem_resp_pc       (imem_resp_pc),
         .imem_resp_fault    (imem_resp_fault),
         .imem_resp_fault_pc (imem_resp_fault_pc),
-        .imem_flush         (imem_flush_core),
-        .dmem_req_valid  (dmem_req_valid),
-        .dmem_req_write  (dmem_req_write),
-        .dmem_req_addr   (dmem_req_addr),
-        .dmem_req_wdata  (dmem_req_wdata),
-        .dmem_req_wstrb  (dmem_req_wstrb),
-        .dmem_resp_valid (dmem_resp_valid),
-        .dmem_resp_data  (dmem_resp_data),
         .timer_irq       (timer_irq),
         .external_irq    (external_irq),
         .software_irq    (software_irq),
@@ -205,6 +216,27 @@ module jv32_top #(
         .clic_prio       (clic_prio),
         .clic_id         (clic_id),
         .clic_ack        (clic_ack),
+        .halt_req_i      (dbg_halt_req_i),
+        .halted_o        (dbg_halted_o),
+        .resume_req_i    (dbg_resume_req_i),
+        .resumeack_o     (dbg_resumeack_o),
+        .dbg_reg_addr_i  (dbg_reg_addr_i),
+        .dbg_reg_wdata_i (dbg_reg_wdata_i),
+        .dbg_reg_we_i    (dbg_reg_we_i),
+        .dbg_reg_rdata_o (dbg_reg_rdata_o),
+        .dbg_pc_wdata_i  (dbg_pc_wdata_i),
+        .dbg_pc_we_i     (dbg_pc_we_i),
+        .dbg_pc_o        (dbg_pc_o),
+        .dbg_singlestep_i(dbg_singlestep_i),
+        .dbg_ebreakm_i   (dbg_ebreakm_i),
+        .imem_flush         (imem_flush_core),
+        .dmem_req_valid  (dmem_req_valid),
+        .dmem_req_write  (dmem_req_write),
+        .dmem_req_addr   (dmem_req_addr),
+        .dmem_req_wdata  (dmem_req_wdata),
+        .dmem_req_wstrb  (dmem_req_wstrb),
+        .dmem_resp_valid (dmem_resp_valid),
+        .dmem_resp_data  (dmem_resp_data),
         .trace_valid     (trace_valid),
         .trace_reg_we    (trace_reg_we),
         .trace_pc        (trace_pc),
@@ -218,52 +250,49 @@ module jv32_top #(
     );
 
     // =========================================================================
-    // SRAM instances: 4 byte-banks each for IRAM and DRAM
-    // Naming conventions chosen for DPI mem_write_byte hierarchical access:
-    //   gen_iram_byte[b].u_sram.mem[word_index]
-    //   gen_dram_byte[b].u_sram.mem[word_index]
+    // SRAM instances: single 32-bit-wide SRAM each for IRAM and DRAM
+    // Byte-write granularity via wbe[3:0] (byte enables).
+    // Naming for DPI mem_write_byte hierarchical access:
+    //   u_iram.mem[word_index]
+    //   u_dram.mem[word_index]
+    // DEPTH = SIZE/4 (32-bit word-addressed);
+    // synthesis wrapper maps each to 16 × sram_1rw_2048x32 sub-banks.
     // =========================================================================
     logic [IRAM_ABITS-1:0] iram_addr;
-    logic [3:0]            iram_we;
+    logic [3:0]            iram_wbe;
     logic [31:0]           iram_wdata;
     logic [31:0]           iram_rdata;
 
-    genvar b;
-    generate
-        for (b = 0; b < 4; b++) begin : gen_iram_byte
-            sram_1rw #(.DEPTH(IRAM_DEPTH), .WIDTH(8)) u_sram (
-                .clk   (clk),
-                .ce    (1'b1),
-                .we    (iram_we[b]),
-                .addr  (iram_addr),
-                .wdata (iram_wdata[b*8 +: 8]),
-                .rdata (iram_rdata[b*8 +: 8])
-            );
-        end
-    endgenerate
+    sram_1rw #(.DEPTH(IRAM_DEPTH), .WIDTH(32)) u_iram (
+        .clk   (clk),
+        .ce    (1'b1),
+        .we    (|iram_wbe),
+        .wbe   (iram_wbe),
+        .addr  (iram_addr),
+        .wdata (iram_wdata),
+        .rdata (iram_rdata)
+    );
 
     logic [DRAM_ABITS-1:0] dram_addr;
-    logic [3:0]            dram_we;
+    logic [3:0]            dram_wbe;
     logic [31:0]           dram_wdata;
     logic [31:0]           dram_rdata;
 
-    generate
-        for (b = 0; b < 4; b++) begin : gen_dram_byte
-            sram_1rw #(.DEPTH(DRAM_DEPTH), .WIDTH(8)) u_sram (
-                .clk   (clk),
-                .ce    (1'b1),
-                .we    (dram_we[b]),
-                .addr  (dram_addr),
-                .wdata (dram_wdata[b*8 +: 8]),
-                .rdata (dram_rdata[b*8 +: 8])
-            );
-        end
-    endgenerate
+    sram_1rw #(.DEPTH(DRAM_DEPTH), .WIDTH(32)) u_dram (
+        .clk   (clk),
+        .ce    (1'b1),
+        .we    (|dram_wbe),
+        .wbe   (dram_wbe),
+        .addr  (dram_addr),
+        .wdata (dram_wdata),
+        .rdata (dram_rdata)
+    );
 
     // =========================================================================
     // Core requests hitting TCM vs. missing to AXI
     // =========================================================================
     // I-path: always fetching (imem_req_valid=1), but only IRAM is TCM for I
+    logic core_if_dbgrom;     // I-fetch hits the debug ROM/program buffer window
     logic core_if_iram;       // I-fetch hits IRAM
     logic core_if_axi;        // I-fetch misses TCM → needs AXI
 
@@ -274,8 +303,11 @@ module jv32_top #(
     logic core_d_dram_we;     // D-write inside DRAM
     logic core_d_axi;         // D-access misses TCM → needs AXI
 
-    assign core_if_iram   = in_iram(imem_req_addr);
-    assign core_if_axi    = !core_if_iram;           // imem_req_valid always 1
+    assign core_if_dbgrom = imem_req_valid
+                            && (imem_req_addr[31:4] == DEBUG_ROM_BASE[31:4])
+                            && (imem_req_addr[3:2] <= 2'd2);
+    assign core_if_iram   = imem_req_valid && in_iram(imem_req_addr);
+    assign core_if_axi    = imem_req_valid && !core_if_dbgrom && !core_if_iram;
     assign core_d_iram_re = dmem_req_valid & ~dmem_req_write & in_iram(dmem_req_addr);
     assign core_d_iram_we = dmem_req_valid &  dmem_req_write & in_iram(dmem_req_addr);
     assign core_d_dram_re = dmem_req_valid & ~dmem_req_write & in_dram(dmem_req_addr);
@@ -404,34 +436,34 @@ module jv32_top #(
         // IRAM: D-path > I-path > Slave
         if (core_d_iram_re | core_d_iram_we) begin
             iram_addr  = dmem_req_addr[IRAM_ABITS+1:2];
-            iram_we    = core_d_iram_we ? dmem_req_wstrb : 4'h0;
+            iram_wbe   = core_d_iram_we ? dmem_req_wstrb : 4'h0;
             iram_wdata = dmem_req_wdata;
         end else if (core_if_iram) begin
             iram_addr  = imem_req_addr[IRAM_ABITS+1:2];
-            iram_we    = 4'h0;
+            iram_wbe   = 4'h0;
             iram_wdata = 32'h0;
         end else if (slave_iram_grant) begin
             iram_addr  = slv_addr[IRAM_ABITS+1:2];
-            iram_we    = slave_iram_is_wr ? slv_wstrb : 4'h0;
+            iram_wbe   = slave_iram_is_wr ? slv_wstrb : 4'h0;
             iram_wdata = slv_wdata;
         end else begin
             iram_addr  = imem_req_addr[IRAM_ABITS+1:2]; // default: I-fetch reads
-            iram_we    = 4'h0;
+            iram_wbe   = 4'h0;
             iram_wdata = 32'h0;
         end
 
         // DRAM: D-path > Slave
         if (core_d_dram_re | core_d_dram_we) begin
             dram_addr  = dmem_req_addr[DRAM_ABITS+1:2];
-            dram_we    = core_d_dram_we ? dmem_req_wstrb : 4'h0;
+            dram_wbe   = core_d_dram_we ? dmem_req_wstrb : 4'h0;
             dram_wdata = dmem_req_wdata;
         end else if (slave_dram_grant) begin
             dram_addr  = slv_addr[DRAM_ABITS+1:2];
-            dram_we    = slave_dram_is_wr ? slv_wstrb : 4'h0;
+            dram_wbe   = slave_dram_is_wr ? slv_wstrb : 4'h0;
             dram_wdata = slv_wdata;
         end else begin
             dram_addr  = dmem_req_addr[DRAM_ABITS+1:2]; // default: read-ahead harmless
-            dram_we    = 4'h0;
+            dram_wbe   = 4'h0;
             dram_wdata = 32'h0;
         end
     end
@@ -440,22 +472,35 @@ module jv32_top #(
     // TCM response tracking (1-cycle registered SRAM latency)
     // =========================================================================
     // Track whose data is valid on iram_rdata / dram_rdata each cycle
-    logic iram_used_by_core_i_d;  // IRAM was accessed by I-fetch last cycle
-    logic iram_used_by_core_d_d;  // IRAM was accessed by D-path last cycle
-    logic dram_used_by_core_d_d;  // DRAM was accessed by D-path last cycle
-    logic dmem_was_write_d;        // D-path access last cycle was a write
-    logic imem_flush_d;            // flush was asserted last cycle
-    logic [31:0] imem_req_addr_d;  // I-fetch address from last cycle (for resp_pc)
+    logic dbgrom_used_by_core_i_d; // debug ROM was accessed by I-fetch last cycle
+    logic [31:0] dbgrom_data_d;     // debug ROM/program-buffer instruction
+    logic [31:0] dbgrom_pc_d;       // debug ROM request PC
+    logic iram_used_by_core_i_d;    // IRAM was accessed by I-fetch last cycle
+    logic iram_used_by_core_d_d;    // IRAM was accessed by D-path last cycle
+    logic dram_used_by_core_d_d;    // DRAM was accessed by D-path last cycle
+    logic dmem_was_write_d;         // D-path access last cycle was a write
+    logic imem_flush_d;             // flush was asserted last cycle
+    logic [31:0] imem_req_addr_d;   // I-fetch address from last cycle (for resp_pc)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            iram_used_by_core_i_d <= 1'b0;
-            iram_used_by_core_d_d <= 1'b0;
-            dram_used_by_core_d_d <= 1'b0;
-            dmem_was_write_d      <= 1'b0;
-            imem_flush_d          <= 1'b0;
-            imem_req_addr_d       <= BOOT_ADDR;
+            dbgrom_used_by_core_i_d <= 1'b0;
+            dbgrom_data_d           <= DEBUG_ROM_EBREAK;
+            dbgrom_pc_d             <= DEBUG_ROM_BASE;
+            iram_used_by_core_i_d   <= 1'b0;
+            iram_used_by_core_d_d   <= 1'b0;
+            dram_used_by_core_d_d   <= 1'b0;
+            dmem_was_write_d        <= 1'b0;
+            imem_flush_d            <= 1'b0;
+            imem_req_addr_d         <= BOOT_ADDR;
         end else begin
+            dbgrom_used_by_core_i_d <= core_if_dbgrom;
+            dbgrom_pc_d             <= imem_req_addr;
+            case (imem_req_addr[3:2])
+                2'd0:    dbgrom_data_d <= progbuf0_i;
+                2'd1:    dbgrom_data_d <= progbuf1_i;
+                default: dbgrom_data_d <= DEBUG_ROM_EBREAK;
+            endcase
             // Core I-fetch used IRAM this cycle (D-path didn't steal it)
             iram_used_by_core_i_d <= core_if_iram
                                      & ~(core_d_iram_re | core_d_iram_we);
@@ -490,6 +535,14 @@ module jv32_top #(
     assign imem_resp_valid_tcm = iram_used_by_core_i_d & ~imem_flush_d;
     assign imem_resp_data_tcm  = iram_rdata;
     assign imem_resp_pc_tcm    = imem_req_addr_d;
+
+    // Debug ROM / program buffer fetches: 1-cycle registered response like the TCM.
+    logic        imem_resp_valid_dbgrom;
+    logic [31:0] imem_resp_data_dbgrom;
+    logic [31:0] imem_resp_pc_dbgrom;
+    assign imem_resp_valid_dbgrom = dbgrom_used_by_core_i_d & ~imem_flush_d;
+    assign imem_resp_data_dbgrom  = dbgrom_data_d;
+    assign imem_resp_pc_dbgrom    = dbgrom_pc_d;
 
     // D-access: valid when IRAM or DRAM was used by D-path last cycle (read or write)
     logic        dmem_resp_valid_tcm;
@@ -625,9 +678,13 @@ module jv32_top #(
     // =========================================================================
     // Final response mux to core (TCM vs AXI)
     // =========================================================================
-    assign imem_resp_valid = imem_resp_valid_tcm | imem_resp_valid_axi;
-    assign imem_resp_data  = imem_resp_valid_tcm ? imem_resp_data_tcm : imem_resp_data_axi;
-    assign imem_resp_pc    = (imem_resp_valid_tcm ? imem_resp_pc_tcm   : imem_resp_pc_axi) & ~32'h3;
+    assign imem_resp_valid = imem_resp_valid_tcm | imem_resp_valid_dbgrom | imem_resp_valid_axi;
+    assign imem_resp_data  = imem_resp_valid_tcm   ? imem_resp_data_tcm   :
+                             imem_resp_valid_dbgrom ? imem_resp_data_dbgrom :
+                                                      imem_resp_data_axi;
+    assign imem_resp_pc    = (imem_resp_valid_tcm    ? imem_resp_pc_tcm    :
+                              imem_resp_valid_dbgrom ? imem_resp_pc_dbgrom  :
+                                                       imem_resp_pc_axi) & ~32'h3;
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
@@ -644,9 +701,9 @@ module jv32_top #(
         if (m_axi_bvalid && m_axi_bready)
             `DEBUG1(("[TOP] AXI B:  done"));
         // Monitor DRAM writes to watch for stack corruption
-        if (|dram_we)
+        if (|dram_wbe)
             `DEBUG1(("[TOP] DRAM WR: addr=0x%h data=0x%h strb=%b",
-                (DRAM_BASE | 32'({dram_addr, 2'b00})), dram_wdata, dram_we));
+                (DRAM_BASE | 32'({dram_addr, 2'b00})), dram_wdata, dram_wbe));
         // Monitor DRAM reads - log address issued and, one cycle later, returned data
         if (core_d_dram_re)
             `DEBUG1(("[TOP] DRAM RD req: addr=0x%h",

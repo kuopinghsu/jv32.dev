@@ -27,6 +27,10 @@ VERILOG_FILES:
   - dir::../../rtl/jv32/core/jv32_regfile.sv
   - dir::../../rtl/jv32/core/jv32_csr.sv
   - dir::../../rtl/jv32/core/jv32_core.sv
+  - dir::../../rtl/jv32/core/jtag/cjtag_bridge.sv
+  - dir::../../rtl/jv32/core/jtag/jv32_dtm.sv
+  - dir::../../rtl/jv32/core/jtag/jtag_tap.sv
+  - dir::../../rtl/jv32/core/jtag/jtag_top.sv
   - dir::../lib/sram_1rw.sv
   - dir::../../rtl/axi/axi_pkg.sv
   - dir::../../rtl/axi/axi_xbar.sv
@@ -52,28 +56,31 @@ SIGNOFF_SDC_FILE: dir::jv32_soc_pnr.sdc
 # The paths below use the absolute output directory produced by 'make gen-mem'.
 # Override on the command line if the build directory differs.
 EXTRA_LEFS:
-  - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.lef
+  - dir::../lib/openram/sram_1rw_2048x32.lef
 
 EXTRA_LIBS:
-  - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
+  - dir::../lib/openram/sram_1rw_2048x32_TT_1p1V_25C.lib
 
-# MACROS describes each unique SRAM macro so OpenROAD can place them.
-# sram_1rw.sv maps each RTL sram_1rw(DEPTH=32768) to 4 × sram_1rw_8192x8.
-# Total instances: 4 byte-lanes × 4 sub-banks × 2 TCMs = 32 macros.
-# Placement is left to OpenROAD automatic macro placement (no fixed coords).
+# MACROS describes each unique SRAM macro so OpenROAD can load the hard-macro
+# views. In the Classic flow, these 32 instances still need explicit placement
+# coordinates; see `macro_placement.cfg` below.
 MACROS:
-  sram_1rw_8192x8:
+  sram_1rw_2048x32:
     gds:
-      - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.gds
+      - dir::../lib/openram/sram_1rw_2048x32.gds
     lef:
-      - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8.lef
+      - dir::../lib/openram/sram_1rw_2048x32.lef
     lib:
       "tt_025C_1v10":
-        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_2048x32_TT_1p1V_25C.lib
       "ff_025C_1v10":
-        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_FF_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_2048x32_FF_1p0V_25C.lib
       "ss_025C_1v10":
-        - dir::../lib/openram/sram_1rw_8192x8/sram_1rw_8192x8_SS_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_2048x32_SS_1p0V_25C.lib
+
+# The Classic flow does not auto-place hard macros; provide fixed locations for
+# all 32 SRAM banks so tap insertion and PDN generation can proceed.
+MACRO_PLACEMENT_CFG: dir::macro_placement.cfg
 
 # ── Synthesis ─────────────────────────────────────────────────────────────────
 # Preprocessor defines for synthesis (disable simulation-only constructs)
@@ -84,10 +91,21 @@ VERILOG_DEFINES:
 
 SYNTH_STRATEGY: AREA 0
 
+# ── Linter settings ───────────────────────────────────────────────────────────
+# Verilator in older versions cannot parse bit-slicing on function-call results
+# (e.g. c_sext6(...)[11:0]), which is valid SV-2012.  Yosys handles it fine.
+# Do not abort the flow on Verilator lint errors; synthesis can still proceed.
+ERROR_ON_LINTER_ERRORS: false
+
+# ── Synlig: full SystemVerilog front-end for Yosys ────────────────────────────
+# Use Synlig (Surelog) instead of Yosys's native SV parser so that package
+# wildcard imports (import jv32_pkg::*;) and other SV-2012 constructs work.
+USE_SYNLIG: true
+
 # ── Floorplan ─────────────────────────────────────────────────────────────────
-# Die area in µm.  Sized to accommodate 32× sram_1rw_8192x8 + logic.
+# Die area in µm.  Sized to accommodate 32 × sram_1rw_2048x32 + logic.
 # Adjust after reviewing macro dimensions from the OpenRAM LEF.
-# Rough estimate: each 8192x8 SRAM ~0.1 mm²; 32 macros → ~3.5 mm² + logic.
+# Rough estimate: each 2048×32 SRAM ~0.04 mm²; 32 macros → ~1.3 mm² + logic.
 FP_CORE_UTIL: 35
 FP_ASPECT_RATIO: 1
 

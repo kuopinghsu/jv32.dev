@@ -1,0 +1,3 @@
+# FreePDK45 Magic startup script stub
+# This file satisfies OpenLane2's MAGICRC path requirement.
+# Synthesis-only flows do not invoke Magic.

@@ -4,19 +4,35 @@
 # Target:  100 MHz (10 ns period)
 ###############################################################################
 
-# ── Primary clock ─────────────────────────────────────────────────────────────
+# ── Primary clocks ────────────────────────────────────────────────────────────
 create_clock -name core_clk -period 10.0 [get_ports clk]
+
+# JTAG TCK is asynchronous to the core clock domain; give it a conservative
+# 10 MHz constraint so the TAP/DTM logic is analyzed without coupling it to the
+# core timing domain.
+create_clock -name jtag_tck -period 100.0 [get_ports jtag_pin0_tck_i]
+set_clock_groups -asynchronous \
+    -group [get_clocks core_clk] \
+    -group [get_clocks jtag_tck]
 
 # Clock uncertainty and transition (10% of period typical for 45nm)
 set_clock_uncertainty 0.5 [get_clocks core_clk]
 set_clock_transition  0.3 [get_clocks core_clk]
+set_clock_uncertainty 1.0 [get_clocks jtag_tck]
+set_clock_transition  1.0 [get_clocks jtag_tck]
 
 # ── Input / output delay constraints ──────────────────────────────────────────
 # 20% of clock period for I/O delay budget
 set input_delay  2.0
 set output_delay 2.0
 
-set all_in_ex_clk [remove_from_collection [all_inputs] [get_ports clk]]
+set clk_input [get_ports clk]
+set jtag_clk_input [get_ports jtag_pin0_tck_i]
+set jtag_rst_input [get_ports jtag_ntrst_i]
+set clk_indx [lsearch [all_inputs] $clk_input]
+set all_in_ex_clk [lreplace [all_inputs] $clk_indx $clk_indx]
+set all_in_ex_clk [lsearch -all -inline -not -exact $all_in_ex_clk $jtag_clk_input]
+set all_in_ex_clk [lsearch -all -inline -not -exact $all_in_ex_clk $jtag_rst_input]
 set_input_delay  $input_delay  -clock [get_clocks core_clk] $all_in_ex_clk
 set_output_delay $output_delay -clock [get_clocks core_clk] [all_outputs]
 
@@ -27,8 +43,9 @@ set_driving_cell -lib_cell BUF_X4 -pin Z $all_in_ex_clk
 # 10 fF external load assumption
 set_load 0.01 [all_outputs]
 
-# ── False paths: async reset ───────────────────────────────────────────────────
-set_false_path -from [get_ports rst_n]
+# ── False paths: async resets / async debug inputs ───────────────────────────
+set_false_path -from [get_ports {rst_n jtag_ntrst_i}]
+set_false_path -from [get_ports {jtag_pin1_tms_i jtag_pin2_tdi_i}] -to [get_clocks core_clk]
 
 # ── Multicycle paths: none (fully-pipelined design) ───────────────────────────
 # Add here if any multicycle paths are identified post-synthesis.

@@ -45,8 +45,16 @@ NANGATE_HOME ?=
 # Python binary used to run OpenRAM and openram-setup
 PYTHON3 ?= python3
 
-# openlane run command (override if using docker or nix wrapper)
-OPENLANE_CMD ?= $(PYTHON3) -m openlane
+# openlane run command.
+# Default: use the nix-shell wrapper (scripts/openlane_nix.sh) so that
+# OpenLane2 dependencies (libparse, klayout, OpenROAD Python bindings, …)
+# are provided by Nix rather than the system Python.
+# Override with  OPENLANE_CMD=python3 -m openlane  if you prefer a bare
+# pip-installed environment (run 'make syn-setup' to install deps first).
+OPENLANE_CMD ?= $(SYN_DIR)/scripts/openlane_nix.sh
+
+# Nix-shell binary (override if nix-shell is not in PATH)
+NIX_SHELL ?= nix-shell
 
 # OpenROAD binary — used by the standalone pnr and timing-report targets
 OPENROAD ?= $(HOME)/OpenROAD/python/openroad
@@ -72,8 +80,10 @@ OPENRAM_OPTIMIZE ?= speed
 export NANGATE_HOME
 export PDK_ROOT
 export OPENRAM
+export OPENLANE
+export NIX_SHELL
 
-.PHONY: all check openram-setup gen-mem synth pnr timing-report clean cleanall help
+.PHONY: all check openram-setup syn-setup gen-mem synth pnr timing-report clean cleanall help
 
 all: synth
 
@@ -96,27 +106,59 @@ check:
 	@echo "  OPENLANE     : $(OPENLANE)"
 	@if [ -z "$(NANGATE_HOME)" ]; then \
 	    echo "WARNING: NANGATE_HOME is not set."; \
-	    echo "         The OpenLane2 PDK config will search for Nangate LEF/GDS"; \
-	    echo "         files relative to PDK_ROOT. Set NANGATE_HOME to avoid errors."; \
+	    echo "         Set NANGATE_HOME in env.config to avoid errors."; \
 	else \
 	    echo "  NANGATE_HOME : $(NANGATE_HOME)"; \
-	    for f in \
-	      "NangateOpenCellLibrary.tech.lef" \
-	      "NangateOpenCellLibrary.macro.lef NangateOpenCellLibrary.macro.mod.lef" \
-	      "NangateOpenCellLibrary.gds"; \
+	    for entry in \
+	      "lef/NangateOpenCellLibrary.tech.lef" \
+	      "lef/NangateOpenCellLibrary.macro.lef" \
+	      "gds/NangateOpenCellLibrary.gds"; \
 	    do \
-	      found=0; \
-	      for candidate in $$f; do \
-	        if [ -f "$(NANGATE_HOME)/$$candidate" ]; then found=1; fi; \
-	      done; \
-	      if [ $$found -eq 0 ]; then \
-	        echo "WARNING: $$f not found in NANGATE_HOME=$(NANGATE_HOME)"; \
+	      if [ ! -f "$(NANGATE_HOME)/$$entry" ]; then \
+	        echo "WARNING: $(NANGATE_HOME)/$$entry not found"; \
 	      fi; \
 	    done; \
 	fi
 	@echo "  PDK_ROOT     : $(PDK_ROOT)"
 	@echo "  OPENRAM_OUT  : $(OPENRAM_OUTDIR)"
 	@echo "Checks passed."
+
+# ── OpenLane2 / Nix dependency setup ─────────────────────────────────────────
+# Pre-fetches all OpenLane2 Nix packages into the local Nix store so that
+# subsequent 'make synth' invocations start without a network download.
+#
+# Run once after cloning / updating openlane2:
+#   make syn-setup
+#
+syn-setup:
+	@echo "========================================"
+	@echo " OpenLane2 Nix dependency setup"
+	@echo "  OPENLANE : $(OPENLANE)"
+	@echo "  NIX_SHELL: $(NIX_SHELL)"
+	@echo "========================================" 
+	@if [ ! -d "$(OPENLANE)" ]; then \
+	    echo "ERROR: OPENLANE not found at '$(OPENLANE)'"; \
+	    echo "       Set OPENLANE in env.config."; \
+	    exit 1; \
+	fi
+	@if [ ! -f "$(OPENLANE)/shell.nix" ]; then \
+	    echo "ERROR: shell.nix not found in $(OPENLANE)."; \
+	    echo "       Make sure OPENLANE points to the openlane2 source tree."; \
+	    exit 1; \
+	fi
+	@if ! command -v $(NIX_SHELL) >/dev/null 2>&1; then \
+	    echo "ERROR: nix-shell not found. Install Nix: https://nixos.org/download"; \
+	    exit 1; \
+	fi
+	@echo "Pre-fetching Nix packages (this may take several minutes on first run)..."
+	$(NIX_SHELL) $(OPENLANE)/shell.nix --run \
+	    "python3 -m openlane --version"
+	@chmod +x $(SYN_DIR)/scripts/openlane_nix.sh
+	@echo "========================================" 
+	@echo " syn-setup complete."
+	@echo " Nix store is primed; 'make synth' will use:"
+	@echo "   OPENLANE_CMD = $(OPENLANE_CMD)"
+	@echo "========================================" 
 
 # ── OpenRAM Python venv setup ────────────────────────────────────────────────
 openram-setup:
@@ -173,7 +215,7 @@ gen-mem:
 	    OPENRAM_HOME=$(OPENRAM)/compiler \
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
-	    $(PYTHON3) $(OPENRAM)/sram_compiler.py openram_sram_1rw_8192x8.py
+	    $(PYTHON3) $(OPENRAM)/sram_compiler.py openram_sram_1rw_2048x32.py
 	@echo "========================================"
 	@echo " OpenRAM macros compiled in $(OPENRAM_OUTDIR)/"
 	@echo " Run 'make synth' to proceed to OpenLane2."
@@ -185,7 +227,7 @@ OPENLANE_RUN_DIR := $(BUILD_DIR)/openlane_run
 $(BUILD_DIR):
 	mkdir -p $@
 
-SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8.lef
+SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_2048x32.lef
 
 synth: check $(BUILD_DIR)
 	@echo "========================================"
@@ -201,13 +243,15 @@ synth: check $(BUILD_DIR)
 	    exit 1; \
 	fi
 	@( \
+	    mkdir -p $(OPENLANE_RUN_DIR); \
 	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
 	    export NANGATE_HOME="$(NANGATE_HOME)"; \
 	    cd $(OPENLANE_DIR) && \
 	    $(OPENLANE_CMD) \
 	        --pdk-root $(PDK_ROOT) \
 	        --pdk $(PDK) \
-	        --run-dir $(OPENLANE_RUN_DIR) \
+	        --manual-pdk \
+	        --force-run-dir $(OPENLANE_RUN_DIR) \
 	        config.yaml \
 	)
 	@echo "========================================"
@@ -228,9 +272,9 @@ synth: check $(BUILD_DIR)
 NETLIST   ?= $(OPENLANE_RUN_DIR)/final/nl/jv32_soc.nl.v
 SDC_FILE  ?= $(OPENLANE_DIR)/jv32_soc_pnr.sdc
 
-SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_TT_1p1V_25C.lib
-SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_FF_1p1V_25C.lib
-SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_8192x8/sram_1rw_8192x8_SS_1p1V_25C.lib
+SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_TT_1p1V_25C.lib
+SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_FF_1p0V_25C.lib
+SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_SS_1p0V_25C.lib
 
 PNR_RESULTS := $(BUILD_DIR)/pnr/results
 PNR_REPORTS := $(BUILD_DIR)/pnr/reports
@@ -356,8 +400,14 @@ cleanall: clean
 help:
 	@echo "jv32 SoC Synthesis & Place-and-Route Flow"
 	@echo ""
+	@echo "First-time setup:"
+	@echo "  1. cp ../env.config.template ../env.config  && edit env.config"
+	@echo "  2. make openram-setup         # create Python venv for OpenRAM"
+	@echo "  3. make syn-setup             # pre-fetch OpenLane2 Nix packages"
+	@echo ""
 	@echo "Usage:"
 	@echo "  make openram-setup            # create local Python venv for OpenRAM"
+	@echo "  make syn-setup                # pre-fetch OpenLane2 Nix deps (run once)"
 	@echo "  make gen-mem                  # compile OpenRAM SRAM macros (freepdk45)"
 	@echo "  make synth                    # run OpenLane2 (synth + PnR)"
 	@echo "  make pnr                      # standalone OpenROAD P&R (after synth)"
