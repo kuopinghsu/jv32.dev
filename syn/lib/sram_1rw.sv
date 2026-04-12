@@ -7,13 +7,13 @@
 //
 // jv32_top instantiates one 32-bit-wide SRAM per TCM:
 //
-//   DEPTH = IRAM_SIZE/4 = 32768  (128 KB / 4 bytes-per-word)
+//   DEPTH = IRAM_SIZE/4 = 4096   (16 KB / 4 bytes-per-word)  [evaluation]
 //   WIDTH = 32
 //   wbe   = 4-bit byte write enables
 //
-// Each 32768×32 TCM is implemented as 16 × sram_1rw_2048x32 sub-banks:
+// Each 4096×32 TCM is implemented as 2 × sram_1rw_2048x32 sub-banks:
 //
-//   addr[14:11] — selects one of 16 sub-banks (4 bits)
+//   addr[11]    — selects one of 2 sub-banks (1 bit)
 //   addr[10:0]  — word address within the selected sub-bank (11-bit, 2048 rows)
 //
 // Macro choice rationale:
@@ -22,8 +22,8 @@
 //   • write_size = 8     → wmask0[3:0] gives per-byte write granularity
 //
 // Total instances:
-//   16 sub-banks × IRAM = 16 macros
-//   16 sub-banks × DRAM = 16 macros  →  32 sram_1rw_2048x32 total
+//   2 sub-banks × IRAM = 2 macros
+//   2 sub-banks × DRAM = 2 macros  →  4 sram_1rw_2048x32 total
 //
 // OpenRAM single-port (num_rw_ports=1, write_size=8) pin convention:
 //   clk0      – rising-edge clock
@@ -92,6 +92,46 @@ generate
 
         // Re-register bank_sel to match the 1-cycle SRAM read latency
         logic [3:0] bank_sel_q;
+        always_ff @(posedge clk)
+            bank_sel_q <= bank_sel;
+
+        assign rdata = dout[bank_sel_q];
+
+    // -------------------------------------------------------------------------
+    // TCM 32-bit SRAM: 4096 words × 32 bits  (16 KB per TCM)  [evaluation]
+    // Decomposed into 2 × sram_1rw_2048x32 sub-banks.
+    // Matches jv32_top with IRAM_SIZE = DRAM_SIZE = 16 KB:
+    //   DEPTH = 16*1024/4 = 4096,  WIDTH = 32
+    // -------------------------------------------------------------------------
+    end else if (DEPTH == 4096 && WIDTH == 32) begin : g_tcm_4096_sram
+
+        // addr is 12 bits [11:0].
+        // Top 1 bit selects one of 2 sub-banks; lower 11 bits address within it.
+        localparam int N_BANKS    = 2;
+        localparam int BANK_ABITS = 11;  // log2(2048)
+
+        logic        bank_sel;
+        logic [10:0] sub_addr;
+        logic [31:0] dout [0:N_BANKS-1];
+
+        assign bank_sel = addr[11];
+        assign sub_addr = addr[10:0];
+
+        genvar i;
+        for (i = 0; i < N_BANKS; i++) begin : g_bank
+            sram_1rw_2048x32 u_sub (
+                .clk0   (clk),
+                .csb0   (~(ce & (bank_sel == 1'(i)))),
+                .web0   (~we),
+                .wmask0 (wbe),
+                .addr0  (sub_addr),
+                .din0   (wdata),
+                .dout0  (dout[i])
+            );
+        end
+
+        // Re-register bank_sel to match the 1-cycle SRAM read latency
+        logic bank_sel_q;
         always_ff @(posedge clk)
             bank_sel_q <= bank_sel;
 

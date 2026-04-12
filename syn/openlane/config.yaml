@@ -89,6 +89,10 @@ VERILOG_DEFINES:
   - NO_ASSERTION
   - GENERIC_SRAM
 
+# SYNTH_PARAMETERS (IRAM_SIZE / DRAM_SIZE) are NOT defined here.
+# The Makefile computes them from IRAM_BANKS * 8192 / DRAM_BANKS * 8192 and
+# writes build/tcm_params.yaml, which is passed to OpenLane2 as a second config.
+
 SYNTH_STRATEGY: AREA 0
 
 # ── Linter settings ───────────────────────────────────────────────────────────

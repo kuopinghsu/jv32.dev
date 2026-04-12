@@ -70,9 +70,20 @@ OPENRAM_OUTDIR := $(SYN_DIR)/lib/openram
 OPENLANE_DIR   := $(SYN_DIR)/openlane
 BUILD_DIR      := $(SYN_DIR)/build
 
-# ── OpenRAM SRAM sizes (must match jv32_top parameters) ────────────────────
-IRAM_SIZE ?= 131072   # bytes = 128 KB
-DRAM_SIZE ?= 131072   # bytes = 128 KB
+# ── TCM memory size (N × 8 KB OpenRAM macro units) ──────────────────────────
+# sram_1rw_2048x32 = 2048 words × 32 bits = 8 KB  (one basic macro sub-bank)
+# IRAM_BANKS / DRAM_BANKS: how many sub-banks to stitch per TCM.
+# The Makefile computes IRAM_SIZE/DRAM_SIZE and writes them into
+# build/tcm_params.yaml, which OpenLane2 picks up as a config override.
+# NOTE: if IRAM_BANKS changes, add a matching DEPTH case in syn/lib/sram_1rw.sv
+MACRO_BYTES  := 8192
+IRAM_BANKS   ?= 2             # N × 8 KB  →  default 16 KB IRAM
+DRAM_BANKS   ?= 2             # N × 8 KB  →  default 16 KB DRAM
+IRAM_SIZE    := $(shell echo $$(( $(IRAM_BANKS) * $(MACRO_BYTES) )))
+DRAM_SIZE    := $(shell echo $$(( $(DRAM_BANKS) * $(MACRO_BYTES) )))
+
+# OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
+OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
 
 # OpenRAM optimisation: speed (words_per_row=1, TT+FF+SS) or area (auto, TT)
 OPENRAM_OPTIMIZE ?= speed
@@ -179,10 +190,6 @@ openram-setup:
 	fi
 	@# Pin numpy<2 and gdspy for OpenRAM 1.x compatibility
 	$(VENV_DIR)/bin/pip install "numpy<2" "gdspy" --quiet
-	@SITE_PKG=$$($(VENV_DIR)/bin/python3 -c \
-	    "import site; print(site.getsitepackages()[0])") && \
-	    cp common/openram_sitecustomize.py $$SITE_PKG/sitecustomize.py && \
-	    echo "Installed OpenRAM tech patch → $$SITE_PKG/sitecustomize.py"
 	@echo "venv ready. Activate with: source $(VENV_DIR)/bin/activate"
 
 # ── OpenRAM macro compilation ────────────────────────────────────────────────
@@ -191,9 +198,10 @@ gen-mem:
 	@echo " Compiling OpenRAM SRAM macros"
 	@echo "  PDK      : $(PDK) (Nangate 45nm)"
 	@echo "  OPENRAM  : $(OPENRAM)"
-	@echo "  IRAM     : $(IRAM_SIZE) bytes"
-	@echo "  DRAM     : $(DRAM_SIZE) bytes"
-	@echo "  OPTIMIZE : $(OPENRAM_OPTIMIZE)"
+	@echo "  Config   : $(OPENRAM_OUTDIR)/$(OPENRAM_CFG)"
+	@echo "  Macro    : sram_1rw_2048x32 (2048 words x 32-bit = 8 KB)"
+	@echo "  IRAM     : $(IRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB"
+	@echo "  DRAM     : $(DRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB"
 	@echo "========================================"
 	@if [ ! -d "$(OPENRAM)" ]; then \
 	    echo "ERROR: OPENRAM not found at '$(OPENRAM)'"; exit 1; \
@@ -201,21 +209,16 @@ gen-mem:
 	@if [ ! -f "$(VENV_DIR)/bin/activate" ]; then \
 	    echo "ERROR: venv not found. Run 'make openram-setup' first."; exit 1; \
 	fi
-	mkdir -p $(OPENRAM_OUTDIR)
-	@echo "Generating OpenRAM config files..."
-	$(PYTHON3) common/gen_openram_config.py \
-	    --iram-size $(IRAM_SIZE) \
-	    --dram-size $(DRAM_SIZE) \
-	    --pdk $(PDK) \
-	    --optimize $(OPENRAM_OPTIMIZE) \
-	    --output-dir $(OPENRAM_OUTDIR)
+	@if [ ! -f "$(OPENRAM_OUTDIR)/$(OPENRAM_CFG)" ]; then \
+	    echo "ERROR: OpenRAM config not found: $(OPENRAM_OUTDIR)/$(OPENRAM_CFG)"; exit 1; \
+	fi
 	@echo "Running OpenRAM compiler..."
 	@cd $(OPENRAM_OUTDIR) && \
 	    . $(VENV_DIR)/bin/activate && \
 	    OPENRAM_HOME=$(OPENRAM)/compiler \
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
-	    $(PYTHON3) $(OPENRAM)/sram_compiler.py openram_sram_1rw_2048x32.py
+	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(OPENRAM_CFG)
 	@echo "========================================"
 	@echo " OpenRAM macros compiled in $(OPENRAM_OUTDIR)/"
 	@echo " Run 'make synth' to proceed to OpenLane2."
@@ -223,6 +226,7 @@ gen-mem:
 
 # ── OpenLane2 full flow (synthesis + place + route + signoff) ────────────────
 OPENLANE_RUN_DIR := $(BUILD_DIR)/openlane_run
+TCM_PARAMS_YAML  := $(BUILD_DIR)/tcm_params.yaml
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -236,12 +240,16 @@ synth: check $(BUILD_DIR)
 	@echo "  PDK     : $(PDK) (Nangate 45nm)"
 	@echo "  PDK_ROOT: $(PDK_ROOT)"
 	@echo "  Config  : $(OPENLANE_DIR)/config.yaml"
+	@echo "  IRAM    : $(IRAM_BANKS) × 8 KB = $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) KB"
+	@echo "  DRAM    : $(DRAM_BANKS) × 8 KB = $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) KB"
 	@echo "========================================"
 	@if [ ! -f "$(SRAM_LEF)" ]; then \
 	    echo "ERROR: SRAM macro LEF not found: $(SRAM_LEF)"; \
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
+	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) > $(TCM_PARAMS_YAML)
 	@( \
 	    mkdir -p $(OPENLANE_RUN_DIR); \
 	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
@@ -253,6 +261,7 @@ synth: check $(BUILD_DIR)
 	        --manual-pdk \
 	        --force-run-dir $(OPENLANE_RUN_DIR) \
 	        config.yaml \
+	        $(TCM_PARAMS_YAML) \
 	)
 	@echo "========================================"
 	@echo " OpenLane2 run complete."
@@ -423,17 +432,20 @@ help:
 	@echo "  OPENLANE       = $(OPENLANE)"
 	@echo "  OPENROAD       = $(OPENROAD)"
 	@echo "  NANGATE_HOME   = $(if $(NANGATE_HOME),$(NANGATE_HOME),(not set))"
-	@echo "  IRAM_SIZE      = $(IRAM_SIZE) bytes (= $$(( $(IRAM_SIZE)/1024 )) KB)"
-	@echo "  DRAM_SIZE      = $(DRAM_SIZE) bytes (= $$(( $(DRAM_SIZE)/1024 )) KB)"
+	@echo "  IRAM_BANKS     = $(IRAM_BANKS)  (N × 8 KB = $(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB IRAM)"
+	@echo "  DRAM_BANKS     = $(DRAM_BANKS)  (N × 8 KB = $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB DRAM)"
+	@echo "  OPENRAM_CFG    = $(OPENRAM_CFG)  (static config in lib/openram/)"
 	@echo "  OPENRAM_OPTIMIZE = $(OPENRAM_OPTIMIZE) (speed|area)"
+	@echo ""
+	@echo "  NOTE: SYNTH_PARAMETERS are generated into build/tcm_params.yaml at"
+	@echo "        synth time and passed to OpenLane2 as a second config file."
+	@echo "        To change TCM size: set IRAM_BANKS and DRAM_BANKS, and ensure"
+	@echo "        syn/lib/sram_1rw.sv has a matching DEPTH generate branch."
 	@echo ""
 	@echo "Standalone P&R overrides:"
 	@echo "  NETLIST       = $(NETLIST)"
 	@echo "  SDC_FILE      = $(SDC_FILE)"
 	@echo "  ODB_FILE      = $(ODB_FILE)  (for timing-report)"
-	@echo ""
-	@echo "Example: different memory sizes"
-	@echo "  make gen-mem IRAM_SIZE=65536 DRAM_SIZE=65536  # 64 KB each"
 	@echo ""
 	@echo "Notes:"
 	@echo "  - NANGATE_HOME must point to ~/opt/nangate (or your Nangate distribution)"

@@ -2,8 +2,7 @@
 /build/
 /build2/
 /build3/
-/syn/build/
-/syn/openlane/slpp_all/cache
+/syn/openlane/slpp_all
 *.o
 *.d
 *.a
@@ -22,6 +21,10 @@ syn/results
 
 # OpenRAM generated files and local venv (created by 'make openram-setup' / 'make gen-mem')
 syn/.venv/
+# syn/lib/openram/
+
+# OpenLane2 run directory (created by 'make synth')
+syn/build/
 
 # Executables
 *.exe
