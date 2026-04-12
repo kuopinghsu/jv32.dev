@@ -601,18 +601,21 @@ module jv32_core #(
             dbg_step_pending_r<= 1'b0;
             dbg_step_served_r <= 1'b0;
         end else begin
-            // Clear step_served when resumereq is de-asserted (OpenOCD cleared it)
-            if (!resume_req_i) dbg_step_served_r <= 1'b0;
+            // Clear step_served and resumeack when resumereq de-asserts (OpenOCD cleared it)
+            if (!resume_req_i) begin
+                dbg_step_served_r <= 1'b0;
+                dbg_resumeack_r   <= 1'b0;  // resumeack is sticky until resumereq falls
+            end
 
             if (resume_req_i && dbg_halted_r && !dbg_step_served_r) begin
                 dbg_halted_r       <= 1'b0;
-                dbg_resumeack_r    <= 1'b1;
+                dbg_resumeack_r    <= 1'b1;  // sticky: stays 1 until resumereq deasserts
                 dbg_step_pending_r <= dbg_singlestep_i;
             end else if (dbg_enter_debug
                       || (halt_req_i && !dbg_halted_r)
                       || (dbg_step_pending_r && trace_valid)) begin
                 dbg_halted_r       <= 1'b1;
-                dbg_resumeack_r    <= 1'b0;
+                // resumeack stays 1 (sticky) — TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
                 // After a single-step halt, block re-resume until resumereq deasserts
                 if (dbg_step_pending_r && trace_valid)
@@ -875,7 +878,7 @@ module jv32_core #(
             // Tail-chain: if a CLIC IRQ is pending above threshold, redirect
             // directly to the next handler instead of returning to mepc.
             if_flush_pc = csr_tail_chain ? csr_tail_chain_pc : mepc_csr;
-        end else if (csr_irq_pending && ex_wb_r.valid) begin
+        end else if (csr_irq_pending && ex_wb_r.valid && !dbg_step_pending_r) begin
             if_flush    = 1'b1;
             if_flush_pc = csr_irq_pc;
         end else if (redirect_ex && !ex_stall) begin
@@ -892,7 +895,8 @@ module jv32_core #(
     // (not promoted to EX/WB), because it's on the wrong control-flow path.
     logic wb_redirect;
     assign wb_redirect = ex_wb_r.valid && (ex_wb_r.exception || ex_wb_r.mret
-                                           || (csr_irq_pending && !ex_wb_r.exception && !ex_wb_r.mret));
+                                           || (csr_irq_pending && !ex_wb_r.exception && !ex_wb_r.mret
+                                               && !dbg_step_pending_r));
 
     // RVC stall/flush
     // bp_redirect also flushes the RVC buffer to discard the instruction
@@ -942,6 +946,12 @@ module jv32_core #(
             ex_wb_r.redirect    <= 1'b0;
             ex_wb_r.redirect_pc <= 32'h0;
         end else if (dbg_pc_we_i) begin
+            ex_wb_r <= '0;
+        end else if ((halt_req_i && !dbg_halted_r)
+                  || (resume_req_i && dbg_halted_r && !dbg_step_served_r)) begin
+            // Drop stale WB state across debug entry/exit.
+            // Without this, single-step may retire a pre-halt instruction or
+            // execute an old redirect (e.g. trap/mret) instead of DPC.
             ex_wb_r <= '0;
         end else if (!ex_stall) begin
             if (load_use_stall || !if_ex_r.valid || wb_redirect || dbg_enter_debug) begin

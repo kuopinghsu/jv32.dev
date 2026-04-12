@@ -408,6 +408,7 @@ module jv32_dtm #(
     logic [2:0] halted_clk_chain;
     logic [2:0] dcsr_cause_r;   // dcsr.cause bits updated on debug mode entry
     logic       dbg_halted_prev;
+    logic [31:0] dpc_reg;       // Saved DPC — persists through CMD_EXEC progbuf operations
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -417,6 +418,7 @@ module jv32_dtm #(
             halted_clk            <= 1'b0;
             dcsr_cause_r          <= 3'd0;
             dbg_halted_prev       <= 1'b0;
+            dpc_reg               <= 32'h8000_0000; // Boot address (matches jv32 BOOT_ADDR)
         end else begin
             halt_req_sync_chain   <= {halt_req_sync_chain[1:0],   haltreq};
             resume_req_sync_chain <= {resume_req_sync_chain[1:0], resumereq};
@@ -426,7 +428,11 @@ module jv32_dtm #(
             // dcsr.cause update: detect rising edge of dbg_halted_i
             dbg_halted_prev <= dbg_halted_i;
             if (dbg_halted_i && !dbg_halted_prev) begin
-                // Hart just entered debug mode — record cause
+                // Hart just entered debug mode — record cause.
+                // Skip DPC capture during CMD_EXEC halts (exec_waiting_halt=1):
+                // those halt at the debug-ROM ebreak and should not overwrite dpc_reg.
+                if (!exec_waiting_halt)
+                    dpc_reg <= dbg_pc_i;  // Save actual PC at halt (haltreq or step)
                 if (dcsr_reg[2] && !halt_req_sync_chain[2])
                     dcsr_cause_r <= 3'd4;  // single-step
                 else
@@ -1253,9 +1259,9 @@ module jv32_dtm #(
                         data0_result_valid <= 1'b1;
                         `DEBUG2(`DBG_GRP_DTM, ("Read GPR x%0d = 0x%h", cmd_regno - 16'h1000, dbg_reg_rdata_i));
                     end else if (cmd_regno == 16'h07b1) begin  // CSR DPC
-                        data0_result       <= dbg_pc_i;
+                        data0_result       <= dpc_reg;
                         data0_result_valid <= 1'b1;
-                        `DEBUG2(`DBG_GRP_DTM, ("Read DPC = 0x%h", dbg_pc_i));
+                        `DEBUG2(`DBG_GRP_DTM, ("Read DPC = 0x%h (dpc_reg)", dpc_reg));
                     end
                     if (cmd_postexec) begin
                         // Redirect CPU to progbuf for post-execute
@@ -1276,6 +1282,7 @@ module jv32_dtm #(
                     end else if (cmd_regno == 16'h07b1) begin  // CSR DPC
                         dbg_pc_wdata_o <= data0_sys;
                         dbg_pc_we_o <= 1'b1;
+                        dpc_reg <= data0_sys;  // Save user DPC — survives CMD_EXEC
                         `DEBUG2(`DBG_GRP_DTM, ("Write DPC = 0x%h", data0_sys));
                     end
                     if (cmd_postexec) begin
@@ -1613,6 +1620,11 @@ module jv32_dtm #(
 
                 CMD_DONE: begin
                     cmd_busy <= 1'b0;
+                    // Restore pc_if to the saved DPC.  This undoes any CMD_EXEC side-effect
+                    // (CMD_EXEC redirects pc_if to DEBUG_ROM_BASE for progbuf execution).
+                    // For non-CMD_EXEC commands dpc_reg already equals the current pc_if.
+                    dbg_pc_we_o    <= 1'b1;
+                    dbg_pc_wdata_o <= dpc_reg;
                     // Don't clear command_reg here - it's in TCK domain
                     cmd_state <= CMD_IDLE;
                 end
