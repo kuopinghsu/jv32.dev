@@ -150,6 +150,19 @@ TB_SOURCES = \
     $(TB_DIR)/elfloader.cpp \
     $(SIM_DIR)/riscv-dis.cpp
 
+# VPI testbench sources (no riscv-dis — the VPI testbench does not emit traces)
+VPI_SOURCES = \
+    $(TB_DIR)/tb_jv32_vpi.cpp \
+    $(TB_DIR)/elfloader.cpp
+
+# VPI build output binaries
+VPI_TARGET_JTAG  = $(BUILD_DIR)/jv32vpi_jtag
+VPI_TARGET_CJTAG = $(BUILD_DIR)/jv32vpi_cjtag
+
+# VERILATOR_FLAGS with any caller-supplied USE_CJTAG stripped out, so VPI
+# build targets can set USE_CJTAG precisely without risk of duplication.
+VERILATOR_FLAGS_VPI = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_FLAGS))
+
 # Output binary
 BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
@@ -163,6 +176,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
         lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
+        build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests
 
@@ -208,6 +222,62 @@ $(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	@echo "=========================================="
 
 FORCE:
+
+# ============================================================================
+# VPI Testbench builds (for OpenOCD JTAG/cJTAG interface testing)
+# ============================================================================
+# build-vpi-jtag:  Compile with USE_CJTAG=0 → build/jv32vpi_jtag
+# build-vpi-cjtag: Compile with USE_CJTAG=1 → build/jv32vpi_cjtag
+#
+# The VPI testbench uses the same tb_jv32_soc.sv RTL module as the normal
+# simulator, but replaces the C++ driver with tb_jv32_vpi.cpp which implements
+# a JTAG VPI TCP server (default port 3333) for OpenOCD to connect to.
+# ============================================================================
+build-vpi-jtag: $(VPI_TARGET_JTAG)
+$(VPI_TARGET_JTAG): $(RTL_SOURCES) $(VPI_SOURCES)
+	@echo "=========================================="
+	@echo "Building JV32 VPI testbench (JTAG, USE_CJTAG=0)"
+	@echo "=========================================="
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)/objdir_vpi_jtag
+	$(VERILATOR) $(VERILATOR_FLAGS_VPI) \
+	    -pvalue+USE_CJTAG=0 \
+	    -Mdir $(BUILD_DIR)/objdir_vpi_jtag \
+	    -o ../jv32vpi_jtag \
+	    -I$(CORE_DIR) \
+	    -I$(JV32_DIR) \
+	    -I$(AXI_DIR) \
+	    -I$(MEM_DIR) \
+	    -I$(RTL_DIR) \
+	    $(RTL_SOURCES) \
+	    $(VPI_SOURCES)
+	@echo ""
+	@echo "=========================================="
+	@echo "VPI JTAG testbench: $(VPI_TARGET_JTAG)"
+	@echo "=========================================="
+
+build-vpi-cjtag: $(VPI_TARGET_CJTAG)
+$(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(VPI_SOURCES)
+	@echo "=========================================="
+	@echo "Building JV32 VPI testbench (cJTAG, USE_CJTAG=1)"
+	@echo "=========================================="
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)/objdir_vpi_cjtag
+	$(VERILATOR) $(VERILATOR_FLAGS_VPI) \
+	    -pvalue+USE_CJTAG=1 \
+	    -Mdir $(BUILD_DIR)/objdir_vpi_cjtag \
+	    -o ../jv32vpi_cjtag \
+	    -I$(CORE_DIR) \
+	    -I$(JV32_DIR) \
+	    -I$(AXI_DIR) \
+	    -I$(MEM_DIR) \
+	    -I$(RTL_DIR) \
+	    $(RTL_SOURCES) \
+	    $(VPI_SOURCES)
+	@echo ""
+	@echo "=========================================="
+	@echo "VPI cJTAG testbench: $(VPI_TARGET_CJTAG)"
+	@echo "=========================================="
 
 # ============================================================================
 # Lint

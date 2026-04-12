@@ -392,11 +392,6 @@ module cjtag_bridge (
             tmsc_oen_int    <= 1'b1;  // Default to input mode
             tdo_sampled     <= 1'b0;
         end else begin
-            // Sample TDO when TCK is high (after TAP has updated it)
-            if (tck_int && state == ST_OSCAN1 && bit_pos == 2'd2) begin
-                tdo_sampled <= tdo_i;
-            end
-
             case (state)
                 ST_OFFLINE, ST_ONLINE_ACT, ST_ESCAPE: begin
                     // Keep JTAG interface idle
@@ -428,13 +423,15 @@ module cjtag_bridge (
                             end
 
                             2'd2: begin
-                                // After TMS sampled - generate TCK pulse, drive TDO
+                                // Sample TDO BEFORE raising TCK: captures pre-shift value
+                                // (jtag_tap shifts on posedge TCK; tdo_i reflects old ir/dr_shift[0])
+                                tdo_sampled  <= tdo_i;
+                                // After TMS sampled - generate TCK pulse, enable TDO output
                                 tms_int <= tmsc_sampled;
                                 tck_int <= 1'b1;       // Generate TCK pulse
                                 tmsc_oen_int <= 1'b0;  // Output mode for TDO
-                                // TDO will be sampled on next clock cycle after TCK rises
 
-                                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b, driving TDO=%b",
+                                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b, TDO_pre=%b",
                                        $time, tmsc_sampled, tdo_i));
                             end
 

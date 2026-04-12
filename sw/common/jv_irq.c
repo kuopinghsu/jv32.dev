@@ -44,6 +44,19 @@ static void _default_irq(uint32_t cause)
 
 static uint32_t _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
 {
+    /* If the fault occurred inside the debug ROM / program-buffer area
+     * (0x0f8000xx), the CPU was executing a debugger-inserted instruction
+     * that faulted (e.g. an unsupported CSR access).  Silently skip it so
+     * that execution falls through to the implicit ebreak at the end of the
+     * progbuf.  CMD_EXEC can then detect the normal re-halt and complete
+     * the abstract command.  OpenOCD handles any cmderr it sees afterwards. */
+    if ((mepc >> 8) == (0x0F800000u >> 8)) {
+        /* Advance past the faulting instruction: 4 bytes if 32-bit (bits[1:0]==11),
+         * 2 bytes for a compressed (16-bit) instruction. */
+        uint32_t insn_len = ((mtval & 3u) == 3u) ? 4u : 2u;
+        return mepc + insn_len;
+    }
+
     _puts("\n=== EXCEPTION ===\n");
     _puts("mcause: "); _puthex(mcause); _puts("\n");
     _puts("mepc:   "); _puthex(mepc);   _puts("\n");

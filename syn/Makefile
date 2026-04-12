@@ -250,6 +250,11 @@ synth: check $(BUILD_DIR)
 	fi
 	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n' \
 	    $(IRAM_SIZE) $(DRAM_SIZE) > $(TCM_PARAMS_YAML)
+	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
+	@# Since tcm_params.yaml lives in BUILD_DIR, copy the path-referenced
+	@# files there so OpenLane finds them.
+	@cp $(OPENLANE_DIR)/jv32_soc_pnr.sdc  $(BUILD_DIR)/jv32_soc_pnr.sdc
+	@cp $(OPENLANE_DIR)/macro_placement.cfg $(BUILD_DIR)/macro_placement.cfg
 	@( \
 	    mkdir -p $(OPENLANE_RUN_DIR); \
 	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \

@@ -192,7 +192,7 @@ module jv32_dtm #(
     logic [2:0]  cmderr_clr_tog_sync;  // CLK domain toggle sync chain
     logic        cmderr_clr_tog_r;     // CLK edge detect
     localparam [3:0] ABSTRACTCS_DATACOUNT = 4'd1;   // 1 data register (RV32)
-    localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2; // 2 program buffer registers (progbuf0/progbuf1)
+    localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2; // 2 program buffer registers
 
     // abstractauto register (0x18) - auto re-execute on data/progbuf access
     logic [11:0] autoexec_data;     // bit[i]=1: re-exec when data[i] accessed
@@ -289,6 +289,8 @@ module jv32_dtm #(
     logic       cmd_postexec;           // Execute progbuf after command
     logic       exec_resume_req;        // FSM-driven resume for progbuf execution
     logic       exec_waiting_halt;      // CMD_EXEC: waiting for CPU to re-halt
+    logic       exec_seen_running;      // CMD_EXEC: hart observed running after resume
+    logic [11:0] exec_wait_cnt;         // CMD_EXEC timeout while waiting for re-halt
     localparam [31:0] DEBUG_ROM_BASE = 32'h0F80_0000; // Progbuf intercept address
     logic       cmd_transfer;           // Perform transfer
 
@@ -598,8 +600,10 @@ module jv32_dtm #(
             hartselhi <= 10'b0;
             data0 <= 32'b0;
             data1 <= 32'b0;
-            progbuf0 <= 32'b0;
-            progbuf1 <= 32'b0;
+            // Default to EBREAK so a progbuf execute with untouched entries
+            // immediately returns to debug mode instead of running garbage.
+            progbuf0 <= 32'h0010_0073;
+            progbuf1 <= 32'h0010_0073;
             command_reg <= 32'b0;
             cmderr <= 3'b0;
             cmderr_clr_tck <= 3'b0;
@@ -634,7 +638,12 @@ module jv32_dtm #(
                     // Read the requested DMI register
                     case (dmi_address)
                         DMI_DATA0:     begin
-                            dmi_shift <= {dmi_address, data0, 2'b00};
+                            // Return the freshest CLK-domain result during CAPTURE_DR.
+                            // Waiting for the shadow DATA0 register to be updated in a
+                            // later UPDATE_DR makes abstract reads visible one scan late.
+                            dmi_shift <= {dmi_address,
+                                data0_result_valid_sync[2] ? data0_result_sync[2] : data0,
+                                2'b00};
                         end
                         DMI_DATA1:     begin
                             dmi_shift <= {dmi_address, data1, 2'b00};
@@ -669,9 +678,13 @@ module jv32_dtm #(
                                  1'b0},         // [0] no 8-bit
                                 2'b00};
                         end
-                        DMI_SBADDRESS0: dmi_shift <= {dmi_address, sbaddress0, 2'b00};
+                        DMI_SBADDRESS0: dmi_shift <= {dmi_address,
+                            sbaddress0_result_valid_sync[2] ? sbaddress0_result_sync[2] : sbaddress0,
+                            2'b00};
                         DMI_SBDATA0: begin
-                            dmi_shift <= {dmi_address, sbdata0, 2'b00};
+                            dmi_shift <= {dmi_address,
+                                sbdata0_result_valid_sync[2] ? sbdata0_result_sync[2] : sbdata0,
+                                2'b00};
                         end
                         default:        dmi_shift <= {dmi_address, 32'h0, 2'b00};
                     endcase
@@ -847,52 +860,52 @@ module jv32_dtm #(
     // ========================================================================
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
-            cmderr_sync[0] <= 3'b0;
-            cmderr_sync[1] <= 3'b0;
-            cmderr_sync[2] <= 3'b0;
-            data0_result_sync[0] <= 32'b0;
-            data0_result_sync[1] <= 32'b0;
-            data0_result_sync[2] <= 32'b0;
-            data0_result_valid_sync[0] <= 1'b0;
-            data0_result_valid_sync[1] <= 1'b0;
-            data0_result_valid_sync[2] <= 1'b0;
-            data0_result_valid_sync_r  <= 1'b0;
-            sbdata0_result_sync[0] <= 32'b0;
-            sbdata0_result_sync[1] <= 32'b0;
-            sbdata0_result_sync[2] <= 32'b0;
+            cmderr_sync[0]              <= 3'b0;
+            cmderr_sync[1]              <= 3'b0;
+            cmderr_sync[2]              <= 3'b0;
+            data0_result_sync[0]        <= 32'b0;
+            data0_result_sync[1]        <= 32'b0;
+            data0_result_sync[2]        <= 32'b0;
+            data0_result_valid_sync[0]  <= 1'b0;
+            data0_result_valid_sync[1]  <= 1'b0;
+            data0_result_valid_sync[2]  <= 1'b0;
+            data0_result_valid_sync_r   <= 1'b0;
+            sbdata0_result_sync[0]      <= 32'b0;
+            sbdata0_result_sync[1]      <= 32'b0;
+            sbdata0_result_sync[2]      <= 32'b0;
             sbdata0_result_valid_sync[0] <= 1'b0;
             sbdata0_result_valid_sync[1] <= 1'b0;
             sbdata0_result_valid_sync[2] <= 1'b0;
             sbdata0_result_valid_sync_r  <= 1'b0;
-            sbaddress0_result_sync[0] <= 32'b0;
-            sbaddress0_result_sync[1] <= 32'b0;
-            sbaddress0_result_sync[2] <= 32'b0;
+            sbaddress0_result_sync[0]   <= 32'b0;
+            sbaddress0_result_sync[1]   <= 32'b0;
+            sbaddress0_result_sync[2]   <= 32'b0;
             sbaddress0_result_valid_sync[0] <= 1'b0;
             sbaddress0_result_valid_sync[1] <= 1'b0;
             sbaddress0_result_valid_sync[2] <= 1'b0;
             sbaddress0_result_valid_sync_r  <= 1'b0;
         end else begin
-            cmderr_sync[0] <= cmderr_sys;
-            cmderr_sync[1] <= cmderr_sync[0];
-            cmderr_sync[2] <= cmderr_sync[1];
-            data0_result_sync[0] <= data0_result;
-            data0_result_sync[1] <= data0_result_sync[0];
-            data0_result_sync[2] <= data0_result_sync[1];
-            data0_result_valid_sync[0] <= data0_result_valid;
-            data0_result_valid_sync[1] <= data0_result_valid_sync[0];
-            data0_result_valid_sync[2] <= data0_result_valid_sync[1];
-            data0_result_valid_sync_r  <= data0_result_valid_sync[2]; // delayed for edge detect
+            cmderr_sync[0]              <= cmderr_sys;
+            cmderr_sync[1]              <= cmderr_sync[0];
+            cmderr_sync[2]              <= cmderr_sync[1];
+            data0_result_sync[0]        <= data0_result;
+            data0_result_sync[1]        <= data0_result_sync[0];
+            data0_result_sync[2]        <= data0_result_sync[1];
+            data0_result_valid_sync[0]  <= data0_result_valid;
+            data0_result_valid_sync[1]  <= data0_result_valid_sync[0];
+            data0_result_valid_sync[2]  <= data0_result_valid_sync[1];
+            data0_result_valid_sync_r   <= data0_result_valid_sync[2]; // delayed for edge detect
             // SBA result sync chains (CLK→TCK)
-            sbdata0_result_sync[0] <= sbdata0_clk;
-            sbdata0_result_sync[1] <= sbdata0_result_sync[0];
-            sbdata0_result_sync[2] <= sbdata0_result_sync[1];
+            sbdata0_result_sync[0]      <= sbdata0_clk;
+            sbdata0_result_sync[1]      <= sbdata0_result_sync[0];
+            sbdata0_result_sync[2]      <= sbdata0_result_sync[1];
             sbdata0_result_valid_sync[0] <= sbdata0_result_valid;
             sbdata0_result_valid_sync[1] <= sbdata0_result_valid_sync[0];
             sbdata0_result_valid_sync[2] <= sbdata0_result_valid_sync[1];
             sbdata0_result_valid_sync_r  <= sbdata0_result_valid_sync[2];
-            sbaddress0_result_sync[0] <= sbaddress0_clk;
-            sbaddress0_result_sync[1] <= sbaddress0_result_sync[0];
-            sbaddress0_result_sync[2] <= sbaddress0_result_sync[1];
+            sbaddress0_result_sync[0]   <= sbaddress0_clk;
+            sbaddress0_result_sync[1]   <= sbaddress0_result_sync[0];
+            sbaddress0_result_sync[2]   <= sbaddress0_result_sync[1];
             sbaddress0_result_valid_sync[0] <= sbaddress0_result_valid;
             sbaddress0_result_valid_sync[1] <= sbaddress0_result_valid_sync[0];
             sbaddress0_result_valid_sync[2] <= sbaddress0_result_valid_sync[1];
@@ -935,76 +948,78 @@ module jv32_dtm #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // Toggle-sync state
-            cmd_wr_toggle_sync   <= 3'b0;
-            cmd_wr_toggle_r      <= 1'b0;
-            command_reg_sys      <= 32'b0;
-            data0_sys            <= 32'b0;
-            command_valid_sys    <= 1'b0;
+            cmd_wr_toggle_sync      <= 3'b0;
+            cmd_wr_toggle_r         <= 1'b0;
+            command_reg_sys         <= 32'b0;
+            data0_sys               <= 32'b0;
+            command_valid_sys       <= 1'b0;
             command_reg_tck_sync[0] <= 32'b0;
             command_reg_tck_sync[1] <= 32'b0;
             command_reg_tck_sync[2] <= 32'b0;
-            data0_tck_sync[0] <= 32'b0;
-            data0_tck_sync[1] <= 32'b0;
-            data0_tck_sync[2] <= 32'b0;
-            data1_tck_sync[0] <= 32'b0;
-            data1_tck_sync[1] <= 32'b0;
-            data1_tck_sync[2] <= 32'b0;
-            sba_wr_toggle_sync   <= 3'b0;
-            sba_wr_toggle_r      <= 1'b0;
-            sba_rd_toggle_sync   <= 3'b0;
-            sba_rd_toggle_r      <= 1'b0;
-            sba_wait_cnt         <= 4'b0;
-            cmderr_clr_tog_sync <= 3'b0;
-            cmderr_clr_tog_r    <= 1'b0;
-            sb_err_clr_tog_sync        <= 3'b0;
-            sb_err_clr_tog_r           <= 1'b0;
-            sb_access_clk    <= SBA_ACCESS32;
+            data0_tck_sync[0]       <= 32'b0;
+            data0_tck_sync[1]       <= 32'b0;
+            data0_tck_sync[2]       <= 32'b0;
+            data1_tck_sync[0]       <= 32'b0;
+            data1_tck_sync[1]       <= 32'b0;
+            data1_tck_sync[2]       <= 32'b0;
+            sba_wr_toggle_sync      <= 3'b0;
+            sba_wr_toggle_r         <= 1'b0;
+            sba_rd_toggle_sync      <= 3'b0;
+            sba_rd_toggle_r         <= 1'b0;
+            sba_wait_cnt            <= 4'b0;
+            cmderr_clr_tog_sync     <= 3'b0;
+            cmderr_clr_tog_r        <= 1'b0;
+            sb_err_clr_tog_sync     <= 3'b0;
+            sb_err_clr_tog_r        <= 1'b0;
+            sb_access_clk           <= SBA_ACCESS32;
             // CLK-domain SBA registers
             sbaddress0_clk          <= 32'b0;
             sbdata0_clk             <= 32'b0;
             sbdata0_result_valid    <= 1'b0;
             sbaddress0_result_valid <= 1'b0;
             // State machine
-            cmd_state             <= CMD_IDLE;
+            cmd_state               <= CMD_IDLE;
             cmd_busy       <= 1'b0;
             cmderr_sys <= 3'b0;
-            data0_result          <= 32'b0;
-            data0_result_valid    <= 1'b0;
-            data0_sys             <= 32'b0;
-            data1_sys             <= 32'b0;
-            dbg_reg_we_o          <= 1'b0;
-            dbg_pc_we_o           <= 1'b0;
-            dbg_mem_req_o         <= 1'b0;
-            dbg_mem_we_o          <= 4'b0;
-            exec_resume_req       <= 1'b0;
-            exec_waiting_halt     <= 1'b0;
-            mem_req_pending       <= 1'b0;
-            mem_wait_cnt          <= 4'b0;
-            mem_aarpostincrement_r   <= 1'b0;
-            mem_post_addr            <= 32'b0;
+            data0_result            <= 32'b0;
+            data0_result_valid      <= 1'b0;
+            data0_sys               <= 32'b0;
+            data1_sys               <= 32'b0;
+            dbg_reg_we_o            <= 1'b0;
+            dbg_pc_we_o             <= 1'b0;
+            dbg_mem_req_o           <= 1'b0;
+            dbg_mem_we_o            <= 4'b0;
+            exec_resume_req         <= 1'b0;
+            exec_waiting_halt       <= 1'b0;
+            exec_seen_running       <= 1'b0;
+            exec_wait_cnt           <= 12'b0;
+            mem_req_pending         <= 1'b0;
+            mem_wait_cnt            <= 4'b0;
+            mem_aarpostincrement_r  <= 1'b0;
+            mem_post_addr           <= 32'b0;
 
             // Synthetic CSRs — CLK domain only
-            dcsr_reg      <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
-            dscratch0_reg <= 32'b0;
-            dscratch1_reg <= 32'b0;
+            dcsr_reg                <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
+            dscratch0_reg           <= 32'b0;
+            dscratch1_reg           <= 32'b0;
 
             // Machine-mode CSR mocks: reasonable defaults for a halted M-mode hart
-            mstatus_reg   <= 32'h00001800; // MPP=11(M-mode), MIE=0, MPIE=0
-            mie_reg       <= 32'b0;
-            mtvec_reg     <= 32'b0;
-            mepc_reg      <= 32'b0;
-            mcause_reg    <= 32'b0;
-            mtval_reg     <= 32'b0;
-            mip_reg       <= 32'b0;
+            mstatus_reg             <= 32'h00001800; // MPP=11(M-mode), MIE=0, MPIE=0
+            mie_reg                 <= 32'b0;
+            mtvec_reg               <= 32'b0;
+            mepc_reg                <= 32'b0;
+            mcause_reg              <= 32'b0;
+            mtval_reg               <= 32'b0;
+            mip_reg                 <= 32'b0;
 
-            sb_err    <= 3'b0;
+            sb_err                  <= 3'b0;
             // Debug command output registers
-            dbg_reg_addr_o  <= '0;
-            dbg_reg_wdata_o <= '0;
-            dbg_pc_wdata_o  <= '0;
-            dbg_mem_addr_o  <= '0;
-            dbg_mem_wdata_o <= '0;
-            mem_addr        <= '0;
+            dbg_reg_addr_o          <= '0;
+            dbg_reg_wdata_o         <= '0;
+            dbg_pc_wdata_o          <= '0;
+            dbg_mem_addr_o          <= '0;
+            dbg_mem_wdata_o         <= '0;
+            mem_addr                <= '0;
         end else begin
             // ----------------------------------------------------------------
             // Part 1: Unconditional synchronizer advances (always run)
@@ -1088,7 +1103,7 @@ module jv32_dtm #(
 
                     // Check if new command written (transition from TCK domain)
                     if (command_valid_sys && !cmd_busy) begin
-                        if (!halted_clk) begin
+                        if (!dbg_halted_i) begin
                             // Hart must be halted to execute commands
                             cmderr_sys <= CMDERR_HALTRESUME;
                             `DEBUG2(`DBG_GRP_DTM, ("Command rejected: hart not halted"));
@@ -1553,16 +1568,31 @@ module jv32_dtm #(
                         // Issue resume to CPU
                         exec_resume_req   <= 1'b1;
                         exec_waiting_halt <= 1'b1;
+                        exec_seen_running <= 1'b0;
+                        exec_wait_cnt     <= 12'b0;
                         `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: resuming CPU for progbuf execution"));
-                    end else if (!dbg_halted_i) begin
-                        // CPU has resumed (de-asserted halted); de-assert resume
+                    end else begin
+                        // Pulse resume request for one cycle, then watch for run->halt.
                         exec_resume_req <= 1'b0;
-                    end else if (exec_waiting_halt && !exec_resume_req && dbg_halted_i) begin
-                        // CPU has re-halted after executing progbuf (hit implicit ebreak)
-                        exec_waiting_halt <= 1'b0;
-                        cmd_busy   <= 1'b0;
-                        cmd_state         <= CMD_IDLE;  // progbuf exec done; no CMD_DONE
-                        `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU re-halted, progbuf done"));
+
+                        if (!dbg_halted_i) begin
+                            exec_seen_running <= 1'b1;
+                        end
+
+                        if (dbg_halted_i && exec_seen_running) begin
+                            // CPU has re-halted after executing progbuf.
+                            exec_waiting_halt <= 1'b0;
+                            cmd_state         <= CMD_DONE;
+                            `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU re-halted, progbuf done"));
+                        end else begin
+                            exec_wait_cnt <= exec_wait_cnt + 12'd1;
+                            if (exec_wait_cnt == 12'hFFF) begin
+                                cmderr_sys        <= CMDERR_EXCEPTION;
+                                exec_waiting_halt <= 1'b0;
+                                cmd_state         <= CMD_DONE;
+                                `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: timeout waiting re-halt, cmderr=exception"));
+                            end
+                        end
                     end
                 end
 
