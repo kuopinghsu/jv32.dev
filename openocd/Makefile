@@ -21,7 +21,9 @@
 #   cjtag-<name> — run a single cJTAG test (e.g. make cjtag-halt_resume)
 #
 # Available test names:
-#   halt_resume  registers  memory  reset  breakpoint  watchpoint
+#   halt_resume  registers  memory  memory_modes  reset  dm_status
+#   programbuf   step  debug_errors  breakpoint  breakpoint_strict
+#   watchpoint   watchpoint_strict
 #   cjtag        (cJTAG-specific activation test, cjtag-* only)
 #
 # Overridable variables (on the make command line or in env.config)
@@ -58,9 +60,11 @@ VPI_PORT ?= 5555
 
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
-JTAG_TESTS  := halt_resume registers memory reset breakpoint watchpoint programbuf step
+JTAG_TESTS  := halt_resume registers memory memory_modes reset dm_status programbuf step \
+			   debug_errors breakpoint breakpoint_strict watchpoint watchpoint_strict
 # cJTAG: cJTAG activation check first, then the same common tests
-CJTAG_TESTS := cjtag halt_resume registers memory reset breakpoint watchpoint programbuf step
+CJTAG_TESTS := cjtag halt_resume registers memory memory_modes reset dm_status programbuf step \
+			   debug_errors breakpoint breakpoint_strict watchpoint watchpoint_strict
 
 # ── Log directory ─────────────────────────────────────────────────────────────
 LOG_DIR := $(BUILD_DIR)/openocd_logs
@@ -68,8 +72,7 @@ LOG_DIR := $(BUILD_DIR)/openocd_logs
 # ─────────────────────────────────────────────────────────────────────────────
 # Phony targets
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all test-jtag test-cjtag build-jtag build-cjtag clean help \
-        $(JTAG_TESTS:%=jtag-%) $(CJTAG_TESTS:%=cjtag-%)
+.PHONY: all test-jtag test-cjtag build-jtag build-cjtag clean help jtag-% cjtag-%
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default
@@ -101,7 +104,7 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	@echo "Tests: $(JTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
-	@PASS=0; FAIL=0; \
+	@PASS=0; SKIP=0; FAIL=0; \
 	run_one() { \
 	    t=$$1; \
 	    LOG="$(LOG_DIR)/jtag_$$t"; \
@@ -121,8 +124,12 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	    ) >"$$LOG.ocd.log" 2>&1; \
 	    OCD_RC=$$?; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
-	    if [ $$OCD_RC -eq 0 ] && grep -q '\[PASS\]' "$$LOG.ocd.log" 2>/dev/null; then \
-	        echo "PASS"; PASS=$$((PASS+1)); \
+	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	            echo "SKIP"; SKIP=$$((SKIP+1)); \
+	        else \
+	            echo "PASS"; PASS=$$((PASS+1)); \
+	        fi; \
 	    else \
 	        echo "FAIL (openocd exit=$$OCD_RC)"; \
 	        FAIL=$$((FAIL+1)); \
@@ -132,7 +139,7 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	for t in $(JTAG_TESTS); do run_one $$t; done; \
 	echo ""; \
 	echo "------------------------------------------"; \
-	echo "JTAG result: $$PASS passed, $$FAIL failed"; \
+	echo "JTAG result: $$PASS passed, $$SKIP skipped, $$FAIL failed"; \
 	echo "Logs: $(LOG_DIR)/jtag_*.ocd.log"; \
 	echo "------------------------------------------"; \
 	[ $$FAIL -eq 0 ]
@@ -147,7 +154,7 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	@echo "Tests: $(CJTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
-	@PASS=0; FAIL=0; \
+	@PASS=0; SKIP=0; FAIL=0; \
 	run_one() { \
 	    t=$$1; \
 	    LOG="$(LOG_DIR)/cjtag_$$t"; \
@@ -167,8 +174,12 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	    ) >"$$LOG.ocd.log" 2>&1; \
 	    OCD_RC=$$?; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
-	    if [ $$OCD_RC -eq 0 ] && grep -q '\[PASS\]' "$$LOG.ocd.log" 2>/dev/null; then \
-	        echo "PASS"; PASS=$$((PASS+1)); \
+	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	            echo "SKIP"; SKIP=$$((SKIP+1)); \
+	        else \
+	            echo "PASS"; PASS=$$((PASS+1)); \
+	        fi; \
 	    else \
 	        echo "FAIL (openocd exit=$$OCD_RC)"; \
 	        FAIL=$$((FAIL+1)); \
@@ -178,7 +189,7 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	for t in $(CJTAG_TESTS); do run_one $$t; done; \
 	echo ""; \
 	echo "------------------------------------------"; \
-	echo "cJTAG result: $$PASS passed, $$FAIL failed"; \
+	echo "cJTAG result: $$PASS passed, $$SKIP skipped, $$FAIL failed"; \
 	echo "Logs: $(LOG_DIR)/cjtag_*.ocd.log"; \
 	echo "------------------------------------------"; \
 	[ $$FAIL -eq 0 ]
@@ -206,8 +217,13 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 	OCD_RC=$$?; \
 	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	cat "$$LOG.ocd.log"; \
-	if [ $$OCD_RC -eq 0 ] && grep -q '\[PASS\]' "$$LOG.ocd.log" 2>/dev/null; then \
-	    echo ""; echo "[PASS] jtag: test_$$t"; exit 0; \
+	if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	    if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	        echo ""; echo "[SKIP] jtag: test_$$t"; \
+	    else \
+	        echo ""; echo "[PASS] jtag: test_$$t"; \
+	    fi; \
+	    exit 0; \
 	else \
 	    echo ""; echo "[FAIL] jtag: test_$$t (openocd exit=$$OCD_RC)"; exit 1; \
 	fi
@@ -235,8 +251,13 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
 	OCD_RC=$$?; \
 	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	cat "$$LOG.ocd.log"; \
-	if [ $$OCD_RC -eq 0 ] && grep -q '\[PASS\]' "$$LOG.ocd.log" 2>/dev/null; then \
-	    echo ""; echo "[PASS] cjtag: test_$$t"; exit 0; \
+	if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	    if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	        echo ""; echo "[SKIP] cjtag: test_$$t"; \
+	    else \
+	        echo ""; echo "[PASS] cjtag: test_$$t"; \
+	    fi; \
+	    exit 0; \
 	else \
 	    echo ""; echo "[FAIL] cjtag: test_$$t (openocd exit=$$OCD_RC)"; exit 1; \
 	fi
@@ -263,7 +284,9 @@ help:
 	@echo "  cjtag-<name>  — single cJTAG test (e.g. cjtag-cjtag)"
 	@echo ""
 	@echo "  Available test names:"
-	@echo "    halt_resume  registers  memory  reset  breakpoint  watchpoint"
+	@echo "    halt_resume  registers  memory  memory_modes  reset  dm_status"
+	@echo "    programbuf   step  debug_errors  breakpoint  breakpoint_strict"
+	@echo "    watchpoint   watchpoint_strict"
 	@echo "    cjtag (cjtag-* only)"
 	@echo ""
 	@echo "  BOOT_ELF=$(BOOT_ELF)"
