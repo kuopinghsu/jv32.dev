@@ -406,6 +406,8 @@ module jv32_dtm #(
     logic [2:0] halt_req_sync_chain;
     logic [2:0] resume_req_sync_chain;
     logic [2:0] halted_clk_chain;
+    logic [2:0] dcsr_cause_r;   // dcsr.cause bits updated on debug mode entry
+    logic       dbg_halted_prev;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -413,11 +415,23 @@ module jv32_dtm #(
             resume_req_sync_chain <= 3'b0;
             halted_clk_chain      <= 3'b0;
             halted_clk            <= 1'b0;
+            dcsr_cause_r          <= 3'd0;
+            dbg_halted_prev       <= 1'b0;
         end else begin
             halt_req_sync_chain   <= {halt_req_sync_chain[1:0],   haltreq};
             resume_req_sync_chain <= {resume_req_sync_chain[1:0], resumereq};
             halted_clk_chain <= {halted_clk_chain[1:0], dbg_halted_i};
             halted_clk       <= halted_clk_chain[2];
+
+            // dcsr.cause update: detect rising edge of dbg_halted_i
+            dbg_halted_prev <= dbg_halted_i;
+            if (dbg_halted_i && !dbg_halted_prev) begin
+                // Hart just entered debug mode — record cause
+                if (dcsr_reg[2] && !halt_req_sync_chain[2])
+                    dcsr_cause_r <= 3'd4;  // single-step
+                else
+                    dcsr_cause_r <= 3'd3;  // debug request (haltreq)
+            end
         end
     end
 
@@ -1276,9 +1290,9 @@ module jv32_dtm #(
                 CMD_CSR_READ: begin
                     // Synthetic CSR read (stored in DTM registers or hardcoded)
                     case (cmd_regno)
-                        16'h07b0: begin  // dcsr: force xdebugver=4 (read-only)
-                            data0_result <= {4'd4, dcsr_reg[27:0]};
-                            `DEBUG2(`DBG_GRP_DTM, ("Read DCSR = 0x%h", {4'd4, dcsr_reg[27:0]}));
+                        16'h07b0: begin  // dcsr: overlay cause bits from dcsr_cause_r
+                            data0_result <= {4'd4, dcsr_reg[27:9], dcsr_cause_r, dcsr_reg[5:0]};
+                            `DEBUG2(`DBG_GRP_DTM, ("Read DCSR = 0x%h", {4'd4, dcsr_reg[27:9], dcsr_cause_r, dcsr_reg[5:0]}));
                         end
                         16'h07b2: begin  // dscratch0
                             data0_result <= dscratch0_reg;
@@ -1359,6 +1373,7 @@ module jv32_dtm #(
                     case (cmd_regno)
                         16'h07b0: begin  // dcsr: preserve xdebugver in upper nibble
                             dcsr_reg <= {4'd4, data0_sys[27:0]};
+                            dcsr_cause_r <= data0_sys[8:6];  // Track cause from write
                             `DEBUG2(`DBG_GRP_DTM, ("Write DCSR = 0x%h", {4'd4, data0_sys[27:0]}));
                         end
                         16'h07b2: begin  // dscratch0
@@ -1659,8 +1674,8 @@ module jv32_dtm #(
     end
 
     // Debug control signals derived from dcsr register
-    assign dbg_singlestep_o = dcsr_reg[2];
-    assign dbg_ebreakm_o    = dcsr_reg[15];
+    assign dbg_singlestep_o = dcsr_reg[2];   // dcsr.step = bit[2] per Debug Spec 0.13
+    assign dbg_ebreakm_o    = dcsr_reg[15];  // dcsr.ebreakm = bit[15] per Debug Spec 0.13
     assign progbuf0_o       = progbuf0;
     assign progbuf1_o       = progbuf1;
 
@@ -1669,6 +1684,9 @@ module jv32_dtm #(
     logic _unused_ok_dtm;
     assign _unused_ok_dtm = &{1'b0,
         dcsr_reg[31:28],           // xdebugver always forced to 4'd4; these bits never used
+        dcsr_reg[14:13],           // ebreaks/ebreaku: not individually consumed here
+        dcsr_reg[12:9],            // stepie/stopcount/stoptime/halt: forwarded but not consumed individually
+        dcsr_reg[3],               // nmip: not implemented in this core
         command_reg_sys[23], command_reg_sys[19],  // reserved bits in AC_ACCESS_REGISTER
         data0_result_valid_sync_r,   // retained for future edge-detect use
         sbdata0_result_valid_sync_r,

@@ -136,6 +136,7 @@ module jv32_core #(
     logic dbg_halted_r;
     logic dbg_resumeack_r;
     logic dbg_step_pending_r;
+    logic dbg_step_served_r;   // Prevents re-resume after single-step halt
     logic dbg_enter_debug;
 
     jv32_regfile u_regfile (
@@ -378,6 +379,15 @@ module jv32_core #(
             if_ex_r.ifetch_fault  <= 1'b0;
         end else if (dbg_pc_we_i) begin
             if_ex_r <= '0;
+        end else if (halt_req_i && !dbg_halted_r) begin
+            // Flush pipeline on debug halt so the stale IF/EX instruction
+            // does not execute as the first step on resume.  ebreak already
+            // flushes via dbg_enter_debug; haltreq needs an explicit flush.
+            if_ex_r <= '0;
+        end else if (resume_req_i && dbg_halted_r && !dbg_step_served_r) begin
+            // Flush pipeline on debug resume to discard any stale instruction
+            // that may have been in if_ex_r since the previous debug halt.
+            if_ex_r <= '0;
         end else if (!ex_stall) begin
             if (ex_flush || if_flush || dbg_enter_debug) begin
                 if_ex_r <= '0;
@@ -589,16 +599,25 @@ module jv32_core #(
             dbg_halted_r      <= 1'b0;
             dbg_resumeack_r   <= 1'b0;
             dbg_step_pending_r<= 1'b0;
-        end else if (resume_req_i && dbg_halted_r) begin
-            dbg_halted_r       <= 1'b0;
-            dbg_resumeack_r    <= 1'b1;
-            dbg_step_pending_r <= dbg_singlestep_i;
-        end else if (dbg_enter_debug
-                  || (halt_req_i && !dbg_halted_r)
-                  || (dbg_step_pending_r && trace_valid)) begin
-            dbg_halted_r       <= 1'b1;
-            dbg_resumeack_r    <= 1'b0;
-            dbg_step_pending_r <= 1'b0;
+            dbg_step_served_r <= 1'b0;
+        end else begin
+            // Clear step_served when resumereq is de-asserted (OpenOCD cleared it)
+            if (!resume_req_i) dbg_step_served_r <= 1'b0;
+
+            if (resume_req_i && dbg_halted_r && !dbg_step_served_r) begin
+                dbg_halted_r       <= 1'b0;
+                dbg_resumeack_r    <= 1'b1;
+                dbg_step_pending_r <= dbg_singlestep_i;
+            end else if (dbg_enter_debug
+                      || (halt_req_i && !dbg_halted_r)
+                      || (dbg_step_pending_r && trace_valid)) begin
+                dbg_halted_r       <= 1'b1;
+                dbg_resumeack_r    <= 1'b0;
+                dbg_step_pending_r <= 1'b0;
+                // After a single-step halt, block re-resume until resumereq deasserts
+                if (dbg_step_pending_r && trace_valid)
+                    dbg_step_served_r <= 1'b1;
+            end
         end
     end
 
@@ -879,11 +898,16 @@ module jv32_core #(
     // bp_redirect also flushes the RVC buffer to discard the instruction
     // speculatively fetched from PC+4 when a backward branch is predicted taken.
     // Debug PC writes also flush any stale prefetched halfword(s).
+    // Debug resume flushes the RVC buffer to discard any instruction buffered
+    // while the core was halted (prevents stale instructions from executing on step).
+    logic dbg_resume_flush;
+    assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r;
     assign rvc_stall    = if_stall;
-    assign rvc_flush    = if_flush || bp_redirect || dbg_pc_we_i;
-    assign rvc_flush_pc = if_flush     ? if_flush_pc     :
-                          dbg_pc_we_i  ? dbg_pc_wdata_i  :
-                                         bp_redirect_pc;
+    assign rvc_flush    = if_flush || bp_redirect || dbg_pc_we_i || dbg_resume_flush;
+    assign rvc_flush_pc = if_flush         ? if_flush_pc      :
+                          dbg_pc_we_i      ? dbg_pc_wdata_i   :
+                          dbg_resume_flush ? pc_if             :
+                                             bp_redirect_pc;
 
     // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
@@ -1011,7 +1035,11 @@ module jv32_core #(
     // The interrupt is serviced instead; the WB instruction is NOT retired
     // (no register write, no trace) but its PC is saved as mepc so that
     // it re-executes after mret — matching software-simulator behaviour.
-    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret;
+    // During single-step (dbg_step_pending_r=1), interrupts are suppressed
+    // to implement dcsr.stepie=0 (the reset / default value of dcsr.stepie):
+    // the Debug Spec says "interrupt enable is cleared while in single step mode".
+    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret
+                        && !dbg_step_pending_r;
 
     assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall && !irq_cancel
                             && !dbg_halted_r;
