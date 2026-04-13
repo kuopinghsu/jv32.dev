@@ -131,6 +131,10 @@ module jv32_top #(
     input  logic        dbg_ebreakm_i,
     input  logic [31:0] progbuf0_i,
     input  logic [31:0] progbuf1_i,
+    // Trigger interface (Debug Spec 0.13 §5.2)
+    output logic        dbg_trigger_halt_o,
+    input  logic [1:0][31:0] dbg_tdata1_i,
+    input  logic [1:0][31:0] dbg_tdata2_i,
 
     // =========================================================================
     // Trace
@@ -229,6 +233,9 @@ module jv32_top #(
         .dbg_pc_o        (dbg_pc_o),
         .dbg_singlestep_i(dbg_singlestep_i),
         .dbg_ebreakm_i   (dbg_ebreakm_i),
+        .trigger_halt_o  (dbg_trigger_halt_o),
+        .tdata1_i        (dbg_tdata1_i),
+        .tdata2_i        (dbg_tdata2_i),
         .imem_flush         (imem_flush_core),
         .dmem_req_valid  (dmem_req_valid),
         .dmem_req_write  (dmem_req_write),

@@ -129,6 +129,11 @@ module jv32_soc #(
     logic [31:0] progbuf0, progbuf1;
     logic        soc_rst_n;
 
+    // Trigger interface wires (DTM ↔ core)
+    localparam int N_TRIGGERS = 2;
+    logic        dbg_trigger_halt;
+    logic [N_TRIGGERS-1:0][31:0] dbg_tdata1, dbg_tdata2;
+
     // Internal AXI wires into the `jv32_top` TCM slave.
     logic [31:0] tcm_araddr_mux;
     logic        tcm_arvalid_mux, tcm_arready_int;
@@ -163,8 +168,9 @@ module jv32_soc #(
 
     // JTAG top-level interface + RISC-V debug transport module
     jtag_top #(
-        .USE_CJTAG (USE_CJTAG),
-        .IDCODE    (JTAG_IDCODE)
+        .USE_CJTAG  (USE_CJTAG),
+        .IDCODE     (JTAG_IDCODE),
+        .N_TRIGGERS (N_TRIGGERS)
     ) u_jtag (
         .clk_i            (clk),
         .rst_n_i          (rst_n),
@@ -198,7 +204,11 @@ module jv32_soc #(
         .dbg_singlestep_o (dbg_singlestep),
         .dbg_ebreakm_o    (dbg_ebreakm),
         .progbuf0_o       (progbuf0),
-        .progbuf1_o       (progbuf1)
+        .progbuf1_o       (progbuf1),
+        // Trigger interface
+        .trigger_halt_i   (dbg_trigger_halt),
+        .tdata1_o         (dbg_tdata1),
+        .tdata2_o         (dbg_tdata2)
     );
 
     // Pass the external TCM AXI master through unless the JTAG DM is actively
@@ -362,6 +372,10 @@ module jv32_soc #(
         .dbg_ebreakm_i    (dbg_ebreakm),
         .progbuf0_i       (progbuf0),
         .progbuf1_i       (progbuf1),
+        // Trigger interface
+        .dbg_trigger_halt_o (dbg_trigger_halt),
+        .dbg_tdata1_i       (dbg_tdata1),
+        .dbg_tdata2_i       (dbg_tdata2),
         // Trace
         .trace_valid      (trace_valid),
         .trace_reg_we     (trace_reg_we),

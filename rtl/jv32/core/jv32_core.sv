@@ -70,6 +70,10 @@ module jv32_core #(
     output logic [31:0] dbg_pc_o,
     input  logic        dbg_singlestep_i,
     input  logic        dbg_ebreakm_i,
+    // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
+    output logic        trigger_halt_o,                  // trigger caused current halt
+    input  logic [1:0][31:0] tdata1_i,                  // mcontrol config per trigger
+    input  logic [1:0][31:0] tdata2_i,                  // match address per trigger
 
     // I-fetch flush: asserted on branch/jump/exception/mret/IRQ redirect.
     // Allows jv32_top to suppress the stale TCM response arriving one cycle later.
@@ -138,6 +142,8 @@ module jv32_core #(
     logic dbg_step_pending_r;
     logic dbg_step_served_r;   // Prevents re-resume after single-step halt
     logic dbg_enter_debug;
+    logic trigger_halt_r;      // trigger module caused current halt (dcsr.cause=2)
+    assign trigger_halt_o = trigger_halt_r;
 
     jv32_regfile u_regfile (
         .clk       (clk),
@@ -304,7 +310,10 @@ module jv32_core #(
 
     assign halted_o    = dbg_halted_r;
     assign resumeack_o = dbg_resumeack_r;
-    assign dbg_pc_o    = pc_if;
+    // Return the PC of the halted instruction. When halted and EX stage is valid,
+    // use EX PC. Otherwise use IF PC. When transitioning to halted, the pipeline
+    // gets flushed, so we capture the halt event's PC via DPC register in the DTM.
+    assign dbg_pc_o    = (dbg_halted_r && if_ex_r.valid) ? if_ex_r.pc : pc_if;
 
     assign imem_req_valid = !dbg_halted_r;
     assign imem_req_addr  = pc_if;
@@ -594,12 +603,43 @@ module jv32_core #(
     assign dbg_enter_debug = if_ex_r.valid && dec_is_ebreak
                              && (dbg_ebreakm_i || (if_ex_r.pc[31:4] == DEBUG_ROM_BASE[31:4]));
 
+    // -------------------------------------------------------------------------
+    // Hardware trigger matching (Debug Spec 0.13 §5.2 mcontrol, type=2)
+    // Checked in EX stage (timing=before): fires before instruction executes.
+    // Conditions: type=2, M-mode enabled, action=1 (enter debug mode),
+    //             plus one of execute/store/load address match.
+    // -------------------------------------------------------------------------
+    localparam int N_TRIGGERS = 2;
+    logic trigger_match;
+    always_comb begin
+        trigger_match = 1'b0;
+        for (int i = 0; i < N_TRIGGERS; i++) begin
+            if (!dbg_halted_r
+                && if_ex_r.valid
+                && tdata1_i[i][31:28] == 4'd2   // mcontrol type
+                && tdata1_i[i][6]                // M-mode trigger enable
+                && tdata1_i[i][15:12] == 4'd1)  // action=1 (enter debug mode)
+            begin
+                // Execute trigger: match instruction PC
+                if (tdata1_i[i][2] && (if_ex_r.pc == tdata2_i[i]))
+                    trigger_match = 1'b1;
+                // Store trigger: match effective address (timing=before)
+                if (tdata1_i[i][1] && dec_mem_write && (mem_addr_ex == tdata2_i[i]))
+                    trigger_match = 1'b1;
+                // Load trigger: match effective address (timing=before)
+                if (tdata1_i[i][0] && dec_mem_read && (mem_addr_ex == tdata2_i[i]))
+                    trigger_match = 1'b1;
+            end
+        end
+    end
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dbg_halted_r      <= 1'b0;
             dbg_resumeack_r   <= 1'b0;
             dbg_step_pending_r<= 1'b0;
             dbg_step_served_r <= 1'b0;
+            trigger_halt_r    <= 1'b0;
         end else begin
             // Clear step_served and resumeack when resumereq de-asserts (OpenOCD cleared it)
             if (!resume_req_i) begin
@@ -611,10 +651,12 @@ module jv32_core #(
                 dbg_halted_r       <= 1'b0;
                 dbg_resumeack_r    <= 1'b1;  // sticky: stays 1 until resumereq deasserts
                 dbg_step_pending_r <= dbg_singlestep_i;
-            end else if (dbg_enter_debug
+                trigger_halt_r     <= 1'b0;  // clear trigger cause on resume
+            end else if (dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
                       || (dbg_step_pending_r && trace_valid)) begin
                 dbg_halted_r       <= 1'b1;
+                trigger_halt_r     <= trigger_match;  // record: trigger module caused halt
                 // resumeack stays 1 (sticky) — TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
                 // After a single-step halt, block re-resume until resumereq deasserts
@@ -948,13 +990,14 @@ module jv32_core #(
         end else if (dbg_pc_we_i) begin
             ex_wb_r <= '0;
         end else if ((halt_req_i && !dbg_halted_r)
+                  || trigger_match
                   || (resume_req_i && dbg_halted_r && !dbg_step_served_r)) begin
             // Drop stale WB state across debug entry/exit.
             // Without this, single-step may retire a pre-halt instruction or
             // execute an old redirect (e.g. trap/mret) instead of DPC.
             ex_wb_r <= '0;
         end else if (!ex_stall) begin
-            if (load_use_stall || !if_ex_r.valid || wb_redirect || dbg_enter_debug) begin
+            if (load_use_stall || !if_ex_r.valid || wb_redirect || dbg_enter_debug || trigger_match) begin
                 // inject bubble
                 ex_wb_r <= '0;
             end else begin

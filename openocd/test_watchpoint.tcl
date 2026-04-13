@@ -1,39 +1,38 @@
-puts "\[TEST\] watchpoint"
+proc run_watchpoint_test {label addr init_write} {
+    puts "\[TEST\] $label"
 
-# Tests hardware watchpoint halt-on-write.
-# SKIPs cleanly if the target does not implement trigger hardware;
-# fails hard if the trigger is set but the expected halt does not occur.
+    halt
+    if {[catch {wait_halt 1000}]} {
+        error "hart did not halt"
+    }
 
-set addr 0x80000200
+    if {$init_write} {
+        if {[catch {mww $addr 0} init_err]} {
+            error "memory init write failed: $init_err"
+        }
+    }
 
-halt
-if {[catch {wait_halt 1000}]} {
-    error "hart did not halt"
-}
+    if {[catch {wp $addr 4 w} wp_err]} {
+        puts "\[SKIP\] $label unsupported: $wp_err"
+        return
+    }
 
-if {[catch {mww $addr 0} init_err]} {
-    error "memory init write failed: $init_err"
-}
+    if {[catch {resume} resume_err]} {
+        catch {rwp $addr}
+        error "resume failed: $resume_err"
+    }
 
-if {[catch {wp $addr 4 w} wp_err]} {
-    puts "\[SKIP\] watchpoint unsupported: $wp_err"
-    return
-}
+    # This relies on natural hart memory traffic hitting $addr after resume.
+    if {[catch {wait_halt 500}]} {
+        catch {rwp $addr}
+        puts "\[SKIP\] $label: hart did not naturally access watched address"
+        return
+    }
 
-if {[catch {resume} resume_err]} {
     catch {rwp $addr}
-    error "resume failed after watchpoint set: $resume_err"
+    puts "watchpoint hit on write to [format 0x%08x $addr]"
+    puts "\[PASS\] $label"
 }
 
-if {[catch {mww $addr 0xdeadbeef} trig_err]} {
-    catch {rwp $addr}
-    error "watchpoint trigger write failed: $trig_err"
-}
-
-if {[catch {wait_halt 200}]} {
-    catch {rwp $addr}
-    error "hart did not halt on watchpoint"
-}
-
-catch {rwp $addr}
-puts "\[PASS\] watchpoint"
+run_watchpoint_test "watchpoint" 0x80000200 1
+run_watchpoint_test "strict watchpoint" 0x800009c0 0

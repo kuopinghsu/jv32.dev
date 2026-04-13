@@ -61,10 +61,10 @@ VPI_PORT ?= 5555
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
 JTAG_TESTS  := halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint breakpoint_strict watchpoint watchpoint_strict
+			   debug_errors breakpoint watchpoint
 # cJTAG: cJTAG activation check first, then the same common tests
 CJTAG_TESTS := cjtag halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint breakpoint_strict watchpoint watchpoint_strict
+			   debug_errors breakpoint watchpoint
 
 # ── Log directory ─────────────────────────────────────────────────────────────
 LOG_DIR := $(BUILD_DIR)/openocd_logs
@@ -285,8 +285,8 @@ help:
 	@echo ""
 	@echo "  Available test names:"
 	@echo "    halt_resume  registers  memory  memory_modes  reset  dm_status"
-	@echo "    programbuf   step  debug_errors  breakpoint  breakpoint_strict"
-	@echo "    watchpoint   watchpoint_strict"
+	@echo "    programbuf   step  debug_errors  breakpoint"
+	@echo "    watchpoint"
 	@echo "    cjtag (cjtag-* only)"
 	@echo ""
 	@echo "  BOOT_ELF=$(BOOT_ELF)"

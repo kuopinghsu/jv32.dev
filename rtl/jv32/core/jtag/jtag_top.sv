@@ -24,9 +24,10 @@
 // ============================================================================
 
 module jtag_top #(
-    parameter bit          USE_CJTAG = 1'b1,          // 0=JTAG, 1=cJTAG (default: cJTAG)
-    parameter bit [31:0]   IDCODE    = 32'h1DEAD3FF, // JTAG ID code
-    parameter int unsigned IR_LEN    = 5             // Instruction register length
+    parameter bit          USE_CJTAG  = 1'b1,          // 0=JTAG, 1=cJTAG (default: cJTAG)
+    parameter bit [31:0]   IDCODE     = 32'h1DEAD3FF, // JTAG ID code
+    parameter int unsigned IR_LEN     = 5,            // Instruction register length
+    parameter int          N_TRIGGERS = 2             // number of hardware triggers
 )(
     // System clock (required for cJTAG mode)
     input  logic        clk_i,          // System clock (e.g., 100MHz)
@@ -81,7 +82,11 @@ module jtag_top #(
     output logic        dbg_singlestep_o,  // dcsr[2]: single-step mode
     output logic        dbg_ebreakm_o,     // dcsr[15]: ebreak→debug mode
     output logic [31:0] progbuf0_o,        // Program buffer 0
-    output logic [31:0] progbuf1_o         // Program buffer 1
+    output logic [31:0] progbuf1_o,        // Program buffer 1
+    // Trigger interface
+    input  logic        trigger_halt_i,
+    output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
+    output logic [N_TRIGGERS-1:0][31:0] tdata2_o
 );
 
     // =========================================================================
@@ -161,7 +166,8 @@ module jtag_top #(
     // Implements IEEE 1149.1 TAP state machine and instantiates jv32_dtm
     jtag_tap #(
         .IDCODE     (IDCODE),
-        .IR_LEN     (IR_LEN)
+        .IR_LEN     (IR_LEN),
+        .N_TRIGGERS (N_TRIGGERS)
     ) u_jtag_tap (
         // JTAG interface
         .tck_i      (tap_tck),
@@ -206,7 +212,11 @@ module jtag_top #(
         .dbg_singlestep_o (dbg_singlestep_o),
         .dbg_ebreakm_o    (dbg_ebreakm_o),
         .progbuf0_o       (progbuf0_o),
-        .progbuf1_o       (progbuf1_o)
+        .progbuf1_o       (progbuf1_o),
+        // Trigger interface
+        .trigger_halt_i   (trigger_halt_i),
+        .tdata1_o         (tdata1_o),
+        .tdata2_o         (tdata2_o)
     );
 
     // =========================================================================

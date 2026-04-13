@@ -25,7 +25,8 @@
 // ============================================================================
 
 module jv32_dtm #(
-    parameter bit [31:0] IDCODE = 32'h1DEAD3FF
+    parameter bit [31:0] IDCODE      = 32'h1DEAD3FF,
+    parameter int        N_TRIGGERS  = 2              // number of hardware triggers (≥1)
 ) (
     // JTAG Interface (from TAP controller)
     input  logic        tck_i,              // JTAG clock
@@ -72,7 +73,12 @@ module jv32_dtm #(
 
     // Program buffer contents (for debug ROM intercept in jv32_top)
     output logic [31:0] progbuf0_o,         // Program buffer register 0
-    output logic [31:0] progbuf1_o          // Program buffer register 1
+    output logic [31:0] progbuf1_o,         // Program buffer register 1
+
+    // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
+    input  logic        trigger_halt_i,                          // core: trigger caused this halt
+    output logic [N_TRIGGERS-1:0][31:0] tdata1_o,               // mcontrol config per trigger
+    output logic [N_TRIGGERS-1:0][31:0] tdata2_o                // match address per trigger
 );
 
     // ========================================================================
@@ -213,6 +219,15 @@ module jv32_dtm #(
     logic [31:0] mcause_reg;    // CSR 0x342 – updated when debugger writes
     logic [31:0] mtval_reg;     // CSR 0x343 – updated when debugger writes
     logic [31:0] mip_reg;       // CSR 0x344 – updated when debugger writes
+
+    // Trigger CSR shadow registers (Debug Spec 0.13 §5.2 Trigger Module)
+    // Owned by CLK domain; OpenOCD access via CMD_CSR_READ/WRITE.
+    // tdata1 reset value: type=2 (mcontrol), all mode/action bits=0 (disabled).
+    logic [31:0]              tselect_reg;                    // CSR 0x7A0: trigger select
+    logic [N_TRIGGERS-1:0][31:0] tdata1_reg;                 // CSR 0x7A1: mcontrol config
+    logic [N_TRIGGERS-1:0][31:0] tdata2_reg;                 // CSR 0x7A2: match address
+    assign tdata1_o = tdata1_reg;
+    assign tdata2_o = tdata2_reg;
 
     logic        sb_busyerr;     // Sticky error: SBA started while busy
     logic        sb_readonaddr;      // Trigger SBA read when sbaddress0 written
@@ -435,6 +450,8 @@ module jv32_dtm #(
                     dpc_reg <= dbg_pc_i;  // Save actual PC at halt (haltreq or step)
                 if (dcsr_reg[2] && !halt_req_sync_chain[2])
                     dcsr_cause_r <= 3'd4;  // single-step
+                else if (trigger_halt_i)
+                    dcsr_cause_r <= 3'd2;  // trigger module
                 else
                     dcsr_cause_r <= 3'd3;  // debug request (haltreq)
             end
@@ -1032,6 +1049,13 @@ module jv32_dtm #(
             mtval_reg               <= 32'b0;
             mip_reg                 <= 32'b0;
 
+            // Trigger register reset: type=2 (mcontrol), all mode/action bits=0 (disabled)
+            tselect_reg             <= 32'b0;
+            for (int i = 0; i < N_TRIGGERS; i++) begin
+                tdata1_reg[i]       <= 32'h2000_0000; // type=2, disabled
+                tdata2_reg[i]       <= 32'b0;
+            end
+
             sb_err                  <= 3'b0;
             // Debug command output registers
             dbg_reg_addr_o          <= '0;
@@ -1155,6 +1179,10 @@ module jv32_dtm #(
                             end else if (cmd_regno == 16'h07b0 ||
                                          cmd_regno == 16'h07b2 ||
                                          cmd_regno == 16'h07b3 ||
+                                         cmd_regno == 16'h07A0 ||  // tselect
+                                         cmd_regno == 16'h07A1 ||  // tdata1
+                                         cmd_regno == 16'h07A2 ||  // tdata2
+                                         cmd_regno == 16'h07A4 ||  // tinfo (read-only)
                                          cmd_regno == 16'h0301  ||  // misa (read-only)
                                          cmd_regno == 16'h0C22  ||  // vlenb (no vector extension -> 0)
                                          cmd_regno == 16'h0FB0  ||  // mtopi (optional interrupt-top CSR, absent -> 0)
@@ -1367,6 +1395,22 @@ module jv32_dtm #(
                             data0_result <= 32'h0;
                             `DEBUG2(`DBG_GRP_DTM, ("Read mimpid = 0"));
                         end
+                        16'h07A0: begin  // tselect
+                            data0_result <= tselect_reg;
+                            `DEBUG2(`DBG_GRP_DTM, ("Read tselect = %0d", tselect_reg));
+                        end
+                        16'h07A1: begin  // tdata1 (indexed by tselect)
+                            data0_result <= tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
+                            `DEBUG2(`DBG_GRP_DTM, ("Read tdata1[%0d] = 0x%h", tselect_reg, tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]]));
+                        end
+                        16'h07A2: begin  // tdata2 (indexed by tselect)
+                            data0_result <= tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
+                            `DEBUG2(`DBG_GRP_DTM, ("Read tdata2[%0d] = 0x%h", tselect_reg, tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]]));
+                        end
+                            16'h07A4: begin  // tinfo: VERSION=0, INFO=4 (type-2/mcontrol supported)
+                                data0_result <= 32'h0000_0004;
+                                `DEBUG2(`DBG_GRP_DTM, ("Read tinfo = 0x4 (mcontrol type-2)"));
+                            end
                         default: begin
                             cmderr_sys <= CMDERR_NOTSUP;
                         end
@@ -1430,6 +1474,19 @@ module jv32_dtm #(
                         16'h0344: begin  // mip
                             mip_reg <= data0_sys;
                             `DEBUG2(`DBG_GRP_DTM, ("Write mip = 0x%h", data0_sys));
+                        end
+                        16'h07A0: begin  // tselect: only accept values 0..N_TRIGGERS-1
+                            if (data0_sys < 32'(N_TRIGGERS))
+                                tselect_reg <= data0_sys;
+                            `DEBUG2(`DBG_GRP_DTM, ("Write tselect = %0d (accepted=%0b)", data0_sys, data0_sys < 32'(N_TRIGGERS)));
+                        end
+                        16'h07A1: begin  // tdata1: preserve type=2 in bits[31:28]
+                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= {4'd2, data0_sys[27:0]};
+                            `DEBUG2(`DBG_GRP_DTM, ("Write tdata1[%0d] = 0x%h", tselect_reg, {4'd2, data0_sys[27:0]}));
+                        end
+                        16'h07A2: begin  // tdata2
+                            tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys;
+                            `DEBUG2(`DBG_GRP_DTM, ("Write tdata2[%0d] = 0x%h", tselect_reg, data0_sys));
                         end
                         default: begin
                             cmderr_sys <= CMDERR_NOTSUP;
