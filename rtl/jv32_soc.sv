@@ -132,6 +132,7 @@ module jv32_soc #(
     // Trigger interface wires (DTM ↔ core)
     localparam int N_TRIGGERS = 2;
     logic        dbg_trigger_halt;
+    logic [N_TRIGGERS-1:0] dbg_trigger_hit;  // per-trigger hit bits
     logic [N_TRIGGERS-1:0][31:0] dbg_tdata1, dbg_tdata2;
 
     // Internal AXI wires into the `jv32_top` TCM slave.
@@ -207,6 +208,7 @@ module jv32_soc #(
         .progbuf1_o       (progbuf1),
         // Trigger interface
         .trigger_halt_i   (dbg_trigger_halt),
+        .trigger_hit_i    (dbg_trigger_hit),
         .tdata1_o         (dbg_tdata1),
         .tdata2_o         (dbg_tdata2)
     );
@@ -374,6 +376,7 @@ module jv32_soc #(
         .progbuf1_i       (progbuf1),
         // Trigger interface
         .dbg_trigger_halt_o (dbg_trigger_halt),
+        .dbg_trigger_hit_o  (dbg_trigger_hit),
         .dbg_tdata1_i       (dbg_tdata1),
         .dbg_tdata2_i       (dbg_tdata2),
         // Trace

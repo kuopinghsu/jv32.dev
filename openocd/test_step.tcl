@@ -62,6 +62,11 @@ puts "step #2 (stepi): pc=[format 0x%08x $pc2]"
 if {$pc2 == $pc1} {
     error "step #2: PC did not advance (still [format 0x%08x $pc1])"
 }
+set dcsr2 [reg_val dcsr]
+set dcsr_cause2 [expr {($dcsr2 >> 6) & 0x7}]
+if {$dcsr_cause2 != 4} {
+    error "step #2: DCSR.cause expected 4 (step) got $dcsr_cause2 (dcsr=[format 0x%08x $dcsr2])"
+}
 
 # ── next equivalent: step #3 ─────────────────────────────────────────────────
 step
@@ -72,6 +77,11 @@ set pc3 [reg_val pc]
 puts "step #3 (next):  pc=[format 0x%08x $pc3]"
 if {$pc3 == $pc2} {
     error "step #3: PC did not advance (still [format 0x%08x $pc2])"
+}
+set dcsr3 [reg_val dcsr]
+set dcsr_cause3 [expr {($dcsr3 >> 6) & 0x7}]
+if {$dcsr_cause3 != 4} {
+    error "step #3: DCSR.cause expected 4 (step) got $dcsr_cause3 (dcsr=[format 0x%08x $dcsr3])"
 }
 
 # ── nexti equivalent: step #4 ────────────────────────────────────────────────
@@ -84,6 +94,23 @@ puts "step #4 (nexti): pc=[format 0x%08x $pc4]"
 if {$pc4 == $pc3} {
     error "step #4: PC did not advance (still [format 0x%08x $pc3])"
 }
+set dcsr4 [reg_val dcsr]
+set dcsr_cause4 [expr {($dcsr4 >> 6) & 0x7}]
+if {$dcsr_cause4 != 4} {
+    error "step #4: DCSR.cause expected 4 (step) got $dcsr_cause4 (dcsr=[format 0x%08x $dcsr4])"
+}
+
+# ── Verify DCSR.step cleared: hart runs freely after resume ──────────────────
+resume
+sleep 20
+halt
+if {[catch {wait_halt 1000}]} {
+    error "hart did not halt after resume — DCSR.step may be stuck"
+}
+set pc5 [reg_val pc]
+puts "pc after resume+halt: [format 0x%08x $pc5]"
+
+puts "\[PASS\] single-step (step/stepi/next/nexti)"
 
 # ── Verify DCSR.step cleared: hart runs freely after resume ──────────────────
 resume

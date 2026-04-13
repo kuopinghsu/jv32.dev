@@ -21,9 +21,9 @@
 #   cjtag-<name> — run a single cJTAG test (e.g. make cjtag-halt_resume)
 #
 # Available test names:
-#   halt_resume  registers  memory  memory_modes  reset  dm_status
-#   programbuf   step  debug_errors  breakpoint  breakpoint_strict
-#   watchpoint   watchpoint_strict
+#   dtmcs  halt_resume  registers  memory  memory_modes  reset  dm_status
+#   programbuf  step  debug_errors  breakpoint  watchpoint
+#   misa  dcsr  triggers  abstract_regs  csr_fields
 #   cjtag        (cJTAG-specific activation test, cjtag-* only)
 #
 # Overridable variables (on the make command line or in env.config)
@@ -60,11 +60,11 @@ VPI_PORT ?= 5555
 
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
-JTAG_TESTS  := halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint watchpoint
+JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
+			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields
 # cJTAG: cJTAG activation check first, then the same common tests
-CJTAG_TESTS := cjtag halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint watchpoint
+CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
+			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields
 
 # ── Log directory ─────────────────────────────────────────────────────────────
 LOG_DIR := $(BUILD_DIR)/openocd_logs

@@ -133,6 +133,7 @@ module jv32_top #(
     input  logic [31:0] progbuf1_i,
     // Trigger interface (Debug Spec 0.13 §5.2)
     output logic        dbg_trigger_halt_o,
+    output logic [1:0]  dbg_trigger_hit_o,   // per-trigger hit bits (set by HW, cleared on resume)
     input  logic [1:0][31:0] dbg_tdata1_i,
     input  logic [1:0][31:0] dbg_tdata2_i,
 
@@ -234,6 +235,7 @@ module jv32_top #(
         .dbg_singlestep_i(dbg_singlestep_i),
         .dbg_ebreakm_i   (dbg_ebreakm_i),
         .trigger_halt_o  (dbg_trigger_halt_o),
+        .trigger_hit_o   (dbg_trigger_hit_o),
         .tdata1_i        (dbg_tdata1_i),
         .tdata2_i        (dbg_tdata2_i),
         .imem_flush         (imem_flush_core),
@@ -244,6 +246,7 @@ module jv32_top #(
         .dmem_req_wstrb  (dmem_req_wstrb),
         .dmem_resp_valid (dmem_resp_valid),
         .dmem_resp_data  (dmem_resp_data),
+        .dmem_resp_fault (dmem_resp_fault),
         .trace_valid     (trace_valid),
         .trace_reg_we    (trace_reg_we),
         .trace_pc        (trace_pc),
@@ -682,6 +685,11 @@ module jv32_top #(
                                | ((bus_state == BUS_DB) & m_axi_bvalid);
     assign dmem_resp_data_axi  = m_axi_rdata;
 
+    // Data memory AXI fault: DECERR on load (rresp) or store (bresp)
+    logic dmem_resp_fault_axi;
+    assign dmem_resp_fault_axi = ((bus_state == BUS_DR) & m_axi_rvalid & (m_axi_rresp != 2'b00))
+                               | ((bus_state == BUS_DB) & m_axi_bvalid & (m_axi_bresp != 2'b00));
+
     // =========================================================================
     // Final response mux to core (TCM vs AXI)
     // =========================================================================
@@ -695,6 +703,9 @@ module jv32_top #(
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
+    // Fault only possible on AXI path (TCM/DRAM never returns DECERR)
+    logic dmem_resp_fault;
+    assign dmem_resp_fault = dmem_resp_fault_axi;
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin

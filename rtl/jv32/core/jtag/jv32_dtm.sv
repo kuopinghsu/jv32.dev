@@ -77,6 +77,7 @@ module jv32_dtm #(
 
     // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
     input  logic        trigger_halt_i,                          // core: trigger caused this halt
+    input  logic [N_TRIGGERS-1:0] trigger_hit_i,                 // core: per-trigger hit bits
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,               // mcontrol config per trigger
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o                // match address per trigger
 );
@@ -212,9 +213,11 @@ module jv32_dtm #(
 
     // Machine-mode CSRs that OpenOCD may read/write during examination and debug
     // These are CLK-domain registers synthesized by the DM (not wired to CPU CSR file).
+    // mstatus reset value matches the CPU's hardwired read value: MPP=11 ([12:11]=2'b11).
     logic [31:0] mstatus_reg;   // CSR 0x300 – updated when debugger writes
     logic [31:0] mie_reg;       // CSR 0x304 – updated when debugger writes
     logic [31:0] mtvec_reg;     // CSR 0x305 – updated when debugger writes
+    logic [31:0] mscratch_reg;  // CSR 0x340 – updated when debugger writes
     logic [31:0] mepc_reg;      // CSR 0x341 – updated when debugger writes
     logic [31:0] mcause_reg;    // CSR 0x342 – updated when debugger writes
     logic [31:0] mtval_reg;     // CSR 0x343 – updated when debugger writes
@@ -226,7 +229,24 @@ module jv32_dtm #(
     logic [31:0]              tselect_reg;                    // CSR 0x7A0: trigger select
     logic [N_TRIGGERS-1:0][31:0] tdata1_reg;                 // CSR 0x7A1: mcontrol config
     logic [N_TRIGGERS-1:0][31:0] tdata2_reg;                 // CSR 0x7A2: match address
-    assign tdata1_o = tdata1_reg;
+    // Per-trigger hit bits (tdata1[20]) maintained separately to avoid
+    // tdata1_reg RMW conflicts.  Folded into CMD_CSR_READ result for 0x7A1.
+    logic [N_TRIGGERS-1:0]    trigger_hit_latch;             // set on trigger halt; cleared by SW write
+
+    // Hardware NAPOT capability advertised via tdata1[26:21] (maskmax, read-only).
+    // Value M means NAPOT ranges up to 2^(M+2) bytes are supported.
+    // M=4: supports up to 64-byte NAPOT watchpoints (covers 1/2/4/8/16/32/64 B).
+    localparam [5:0] HARDWARE_MASKMAX = 6'd4;
+
+    // tdata1_o: inject read-only maskmax into bits [26:21]; rest from tdata1_reg.
+    genvar trig_idx;
+    generate
+        for (trig_idx = 0; trig_idx < N_TRIGGERS; trig_idx++) begin : gen_tdata1_out
+            assign tdata1_o[trig_idx] = {tdata1_reg[trig_idx][31:27],
+                                          HARDWARE_MASKMAX,
+                                          tdata1_reg[trig_idx][20:0]};
+        end
+    endgenerate
     assign tdata2_o = tdata2_reg;
 
     logic        sb_busyerr;     // Sticky error: SBA started while busy
@@ -306,6 +326,8 @@ module jv32_dtm #(
     logic       exec_waiting_halt;      // CMD_EXEC: waiting for CPU to re-halt
     logic       exec_seen_running;      // CMD_EXEC: hart observed running after resume
     logic [11:0] exec_wait_cnt;         // CMD_EXEC timeout while waiting for re-halt
+    logic       exec_halt_req;          // CMD_EXEC: issue halt after fault/timeout
+    logic       exec_fault_halting;     // CMD_EXEC: waiting for halt after fault
     localparam [31:0] DEBUG_ROM_BASE = 32'h0F80_0000; // Progbuf intercept address
     logic       cmd_transfer;           // Perform transfer
 
@@ -422,7 +444,9 @@ module jv32_dtm #(
     logic [2:0] resume_req_sync_chain;
     logic [2:0] halted_clk_chain;
     logic [2:0] dcsr_cause_r;   // dcsr.cause bits updated on debug mode entry
-    logic       dbg_halted_prev;
+    logic       dbg_halted_prev;      // edge detector driven by sync always_ff
+    logic       dbg_halted_prev_fsm;  // independent edge detector driven by FSM always_ff
+    logic       trigger_halt_pulse;   // one-cycle pulse: trigger caused this halt (sync always_ff)
     logic [31:0] dpc_reg;       // Saved DPC — persists through CMD_EXEC progbuf operations
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -433,6 +457,7 @@ module jv32_dtm #(
             halted_clk            <= 1'b0;
             dcsr_cause_r          <= 3'd0;
             dbg_halted_prev       <= 1'b0;
+            trigger_halt_pulse    <= 1'b0;
             dpc_reg               <= 32'h8000_0000; // Boot address (matches jv32 BOOT_ADDR)
         end else begin
             halt_req_sync_chain   <= {halt_req_sync_chain[1:0],   haltreq};
@@ -441,7 +466,8 @@ module jv32_dtm #(
             halted_clk       <= halted_clk_chain[2];
 
             // dcsr.cause update: detect rising edge of dbg_halted_i
-            dbg_halted_prev <= dbg_halted_i;
+            dbg_halted_prev    <= dbg_halted_i;
+            trigger_halt_pulse <= dbg_halted_i && !dbg_halted_prev && trigger_halt_i;
             if (dbg_halted_i && !dbg_halted_prev) begin
                 // Hart just entered debug mode — record cause.
                 // Skip DPC capture during CMD_EXEC halts (exec_waiting_halt=1):
@@ -458,7 +484,7 @@ module jv32_dtm #(
         end
     end
 
-    assign dbg_halt_req_o   = halt_req_sync_chain[2];
+    assign dbg_halt_req_o   = halt_req_sync_chain[2] | exec_halt_req;
     assign dbg_resume_req_o = resume_req_sync_chain[2] || exec_resume_req;
 
     // ========================================================================
@@ -1030,6 +1056,8 @@ module jv32_dtm #(
             exec_waiting_halt       <= 1'b0;
             exec_seen_running       <= 1'b0;
             exec_wait_cnt           <= 12'b0;
+            exec_halt_req           <= 1'b0;
+            exec_fault_halting      <= 1'b0;
             mem_req_pending         <= 1'b0;
             mem_wait_cnt            <= 4'b0;
             mem_aarpostincrement_r  <= 1'b0;
@@ -1044,6 +1072,7 @@ module jv32_dtm #(
             mstatus_reg             <= 32'h00001800; // MPP=11(M-mode), MIE=0, MPIE=0
             mie_reg                 <= 32'b0;
             mtvec_reg               <= 32'b0;
+            mscratch_reg            <= 32'b0;
             mepc_reg                <= 32'b0;
             mcause_reg              <= 32'b0;
             mtval_reg               <= 32'b0;
@@ -1064,6 +1093,8 @@ module jv32_dtm #(
             dbg_mem_addr_o          <= '0;
             dbg_mem_wdata_o         <= '0;
             mem_addr                <= '0;
+            dbg_halted_prev_fsm     <= 1'b0;
+            trigger_hit_latch       <= '0;
         end else begin
             // ----------------------------------------------------------------
             // Part 1: Unconditional synchronizer advances (always run)
@@ -1131,6 +1162,30 @@ module jv32_dtm #(
             end
 
             // ----------------------------------------------------------------
+            // Part 2b: Trigger hit latch — record which trigger(s) fired
+            // ----------------------------------------------------------------
+            // Part 2b: Trigger hit latch — record which trigger(s) fired
+            // ----------------------------------------------------------------
+            // trigger_halt_pulse (from sync always_ff) is 1 for exactly ONE
+            // cycle on the halt edge of a trigger-caused halt.  The second
+            // always_ff reads the COMMITTED value from the previous cycle, which
+            // is exactly when trigger_halt_pulse transitions to 1.
+            // trigger_hit_i is stable (driven from trigger_hit_r in jv32_core)
+            // for the entire debug session until the next resume.
+            // The latch is cleared by CMD_CSR_WRITE to 0x7A1 with bit20=0,
+            // OR by the next resume (clearing via dbg_halted_i falling edge).
+            if (trigger_halt_pulse) begin
+                for (int k = 0; k < N_TRIGGERS; k++) begin
+                    if (trigger_hit_i[k])
+                        trigger_hit_latch[k] <= 1'b1;
+                end
+            end
+            // Clear latch on resume (falling edge of dbg_halted_i)
+            if (!dbg_halted_i && dbg_halted_prev_fsm)
+                trigger_hit_latch <= '0;
+            dbg_halted_prev_fsm <= dbg_halted_i;  // keep edge detector current
+
+            // ----------------------------------------------------------------
             // Part 3: Abstract command FSM (defaults then case)
             // ----------------------------------------------------------------
             cmd_state <= cmd_state_nx;
@@ -1190,6 +1245,7 @@ module jv32_dtm #(
                                          cmd_regno == 16'h0300  ||  // mstatus
                                          cmd_regno == 16'h0304  ||  // mie
                                          cmd_regno == 16'h0305  ||  // mtvec
+                                         cmd_regno == 16'h0340  ||  // mscratch
                                          cmd_regno == 16'h0341  ||  // mepc
                                          cmd_regno == 16'h0342  ||  // mcause
                                          cmd_regno == 16'h0343  ||  // mtval
@@ -1367,6 +1423,10 @@ module jv32_dtm #(
                             data0_result <= mtvec_reg;
                             `DEBUG2(`DBG_GRP_DTM, ("Read mtvec = 0x%h", mtvec_reg));
                         end
+                        16'h0340: begin  // mscratch
+                            data0_result <= mscratch_reg;
+                            `DEBUG2(`DBG_GRP_DTM, ("Read mscratch = 0x%h", mscratch_reg));
+                        end
                         16'h0341: begin  // mepc
                             data0_result <= mepc_reg;
                             `DEBUG2(`DBG_GRP_DTM, ("Read mepc = 0x%h", mepc_reg));
@@ -1399,9 +1459,17 @@ module jv32_dtm #(
                             data0_result <= tselect_reg;
                             `DEBUG2(`DBG_GRP_DTM, ("Read tselect = %0d", tselect_reg));
                         end
-                        16'h07A1: begin  // tdata1 (indexed by tselect)
-                            data0_result <= tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
-                            `DEBUG2(`DBG_GRP_DTM, ("Read tdata1[%0d] = 0x%h", tselect_reg, tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]]));
+                        16'h07A1: begin  // tdata1 (indexed by tselect): fold in hit latch bit 20
+                            begin
+                                automatic logic [$clog2(N_TRIGGERS)-1:0] tsel = tselect_reg[$clog2(N_TRIGGERS)-1:0];
+                                // bits[31:27]=dmode+type(fixed), bits[26:21]=HARDWARE_MASKMAX(RO),
+                                // bit[20]=hit latch, bits[19:0]=stored fields
+                                data0_result <= {tdata1_reg[tsel][31:27],
+                                                  HARDWARE_MASKMAX,
+                                                  trigger_hit_latch[tsel],
+                                                  tdata1_reg[tsel][19:0]};
+                                `DEBUG2(`DBG_GRP_DTM, ("Read tdata1[%0d] = 0x%h (hit=%0b)", tsel, tdata1_reg[tsel], trigger_hit_latch[tsel]));
+                            end
                         end
                         16'h07A2: begin  // tdata2 (indexed by tselect)
                             data0_result <= tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
@@ -1463,6 +1531,10 @@ module jv32_dtm #(
                             mtvec_reg <= data0_sys;
                             `DEBUG2(`DBG_GRP_DTM, ("Write mtvec = 0x%h", data0_sys));
                         end
+                        16'h0340: begin  // mscratch: fully writable, no side-effects
+                            mscratch_reg <= data0_sys;
+                            `DEBUG2(`DBG_GRP_DTM, ("Write mscratch = 0x%h", data0_sys));
+                        end
                         16'h0342: begin  // mcause
                             mcause_reg <= data0_sys;
                             `DEBUG2(`DBG_GRP_DTM, ("Write mcause = 0x%h", data0_sys));
@@ -1482,6 +1554,10 @@ module jv32_dtm #(
                         end
                         16'h07A1: begin  // tdata1: preserve type=2 in bits[31:28]
                             tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= {4'd2, data0_sys[27:0]};
+                            // Mirror bit 20 (hit) from the write into trigger_hit_latch.
+                            // HW sets the bit on trigger halt; SW can also set/clear it.
+                            // This makes bit 20 fully readable via CMD_CSR_READ.
+                            trigger_hit_latch[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys[20];
                             `DEBUG2(`DBG_GRP_DTM, ("Write tdata1[%0d] = 0x%h", tselect_reg, {4'd2, data0_sys[27:0]}));
                         end
                         16'h07A2: begin  // tdata2
@@ -1645,11 +1721,23 @@ module jv32_dtm #(
                     // Execute progbuf: DPC was already written; issue resume then wait for re-halt
                     if (!exec_waiting_halt) begin
                         // Issue resume to CPU
-                        exec_resume_req   <= 1'b1;
-                        exec_waiting_halt <= 1'b1;
-                        exec_seen_running <= 1'b0;
-                        exec_wait_cnt     <= 12'b0;
+                        exec_resume_req    <= 1'b1;
+                        exec_waiting_halt  <= 1'b1;
+                        exec_seen_running  <= 1'b0;
+                        exec_wait_cnt      <= 12'b0;
+                        exec_fault_halting <= 1'b0;
+                        exec_halt_req      <= 1'b0;
                         `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: resuming CPU for progbuf execution"));
+                    end else if (exec_fault_halting) begin
+                        // Fault/timeout detected: waiting for CPU to halt via exec_halt_req
+                        exec_resume_req <= 1'b0;
+                        if (dbg_halted_i) begin
+                            exec_halt_req      <= 1'b0;
+                            exec_fault_halting <= 1'b0;
+                            exec_waiting_halt  <= 1'b0;
+                            cmd_state          <= CMD_DONE;
+                            `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU halted after fault, progbuf done with exception"));
+                        end
                     end else begin
                         // Pulse resume request for one cycle, then watch for run->halt.
                         exec_resume_req <= 1'b0;
@@ -1666,10 +1754,10 @@ module jv32_dtm #(
                         end else begin
                             exec_wait_cnt <= exec_wait_cnt + 12'd1;
                             if (exec_wait_cnt == 12'hFFF) begin
-                                cmderr_sys        <= CMDERR_EXCEPTION;
-                                exec_waiting_halt <= 1'b0;
-                                cmd_state         <= CMD_DONE;
-                                `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: timeout waiting re-halt, cmderr=exception"));
+                                cmderr_sys         <= CMDERR_EXCEPTION;
+                                exec_fault_halting <= 1'b1;
+                                exec_halt_req      <= 1'b1;
+                                `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: timeout waiting re-halt, cmderr=exception, halting CPU"));
                             end
                         end
                     end

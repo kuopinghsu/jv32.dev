@@ -44,6 +44,7 @@ module jv32_core #(
     output logic [3:0]  dmem_req_wstrb,
     input  logic        dmem_resp_valid,
     input  logic [31:0] dmem_resp_data,
+    input  logic        dmem_resp_fault,  // AXI DECERR on data load/store response
 
     // Interrupts
     input  logic        timer_irq,
@@ -72,6 +73,7 @@ module jv32_core #(
     input  logic        dbg_ebreakm_i,
     // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
     output logic        trigger_halt_o,                  // trigger caused current halt
+    output logic [1:0]  trigger_hit_o,                   // per-trigger: which trigger(s) fired
     input  logic [1:0][31:0] tdata1_i,                  // mcontrol config per trigger
     input  logic [1:0][31:0] tdata2_i,                  // match address per trigger
 
@@ -143,7 +145,9 @@ module jv32_core #(
     logic dbg_step_served_r;   // Prevents re-resume after single-step halt
     logic dbg_enter_debug;
     logic trigger_halt_r;      // trigger module caused current halt (dcsr.cause=2)
+    logic [N_TRIGGERS-1:0] trigger_hit_r; // which trigger(s) caused the halt
     assign trigger_halt_o = trigger_halt_r;
+    assign trigger_hit_o  = trigger_hit_r;
 
     jv32_regfile u_regfile (
         .clk       (clk),
@@ -275,10 +279,10 @@ module jv32_core #(
         .csr_wdata        (alu_op_a),   // forwarded rs1
         .csr_zimm         (dec_rs1),    // zimm from rs1 field
         .csr_rdata        (csr_rdata),
-        .exception        (ex_wb_r.valid && ex_wb_r.exception),
-        .exception_cause  (ex_wb_r.exc_cause),
+        .exception        (wb_exception),
+        .exception_cause  (wb_exc_cause),
         .exception_pc     (ex_wb_r.pc),
-        .exception_tval   (ex_wb_r.exc_tval),
+        .exception_tval   (wb_exc_tval),
         .mret             (ex_wb_r.valid && ex_wb_r.mret),
         .wb_valid         (ex_wb_r.valid),
         .irq_mepc         (ex_wb_r.pc),
@@ -310,10 +314,25 @@ module jv32_core #(
 
     assign halted_o    = dbg_halted_r;
     assign resumeack_o = dbg_resumeack_r;
-    // Return the PC of the halted instruction. When halted and EX stage is valid,
-    // use EX PC. Otherwise use IF PC. When transitioning to halted, the pipeline
-    // gets flushed, so we capture the halt event's PC via DPC register in the DTM.
-    assign dbg_pc_o    = (dbg_halted_r && if_ex_r.valid) ? if_ex_r.pc : pc_if;
+    // Capture the PC of the instruction that caused the current debug halt.
+    // This register latches if_ex_r.pc (EX-stage instruction) on any halt entry:
+    // dbg_enter_debug (EBREAK), trigger_match, or halt_req.  It ensures the
+    // reported DPC reflects the actual halted instruction even after the pipeline
+    // is flushed and pc_if has advanced further.
+    logic [31:0] dbg_halt_pc_r;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            dbg_halt_pc_r <= BOOT_ADDR;
+        else if (dbg_pc_we_i)
+            dbg_halt_pc_r <= dbg_pc_wdata_i;  // PC write from debugger
+        else if (dbg_step_pending_r && trace_valid)
+            // For single-step, DPC must point to the next instruction.
+            dbg_halt_pc_r <= ex_wb_r.pc + ((ex_wb_r.orig_instr[1:0] == 2'b11) ? 32'd4 : 32'd2);
+        else if ((dbg_enter_debug || trigger_match || (halt_req_i && !dbg_halted_r))
+                 && if_ex_r.valid)
+            dbg_halt_pc_r <= if_ex_r.pc;   // latch at halt
+    end
+    assign dbg_pc_o = dbg_halted_r ? dbg_halt_pc_r : pc_if;
 
     assign imem_req_valid = !dbg_halted_r;
     assign imem_req_addr  = pc_if;
@@ -393,7 +412,7 @@ module jv32_core #(
             // does not execute as the first step on resume.  ebreak already
             // flushes via dbg_enter_debug; haltreq needs an explicit flush.
             if_ex_r <= '0;
-        end else if (resume_req_i && dbg_halted_r && !dbg_step_served_r) begin
+        end else if (resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r) begin
             // Flush pipeline on debug resume to discard any stale instruction
             // that may have been in if_ex_r since the previous debug halt.
             if_ex_r <= '0;
@@ -608,11 +627,38 @@ module jv32_core #(
     // Checked in EX stage (timing=before): fires before instruction executes.
     // Conditions: type=2, M-mode enabled, action=1 (enter debug mode),
     //             plus one of execute/store/load address match.
+    //
+    // Address matching supports:
+    //   match=0 (exact): trigger fires when address == tdata2
+    //   match=1 (NAPOT): trigger fires when address is in the NAPOT range
+    //     encoded by tdata2 = base | (size/2 - 1).  Formula:
+    //       napot_p = (~tdata2) & (tdata2+1)   -- one-hot at position n
+    //       napot_rmask = (napot_p << 1) - 1   -- 2^(n+1)-1
+    //       match if: (addr ^ tdata2) & ~napot_rmask == 0
     // -------------------------------------------------------------------------
     localparam int N_TRIGGERS = 2;
     logic trigger_match;
+    logic [N_TRIGGERS-1:0] trigger_match_vec; // per-trigger: which trigger(s) matched
+
+    // Address-match helper: supports exact (match=0) and NAPOT (match=1)
+    function automatic logic trig_addr_match(
+        input logic [31:0] addr,
+        input logic [31:0] tdata1,
+        input logic [31:0] tdata2
+    );
+        logic [31:0] napot_p, napot_rmask;
+        napot_p     = (~tdata2) & (tdata2 + 32'd1);
+        napot_rmask = (napot_p << 1) - 32'd1;
+        case (tdata1[10:7])  // match field
+            4'd0:    return (addr == tdata2);
+            4'd1:    return (((addr ^ tdata2) & ~napot_rmask) == 32'd0);
+            default: return (addr == tdata2);
+        endcase
+    endfunction
+
     always_comb begin
-        trigger_match = 1'b0;
+        trigger_match     = 1'b0;
+        trigger_match_vec = '0;
         for (int i = 0; i < N_TRIGGERS; i++) begin
             if (!dbg_halted_r
                 && if_ex_r.valid
@@ -620,15 +666,23 @@ module jv32_core #(
                 && tdata1_i[i][6]                // M-mode trigger enable
                 && tdata1_i[i][15:12] == 4'd1)  // action=1 (enter debug mode)
             begin
-                // Execute trigger: match instruction PC
-                if (tdata1_i[i][2] && (if_ex_r.pc == tdata2_i[i]))
+                // Execute trigger: match instruction PC (always exact)
+                if (tdata1_i[i][2] && (if_ex_r.pc == tdata2_i[i])) begin
                     trigger_match = 1'b1;
+                    trigger_match_vec[i] = 1'b1;
+                end
                 // Store trigger: match effective address (timing=before)
-                if (tdata1_i[i][1] && dec_mem_write && (mem_addr_ex == tdata2_i[i]))
+                if (tdata1_i[i][1] && dec_mem_write &&
+                        trig_addr_match(mem_addr_ex, tdata1_i[i], tdata2_i[i])) begin
                     trigger_match = 1'b1;
+                    trigger_match_vec[i] = 1'b1;
+                end
                 // Load trigger: match effective address (timing=before)
-                if (tdata1_i[i][0] && dec_mem_read && (mem_addr_ex == tdata2_i[i]))
+                if (tdata1_i[i][0] && dec_mem_read &&
+                        trig_addr_match(mem_addr_ex, tdata1_i[i], tdata2_i[i])) begin
                     trigger_match = 1'b1;
+                    trigger_match_vec[i] = 1'b1;
+                end
             end
         end
     end
@@ -640,6 +694,7 @@ module jv32_core #(
             dbg_step_pending_r<= 1'b0;
             dbg_step_served_r <= 1'b0;
             trigger_halt_r    <= 1'b0;
+            trigger_hit_r     <= '0;
         end else begin
             // Clear step_served and resumeack when resumereq de-asserts (OpenOCD cleared it)
             if (!resume_req_i) begin
@@ -647,16 +702,18 @@ module jv32_core #(
                 dbg_resumeack_r   <= 1'b0;  // resumeack is sticky until resumereq falls
             end
 
-            if (resume_req_i && dbg_halted_r && !dbg_step_served_r) begin
+            if (resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r) begin
                 dbg_halted_r       <= 1'b0;
                 dbg_resumeack_r    <= 1'b1;  // sticky: stays 1 until resumereq deasserts
                 dbg_step_pending_r <= dbg_singlestep_i;
                 trigger_halt_r     <= 1'b0;  // clear trigger cause on resume
+                trigger_hit_r      <= '0;    // clear per-trigger hit bits on resume
             end else if (dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
                       || (dbg_step_pending_r && trace_valid)) begin
                 dbg_halted_r       <= 1'b1;
-                trigger_halt_r     <= trigger_match;  // record: trigger module caused halt
+                trigger_halt_r     <= trigger_match;     // record: trigger module caused halt
+                trigger_hit_r      <= trigger_match_vec; // which trigger(s) fired
                 // resumeack stays 1 (sticky) — TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
                 // After a single-step halt, block re-resume until resumereq deasserts
@@ -907,12 +964,32 @@ module jv32_core #(
     // if_stall: hold IF (do not advance PC or consume RVC output)
     assign if_stall = ex_stall || load_use_stall;
 
+    // -------------------------------------------------------------------------
+    // WB-phase data-memory fault: AXI DECERR on load or store response.
+    // Raises EXC_LOAD_ACCESS_FAULT (cause=5) or EXC_STORE_ACCESS_FAULT (cause=7).
+    // Supplements EX-phase exceptions (ex_wb_r.exception); both can't fire together
+    // because ex_wb_r.exception suppresses mem_read/mem_write in ex_wb_r.
+    // -------------------------------------------------------------------------
+    logic        dmem_fault_active;
+    logic        wb_exception;
+    exc_cause_e  wb_exc_cause;
+    logic [31:0] wb_exc_tval;
+
+    assign dmem_fault_active = dmem_resp_fault && ex_wb_r.valid
+                             && (ex_wb_r.mem_read || ex_wb_r.mem_write)
+                             && !ex_wb_r.exception;
+    assign wb_exception = (ex_wb_r.valid && ex_wb_r.exception) || dmem_fault_active;
+    assign wb_exc_cause = dmem_fault_active
+                        ? (ex_wb_r.mem_write ? EXC_STORE_ACCESS_FAULT : EXC_LOAD_ACCESS_FAULT)
+                        : ex_wb_r.exc_cause;
+    assign wb_exc_tval  = dmem_fault_active ? ex_wb_r.mem_addr : ex_wb_r.exc_tval;
+
     // Flush IF stage when branch/jump/exception/interrupt redirect
     always_comb begin
         if_flush    = 1'b0;
         if_flush_pc = BOOT_ADDR;
         // WB redirects (exception, mret, interrupt take priority)
-        if (ex_wb_r.valid && ex_wb_r.exception) begin
+        if (wb_exception) begin
             if_flush    = 1'b1;
             if_flush_pc = mtvec_csr;
         end else if (ex_wb_r.valid && ex_wb_r.mret) begin
@@ -936,9 +1013,11 @@ module jv32_core #(
     // When this fires, the instruction currently in IF/EX must be squashed
     // (not promoted to EX/WB), because it's on the wrong control-flow path.
     logic wb_redirect;
-    assign wb_redirect = ex_wb_r.valid && (ex_wb_r.exception || ex_wb_r.mret
-                                           || (csr_irq_pending && !ex_wb_r.exception && !ex_wb_r.mret
-                                               && !dbg_step_pending_r));
+    assign wb_redirect = wb_exception
+                      || (ex_wb_r.valid && ex_wb_r.mret)
+                      || (csr_irq_pending && ex_wb_r.valid
+                          && !ex_wb_r.exception && !dmem_fault_active && !ex_wb_r.mret
+                          && !dbg_step_pending_r);
 
     // RVC stall/flush
     // bp_redirect also flushes the RVC buffer to discard the instruction
@@ -947,7 +1026,7 @@ module jv32_core #(
     // Debug resume flushes the RVC buffer to discard any instruction buffered
     // while the core was halted (prevents stale instructions from executing on step).
     logic dbg_resume_flush;
-    assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r;
+    assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r;
     assign rvc_stall    = if_stall;
     assign rvc_flush    = if_flush || bp_redirect || dbg_pc_we_i || dbg_resume_flush;
     assign rvc_flush_pc = if_flush         ? if_flush_pc      :
@@ -991,7 +1070,7 @@ module jv32_core #(
             ex_wb_r <= '0;
         end else if ((halt_req_i && !dbg_halted_r)
                   || trigger_match
-                  || (resume_req_i && dbg_halted_r && !dbg_step_served_r)) begin
+                  || (resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r)) begin
             // Drop stale WB state across debug entry/exit.
             // Without this, single-step may retire a pre-halt instruction or
             // execute an old redirect (e.g. trap/mret) instead of DPC.
@@ -1066,7 +1145,7 @@ module jv32_core #(
         rf_we    = 1'b0;
         rf_rd    = ex_wb_r.rd_addr;
         rf_wdata = ex_wb_r.rd_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel && !dbg_halted_r) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel && !dbg_halted_r && !dmem_fault_active) begin
             rf_we = 1'b1;
             // AMO checked first: decoder sets mem_read=1 for AMO too.
             if (ex_wb_r.is_amo) begin
@@ -1091,24 +1170,24 @@ module jv32_core #(
     // During single-step (dbg_step_pending_r=1), interrupts are suppressed
     // to implement dcsr.stepie=0 (the reset / default value of dcsr.stepie):
     // the Debug Spec says "interrupt enable is cleared while in single step mode".
-    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !ex_wb_r.mret
-                        && !dbg_step_pending_r;
+    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !dmem_fault_active
+                        && !ex_wb_r.mret && !dbg_step_pending_r;
 
-    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_stall && !irq_cancel
-                            && !dbg_halted_r;
+    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_fault_active
+                            && !dmem_stall && !irq_cancel && !dbg_halted_r;
     assign trace_reg_we   = ex_wb_r.valid && ex_wb_r.reg_we
                             && (ex_wb_r.rd_addr != 5'd0)
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
                             && !dbg_halted_r;
     assign trace_pc       = ex_wb_r.pc;
     assign trace_rd       = ex_wb_r.rd_addr;
     assign trace_rd_data  = rf_wdata;
     assign trace_instr    = ex_wb_r.orig_instr;
     assign trace_mem_we   = ex_wb_r.valid && ex_wb_r.mem_write
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
                             && !dbg_halted_r;
     assign trace_mem_re   = ex_wb_r.valid && ex_wb_r.mem_read
-                            && !ex_wb_r.exception && !dmem_stall && !irq_cancel
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
                             && !dbg_halted_r;
     assign trace_mem_addr = ex_wb_r.mem_addr;
     assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :

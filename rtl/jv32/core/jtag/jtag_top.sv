@@ -85,6 +85,7 @@ module jtag_top #(
     output logic [31:0] progbuf1_o,        // Program buffer 1
     // Trigger interface
     input  logic        trigger_halt_i,
+    input  logic [N_TRIGGERS-1:0] trigger_hit_i,   // per-trigger hit bits from CPU
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o
 );
@@ -215,6 +216,7 @@ module jtag_top #(
         .progbuf1_o       (progbuf1_o),
         // Trigger interface
         .trigger_halt_i   (trigger_halt_i),
+        .trigger_hit_i    (trigger_hit_i),
         .tdata1_o         (tdata1_o),
         .tdata2_o         (tdata2_o)
     );
