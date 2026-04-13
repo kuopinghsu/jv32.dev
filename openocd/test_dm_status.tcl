@@ -55,5 +55,16 @@ if {[catch {wait_halt 1000}]} {
 set dm_halt_1 [read_dmstatus]
 check_halted $dm_halt_1 "after second halt"
 
+# Validate dmstatus.version == 2 (Debug Spec 0.13)
+set version [expr {$dm_halt_0 & 0xf}]
+if {$version != 2} {
+    error "dmstatus.version expected 2 (debug spec 0.13) got $version"
+}
+# Validate authenticated bit is set
+set authenticated [expr {($dm_halt_0 >> 7) & 1}]
+if {!$authenticated} {
+    error "dmstatus.authenticated not set (debug module not authenticated)"
+}
 puts "dmstatus halt0=[format 0x%08x $dm_halt_0] run=[format 0x%08x $dm_run] halt1=[format 0x%08x $dm_halt_1]"
+puts "dmstatus.version=$version authenticated=$authenticated"
 puts "\[PASS\] dmstatus halt/resume transitions"

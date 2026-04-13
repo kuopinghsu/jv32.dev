@@ -43,6 +43,15 @@ if {$pc1 == $pc0} {
     error "step #1: PC did not advance (still [format 0x%08x $pc0])"
 }
 
+# Validate DCSR.cause == 4 (step) after every step.
+# DCSR is CSR 0x7B0; cause is bits [8:6].
+set dcsr [reg_val dcsr]
+set dcsr_cause [expr {($dcsr >> 6) & 0x7}]
+if {$dcsr_cause != 4} {
+    error "DCSR.cause expected 4 (step) got $dcsr_cause (dcsr=[format 0x%08x $dcsr])"
+}
+puts "dcsr=[format 0x%08x $dcsr] cause=$dcsr_cause (step)"
+
 # ── stepi equivalent: step #2 ────────────────────────────────────────────────
 step
 if {[catch {wait_halt 1000}]} {

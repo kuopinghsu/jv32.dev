@@ -31,5 +31,5 @@ if {$got != 0xCAFEBABE} {
 if {$saw_error} {
     puts "\[PASS\] debug error path and recovery"
 } else {
-    puts "\[PASS\] debug recovery (no fault observed on unmapped access in this setup)"
+    puts "\[SKIP\] debug error path not observed on unmapped access; recovery path validated"
 }

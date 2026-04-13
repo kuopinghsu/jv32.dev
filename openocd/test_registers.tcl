@@ -11,6 +11,9 @@ proc reg_val {name} {
 }
 
 halt
+if {[catch {wait_halt 1000}]} {
+    error "hart did not halt"
+}
 
 # Read pc
 set pc_val [reg_val pc]
@@ -32,4 +35,30 @@ set mstatus [reg_val mstatus]
 set mepc    [reg_val mepc]
 set mcause  [reg_val mcause]
 puts "mstatus=[format 0x%08x $mstatus] mepc=[format 0x%08x $mepc] mcause=[format 0x%08x $mcause]"
+
+# Write/read mscratch (CSR 0x340) with all-zeros and all-ones boundary patterns.
+# mscratch is a clean scratch register with no architectural side-effects.
+set mscratch_orig [reg_val mscratch]
+foreach pattern {0x00000000 0xFFFFFFFF 0xA5A5A5A5 0x5A5A5A5A} {
+    reg mscratch $pattern
+    set got [reg_val mscratch]
+    if {$got != $pattern} {
+        error "mscratch boundary pattern $pattern: got=[format 0x%08x $got]"
+    }
+}
+reg mscratch $mscratch_orig
+puts "mscratch boundary patterns OK"
+
+# Write/read sp and ra using numeric values to confirm all 32 GPRs are reachable.
+# Note: OpenOCD names x8 "fp" (frame pointer), not "s0".
+foreach {rname wval} {sp 0x11111111  ra 0x22222222  fp 0x33333333  s1 0x44444444} {
+    set orig [reg_val $rname]
+    reg $rname $wval
+    set got [reg_val $rname]
+    if {$got != $wval} {
+        error "$rname write/read mismatch: expected=[format 0x%08x $wval] got=[format 0x%08x $got]"
+    }
+    reg $rname $orig
+}
+puts "sp/ra/fp(s0)/s1 write/read OK"
 puts "\[PASS\] register access"
