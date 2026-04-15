@@ -96,6 +96,7 @@ module jv32_core #(
     import jv32_pkg::*;
 
     localparam logic [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;
+    localparam int N_TRIGGERS = 2;
 
     // =====================================================================
     // RVC expander
@@ -144,6 +145,7 @@ module jv32_core #(
     logic dbg_step_pending_r;
     logic dbg_step_served_r;   // Prevents re-resume after single-step halt
     logic dbg_enter_debug;
+    logic trigger_match;
     logic trigger_halt_r;      // trigger module caused current halt (dcsr.cause=2)
     logic [N_TRIGGERS-1:0] trigger_hit_r; // which trigger(s) caused the halt
     assign trigger_halt_o = trigger_halt_r;
@@ -265,6 +267,9 @@ module jv32_core #(
     logic [31:0] csr_irq_pc;
     logic        csr_tail_chain;
     logic [31:0] csr_tail_chain_pc;
+    logic        wb_exception;
+    exc_cause_e  wb_exc_cause;
+    logic [31:0] wb_exc_tval;
     // irq_cancel declared here (defined in Trace output section below)
     logic        irq_cancel;
 
@@ -636,8 +641,6 @@ module jv32_core #(
     //       napot_rmask = (napot_p << 1) - 1   -- 2^(n+1)-1
     //       match if: (addr ^ tdata2) & ~napot_rmask == 0
     // -------------------------------------------------------------------------
-    localparam int N_TRIGGERS = 2;
-    logic trigger_match;
     logic [N_TRIGGERS-1:0] trigger_match_vec; // per-trigger: which trigger(s) matched
 
     // Address-match helper: supports exact (match=0) and NAPOT (match=1)
@@ -971,9 +974,6 @@ module jv32_core #(
     // because ex_wb_r.exception suppresses mem_read/mem_write in ex_wb_r.
     // -------------------------------------------------------------------------
     logic        dmem_fault_active;
-    logic        wb_exception;
-    exc_cause_e  wb_exc_cause;
-    logic [31:0] wb_exc_tval;
 
     assign dmem_fault_active = dmem_resp_fault && ex_wb_r.valid
                              && (ex_wb_r.mem_read || ex_wb_r.mem_write)

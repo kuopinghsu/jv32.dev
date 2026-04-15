@@ -146,7 +146,9 @@ module jv32_top #(
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data,
     output logic [31:0] trace_instr,
-    output logic        trace_mem_we,    output logic        trace_mem_re,    output logic [31:0] trace_mem_addr,
+    output logic        trace_mem_we,
+    output logic        trace_mem_re,
+    output logic [31:0] trace_mem_addr,
     output logic [31:0] trace_mem_data
 );
     import jv32_pkg::*;
@@ -181,6 +183,7 @@ module jv32_top #(
     logic [31:0] imem_req_addr;
     logic        imem_resp_valid;
     logic [31:0] imem_resp_data;
+    logic        dmem_resp_fault;
     logic [31:0] imem_resp_pc;
     logic        imem_resp_fault;      // AXI I-fetch returned non-OKAY response (DECERR)
     logic [31:0] imem_resp_fault_pc;   // exact request PC for the faulting AXI response
@@ -704,7 +707,6 @@ module jv32_top #(
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
     // Fault only possible on AXI path (TCM/DRAM never returns DECERR)
-    logic dmem_resp_fault;
     assign dmem_resp_fault = dmem_resp_fault_axi;
 
 `ifndef SYNTHESIS

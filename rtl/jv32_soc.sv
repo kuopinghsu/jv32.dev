@@ -89,7 +89,9 @@ module jv32_soc #(
     output logic [4:0]  trace_rd,
     output logic [31:0] trace_rd_data,
     output logic [31:0] trace_instr,
-    output logic        trace_mem_we,    output logic        trace_mem_re,    output logic [31:0] trace_mem_addr,
+    output logic        trace_mem_we,
+    output logic        trace_mem_re,
+    output logic [31:0] trace_mem_addr,
     output logic [31:0] trace_mem_data
 );
     import jv32_pkg::*;

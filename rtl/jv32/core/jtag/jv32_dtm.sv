@@ -1065,8 +1065,10 @@ module jv32_dtm #(
 
             // Synthetic CSRs — CLK domain only
             dcsr_reg                <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
+            dcsr_cause_r            <= 3'd0;
             dscratch0_reg           <= 32'b0;
             dscratch1_reg           <= 32'b0;
+            dpc_reg                 <= 32'h8000_0000; // Boot address (matches jv32 BOOT_ADDR)
 
             // Machine-mode CSR mocks: reasonable defaults for a halted M-mode hart
             mstatus_reg             <= 32'h00001800; // MPP=11(M-mode), MIE=0, MPIE=0
