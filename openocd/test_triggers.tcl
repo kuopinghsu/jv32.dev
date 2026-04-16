@@ -199,5 +199,11 @@ if {(($t0_clr >> 20) & 1) != 0} {
 }
 puts "tdata1\[0\] hit bit SW set/clear OK"
 
+# Disable both triggers before exit so they don't fire during subsequent tests.
+reg tselect 0x0
+reg tdata1 0x0
+reg tselect 0x1
+reg tdata1 0x0
+
 puts "\[PASS\] trigger module"
 

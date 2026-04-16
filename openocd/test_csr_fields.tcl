@@ -1,4 +1,4 @@
-puts "\[TEST\] CSR field validation (mstatus, mtvec, mepc, dpc)"
+puts "\[TEST\] CSR field validation (mstatus, mtvec, mepc, dpc, mscratch, mcause, mtval)"
 
 # Validates individual CSR fields via abstract register access:
 #   1. mstatus.MIE  (bit 3)  — writable; enable/disable interrupts via debug
@@ -93,4 +93,77 @@ if {$dpc < 0x80000000 || $dpc > 0x8001FFFF} {
 }
 puts "dpc=[format 0x%08x $dpc] in IRAM range OK"
 
-puts "\[PASS\] CSR field validation (mstatus, mtvec, mepc, dpc)"
+# ── 6. mscratch (CSR 0x340): full write/read round-trip via DTM shadow ─────────
+# mscratch is a shadow CSR in the jv32 DTM; accessible without progbuf.
+# It has no WARL constraints — all 32 bits are read/write.
+set ms_orig [reg_val mscratch]
+puts "mscratch original = [format 0x%08x $ms_orig]"
+
+reg mscratch 0xCAFEBABE
+set ms_r1 [reg_val mscratch]
+if {$ms_r1 != 0xCAFEBABE} {
+    reg mscratch $ms_orig
+    error "mscratch write 0xCAFEBABE failed: got [format 0x%08x $ms_r1]"
+}
+
+reg mscratch 0xDEAD5678
+set ms_r2 [reg_val mscratch]
+if {$ms_r2 != 0xDEAD5678} {
+    reg mscratch $ms_orig
+    error "mscratch write 0xDEAD5678 failed: got [format 0x%08x $ms_r2]"
+}
+
+reg mscratch $ms_orig
+puts "mscratch (CSR 0x340) write/read round-trip OK"
+
+# ── 7. mcause (CSR 0x342): write/read round-trip ───────────────────────────────
+# mcause is a DTM shadow CSR.  In normal execution it holds the cause of the
+# last trap.  Writing it via debug does not cause a trap; it just updates the
+# shadow register.  Bit [31] = interrupt (1) or exception (0); [30:0] = code.
+set mc_orig [reg_val mcause]
+puts "mcause original = [format 0x%08x $mc_orig]"
+
+# Write an exception cause (bit 31 = 0, code = 0xB = machine external interrupt
+# cause — just used here as a known bit pattern).
+reg mcause 0x0000000B
+set mc_r1 [reg_val mcause]
+if {$mc_r1 != 0x0000000B} {
+    reg mcause $mc_orig
+    error "mcause write 0x0000000B failed: got [format 0x%08x $mc_r1]"
+}
+
+# Write an interrupt cause (bit 31 = 1).
+reg mcause 0x80000007
+set mc_r2 [reg_val mcause]
+if {$mc_r2 != 0x80000007} {
+    reg mcause $mc_orig
+    error "mcause write 0x80000007 failed: got [format 0x%08x $mc_r2]"
+}
+
+reg mcause $mc_orig
+puts "mcause (CSR 0x342) write/read round-trip OK"
+
+# ── 8. mtval (CSR 0x343): write/read round-trip ────────────────────────────────
+# mtval is a DTM shadow CSR holding the faulting address or instruction word.
+# All 32 bits are writable via debug.
+set mv_orig2 [reg_val mtval]
+puts "mtval original = [format 0x%08x $mv_orig2]"
+
+reg mtval 0x80001234
+set mv_r1 [reg_val mtval]
+if {$mv_r1 != 0x80001234} {
+    reg mtval $mv_orig2
+    error "mtval write 0x80001234 failed: got [format 0x%08x $mv_r1]"
+}
+
+reg mtval 0x00000000
+set mv_r2 [reg_val mtval]
+if {$mv_r2 != 0x00000000} {
+    reg mtval $mv_orig2
+    error "mtval write 0x00000000 failed: got [format 0x%08x $mv_r2]"
+}
+
+reg mtval $mv_orig2
+puts "mtval (CSR 0x343) write/read round-trip OK"
+
+puts "\[PASS\] CSR field validation (mstatus, mtvec, mepc, dpc, mscratch, mcause, mtval)"

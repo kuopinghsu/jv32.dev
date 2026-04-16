@@ -54,4 +54,8 @@ puts "supported modes: $supported"
 if {[llength $skipped] > 0} {
     puts "skipped modes: $skipped"
 }
+
+# Restore default mode so subsequent tests are not affected.
+catch {riscv set_mem_access progbuf}
+
 puts "\[PASS\] memory access modes"

@@ -111,15 +111,3 @@ set pc5 [reg_val pc]
 puts "pc after resume+halt: [format 0x%08x $pc5]"
 
 puts "\[PASS\] single-step (step/stepi/next/nexti)"
-
-# ── Verify DCSR.step cleared: hart runs freely after resume ──────────────────
-resume
-sleep 20
-halt
-if {[catch {wait_halt 1000}]} {
-    error "hart did not halt after resume — DCSR.step may be stuck"
-}
-set pc5 [reg_val pc]
-puts "pc after resume+halt: [format 0x%08x $pc5]"
-
-puts "\[PASS\] single-step (step/stepi/next/nexti)"
