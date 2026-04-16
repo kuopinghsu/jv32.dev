@@ -123,7 +123,7 @@ module jv32_soc #(
     logic        dbg_reg_we;
     logic [31:0] dbg_pc_wdata, dbg_pc;
     logic        dbg_pc_we;
-    logic        dbg_mem_req, dbg_mem_ready;
+    logic        dbg_mem_req, dbg_mem_ready, dbg_mem_error;
     logic [31:0] dbg_mem_addr, dbg_mem_wdata, dbg_mem_rdata;
     logic [3:0]  dbg_mem_we;
     logic        dbg_ndmreset, dbg_hartreset;
@@ -168,6 +168,7 @@ module jv32_soc #(
 
     assign soc_rst_n     = rst_n & ~dbg_ndmreset;
     assign dbg_tcm_select = (dbg_tcm_state != DBG_TCM_IDLE);
+    assign dbg_mem_error  = 1'b0;  // TCM bridge does not generate AXI bus errors
 
     // JTAG top-level interface + RISC-V debug transport module
     jtag_top #(
@@ -201,6 +202,7 @@ module jv32_soc #(
         .dbg_mem_we_o     (dbg_mem_we),
         .dbg_mem_wdata_o  (dbg_mem_wdata),
         .dbg_mem_ready_i  (dbg_mem_ready),
+        .dbg_mem_error_i  (dbg_mem_error),
         .dbg_mem_rdata_i  (dbg_mem_rdata),
         .dbg_ndmreset_o   (dbg_ndmreset),
         .dbg_hartreset_o  (dbg_hartreset),

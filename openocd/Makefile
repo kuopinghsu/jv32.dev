@@ -61,10 +61,16 @@ VPI_PORT ?= 5555
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
 JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields
+			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
+			   sba havereset abstractauto
 # cJTAG: cJTAG activation check first, then the same common tests
 CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
-			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields
+			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
+			   sba havereset abstractauto
+
+# ── Test counts (computed from the lists above) ──────────────────────────────
+N_JTAG  := $(words $(JTAG_TESTS))
+N_CJTAG := $(words $(CJTAG_TESTS))
 
 # ── Log directory ─────────────────────────────────────────────────────────────
 LOG_DIR := $(BUILD_DIR)/openocd_logs
@@ -104,11 +110,12 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	@echo "Tests: $(JTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
-	@PASS=0; SKIP=0; FAIL=0; \
+	@PASS=0; SKIP=0; FAIL=0; N=0; \
 	run_one() { \
+	    N=$$((N+1)); \
 	    t=$$1; \
 	    LOG="$(LOG_DIR)/jtag_$$t"; \
-	    printf "  [jtag] %-20s ... " "test_$$t"; \
+	    printf "  [jtag] %d/$(N_JTAG) %-20s ... " "$$N" "test_$$t"; \
 	    "$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \
@@ -154,11 +161,12 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	@echo "Tests: $(CJTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
-	@PASS=0; SKIP=0; FAIL=0; \
+	@PASS=0; SKIP=0; FAIL=0; N=0; \
 	run_one() { \
+	    N=$$((N+1)); \
 	    t=$$1; \
 	    LOG="$(LOG_DIR)/cjtag_$$t"; \
-	    printf "  [cjtag] %-20s ... " "test_$$t"; \
+	    printf "  [cjtag] %d/$(N_CJTAG) %-20s ... " "$$N" "test_$$t"; \
 	    "$(VPI_CJTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \

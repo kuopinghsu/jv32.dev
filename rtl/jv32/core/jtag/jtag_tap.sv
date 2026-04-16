@@ -47,6 +47,7 @@ module jtag_tap #(
     output logic [3:0]  dbg_mem_we_o,      // Memory write enable (byte mask)
     output logic [31:0] dbg_mem_wdata_o,   // Memory write data
     input  logic        dbg_mem_ready_i,   // Memory ready
+    input  logic        dbg_mem_error_i,   // Memory error (DECERR/SLVERR)
     input  logic [31:0] dbg_mem_rdata_i,   // Memory read data
 
     // System reset outputs
@@ -205,39 +206,39 @@ module jtag_tap #(
 
     // Instantiate RISC-V Debug Transport Module
     jv32_dtm #(
-        .IDCODE(IDCODE),
-        .N_TRIGGERS(N_TRIGGERS)
+        .IDCODE           (IDCODE),
+        .N_TRIGGERS       (N_TRIGGERS)
     ) u_dtm (
         // JTAG interface
-        .tck_i(tck_i),
-        .tdi_i(tdi_i),
-        .tdo_o(dtm_tdo),
-        .capture_dr_i(capture_dr_pulse),
-        .shift_dr_i(shift_dr_pulse),
-        .update_dr_i(update_dr_pulse),
-        .ir_i(ir_reg),
-        .ntrst_i(ntrst_i),
+        .tck_i            (tck_i),
+        .tdi_i            (tdi_i),
+        .tdo_o            (dtm_tdo),
+        .capture_dr_i     (capture_dr_pulse),
+        .shift_dr_i       (shift_dr_pulse),
+        .update_dr_i      (update_dr_pulse),
+        .ir_i             (ir_reg),
+        .ntrst_i          (ntrst_i),
 
         // System clock and reset
-        .clk(clk),
-        .rst_n(rst_n),
+        .clk              (clk),
+        .rst_n            (rst_n),
 
         // Debug interface to CPU
-        .dbg_halt_req_o(halt_req_o),
-        .dbg_halted_i(halted_i),
-        .dbg_resume_req_o(resume_req_o),
-        .dbg_resumeack_i(resumeack_i),
+        .dbg_halt_req_o   (halt_req_o),
+        .dbg_halted_i     (halted_i),
+        .dbg_resume_req_o (resume_req_o),
+        .dbg_resumeack_i  (resumeack_i),
 
         // Register access
-        .dbg_reg_addr_o(dbg_reg_addr_o),
-        .dbg_reg_wdata_o(dbg_reg_wdata_o),
-        .dbg_reg_we_o(dbg_reg_we_o),
-        .dbg_reg_rdata_i(dbg_reg_rdata_i),
+        .dbg_reg_addr_o   (dbg_reg_addr_o),
+        .dbg_reg_wdata_o  (dbg_reg_wdata_o),
+        .dbg_reg_we_o     (dbg_reg_we_o),
+        .dbg_reg_rdata_i  (dbg_reg_rdata_i),
 
         // PC access
-        .dbg_pc_wdata_o(dbg_pc_wdata_o),
-        .dbg_pc_we_o(dbg_pc_we_o),
-        .dbg_pc_i(dbg_pc_i),
+        .dbg_pc_wdata_o   (dbg_pc_wdata_o),
+        .dbg_pc_we_o      (dbg_pc_we_o),
+        .dbg_pc_i         (dbg_pc_i),
 
         // Memory access
         .dbg_mem_req_o    (dbg_mem_req_o),
@@ -245,16 +246,19 @@ module jtag_tap #(
         .dbg_mem_we_o     (dbg_mem_we_o),
         .dbg_mem_wdata_o  (dbg_mem_wdata_o),
         .dbg_mem_ready_i  (dbg_mem_ready_i),
+        .dbg_mem_error_i  (dbg_mem_error_i),
         .dbg_mem_rdata_i  (dbg_mem_rdata_i),
 
         // System reset outputs
         .dbg_ndmreset_o   (dbg_ndmreset_o),
         .dbg_hartreset_o  (dbg_hartreset_o),
+
         // Debug control signals
         .dbg_singlestep_o (dbg_singlestep_o),
         .dbg_ebreakm_o    (dbg_ebreakm_o),
         .progbuf0_o       (progbuf0_o),
         .progbuf1_o       (progbuf1_o),
+
         // Trigger interface
         .trigger_halt_i   (trigger_halt_i),
         .trigger_hit_i    (trigger_hit_i),
@@ -283,22 +287,37 @@ module jtag_tap #(
 
     // =========================================================================
     // TDO Output Multiplexer
+    // IEEE 1149.1: TDO must change on negedge TCK and be stable during TCK high.
+    // The shift registers update on posedge TCK, so a negedge-registered stage
+    // is required to hold the correct (pre-shift) bit while TCK is high.
     // =========================================================================
+    logic tdo_comb;
+
     always_comb begin
         case (state)
             CAPTURE_IR, SHIFT_IR, EXIT1_IR: begin
-                tdo_o = ir_shift[0];
+                tdo_comb = ir_shift[0];
             end
 
             CAPTURE_DR, SHIFT_DR, EXIT1_DR: begin
                 case (ir_reg)
-                    BYPASS_INSTR: tdo_o = bypass_reg;
-                    default: tdo_o = dtm_tdo;  // All other instructions handled by DTM
+                    BYPASS_INSTR: tdo_comb = bypass_reg;
+                    default: tdo_comb = dtm_tdo;  // All other instructions handled by DTM
                 endcase
             end
 
-            default: tdo_o = 1'b0;
+            default: tdo_comb = 1'b0;
         endcase
+    end
+
+    // Register TDO on negedge TCK: after posedge shifts the register, the new
+    // LSB is available combinatorially.  Latching it on negedge ensures the
+    // debugger sees a glitch-free, stable TDO during the next TCK high period.
+    always_ff @(negedge tck_i or negedge ntrst_i) begin
+        if (!ntrst_i)
+            tdo_o <= 1'b0;
+        else
+            tdo_o <= tdo_comb;
     end
 
     // =========================================================================

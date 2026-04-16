@@ -73,11 +73,12 @@ module jtag_top #(
     output logic [3:0]  dbg_mem_we_o,      // Memory write enable (byte mask)
     output logic [31:0] dbg_mem_wdata_o,   // Memory write data
     input  logic        dbg_mem_ready_i,   // Memory ready
+    input  logic        dbg_mem_error_i,   // Memory access error (AXI DECERR/SLVERR)
     input  logic [31:0] dbg_mem_rdata_i,   // Memory read data
 
     // System reset outputs
-    output logic        dbg_ndmreset_o,    // Non-debug module reset (resets SoC except DM)
-    output logic        dbg_hartreset_o,   // Hart reset request
+    output logic        dbg_ndmreset_o,    // Non-debug module reset
+    output logic        dbg_hartreset_o,   // Hart reset
     // Debug control signals from dcsr
     output logic        dbg_singlestep_o,  // dcsr[2]: single-step mode
     output logic        dbg_ebreakm_o,     // dcsr[15]: ebreak→debug mode
@@ -204,6 +205,7 @@ module jtag_top #(
         .dbg_mem_we_o     (dbg_mem_we_o),
         .dbg_mem_wdata_o  (dbg_mem_wdata_o),
         .dbg_mem_ready_i  (dbg_mem_ready_i),
+        .dbg_mem_error_i  (dbg_mem_error_i),
         .dbg_mem_rdata_i  (dbg_mem_rdata_i),
 
         // System reset outputs

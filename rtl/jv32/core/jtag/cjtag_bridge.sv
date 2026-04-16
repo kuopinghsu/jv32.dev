@@ -404,6 +404,14 @@ module cjtag_bridge (
                 ST_OSCAN1: begin
                     // Update outputs based on TCKC edges and bit position
 
+                    // Sample TDO while TCK is high: the TAP registers TDO on negedge TCK,
+                    // so tdo_i is stable and correct throughout the TCK-high period.
+                    // Continuously latching here ensures tdo_sampled is captured and held
+                    // for the probe to read on TMSC during the TDO bit slot.
+                    if (tck_int) begin
+                        tdo_sampled <= tdo_i;
+                    end
+
                     // On TCKC rising edge - generate TCK pulse and drive TDO
                     if (tckc_posedge) begin
                         case (bit_pos)
@@ -423,16 +431,14 @@ module cjtag_bridge (
                             end
 
                             2'd2: begin
-                                // Sample TDO BEFORE raising TCK: captures pre-shift value
-                                // (jtag_tap shifts on posedge TCK; tdo_i reflects old ir/dr_shift[0])
-                                tdo_sampled  <= tdo_i;
-                                // After TMS sampled - generate TCK pulse, enable TDO output
+                                // After TMS sampled - generate TCK pulse, enable TDO output.
+                                // tdo_sampled will be updated once tck_int is high (above).
                                 tms_int <= tmsc_sampled;
                                 tck_int <= 1'b1;       // Generate TCK pulse
                                 tmsc_oen_int <= 1'b0;  // Output mode for TDO
 
-                                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b, TDO_pre=%b",
-                                       $time, tmsc_sampled, tdo_i));
+                                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] OSCAN1 posedge: bit_pos=2, TCK high, tms_int=%b",
+                                       $time, tmsc_sampled));
                             end
 
                             default: begin
