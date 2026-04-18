@@ -35,7 +35,7 @@ module jv32_soc #(
     parameter int unsigned IRAM_SIZE       = 128*1024,  // bytes (128 KB)
     parameter int unsigned DRAM_SIZE       = 128*1024,  // bytes (128 KB)
     parameter bit          FAST_MUL        = 1'b1,
-    parameter bit          FAST_DIV        = 1'b1,
+    parameter bit          FAST_DIV        = 1'b0,
     parameter bit          FAST_SHIFT      = 1'b1,
     parameter bit          BP_EN           = 1'b1,
     parameter logic [31:0] BOOT_ADDR       = 32'h8000_0000,

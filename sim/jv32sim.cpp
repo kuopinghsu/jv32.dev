@@ -18,12 +18,14 @@
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
+#include <iostream>
+#include <iomanip>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <iomanip>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -162,6 +164,33 @@ static bool   trace_on   = false;
 static uint64_t max_insns        = 0;  // 0 = unlimited
 static uint64_t timeout_seconds  = 0;  // 0 = no timeout
 
+// SIGINT handler
+static volatile sig_atomic_t g_sigint = 0;
+static void handle_sigint(int) { g_sigint = 1; }
+
+static const char* gpr_name(int i) {
+    static const char* names[32] = {
+        "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+        "s0",   "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+        "a6",   "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+        "s8",   "s9", "s10","s11","t3", "t4", "t5", "t6"
+    };
+    return (i >= 0 && i < 32) ? names[i] : "??";
+}
+
+static void dump_registers() {
+    fprintf(stderr, "\n=== Register Dump (SIGINT) ===\n");
+    fprintf(stderr, "PC  : 0x%08x\n", pc);
+    for (int i = 0; i < 32; i += 4) {
+        fprintf(stderr, "%4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x\n",
+                gpr_name(i),   regs[i],
+                gpr_name(i+1), regs[i+1],
+                gpr_name(i+2), regs[i+2],
+                gpr_name(i+3), regs[i+3]);
+    }
+    fprintf(stderr, "==============================\n");
+}
+
 // Debug level (0=silent, 1=info, 2=verbose)
 static int debug_level = 0;
 
@@ -226,9 +255,17 @@ static bool     exc_pending;
 static uint32_t exc_cause;
 static uint32_t exc_tval;
 
+static inline bool in_range(uint32_t addr, uint32_t base, uint32_t span, int size) {
+    uint32_t n = (uint32_t)size;
+    if (n == 0 || n > span) return false;
+    if (addr < base) return false;
+    uint32_t off = addr - base;
+    return off <= (span - n);
+}
+
 static uint32_t mem_read(uint32_t addr, int size) {
     // IRAM
-    if (addr >= IRAM_BASE && addr + (uint32_t)size <= IRAM_BASE + IRAM_SIZE) {
+    if (in_range(addr, IRAM_BASE, IRAM_SIZE, size)) {
         uint32_t off = addr - IRAM_BASE;
         if (size == 1) return iram[off];
         if (size == 2) {
@@ -241,7 +278,7 @@ static uint32_t mem_read(uint32_t addr, int size) {
         return v;
     }
     // DRAM
-    if (addr >= DRAM_BASE && addr + (uint32_t)size <= DRAM_BASE + DRAM_SIZE) {
+    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
         uint32_t off = addr - DRAM_BASE;
         if (size == 1) return dram[off];
         if (size == 2) {
@@ -280,7 +317,7 @@ static uint32_t mem_read(uint32_t addr, int size) {
 
 static void mem_write(uint32_t addr, uint32_t val, int size) {
     // DRAM
-    if (addr >= DRAM_BASE && addr + (uint32_t)size <= DRAM_BASE + DRAM_SIZE) {
+    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
         uint32_t off = addr - DRAM_BASE;
         if (size == 1) dram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&dram[off], &val, 2);
@@ -288,7 +325,7 @@ static void mem_write(uint32_t addr, uint32_t val, int size) {
         return;
     }
     // IRAM (writable if mapped, rare but allowed)
-    if (addr >= IRAM_BASE && addr + (uint32_t)size <= IRAM_BASE + IRAM_SIZE) {
+    if (in_range(addr, IRAM_BASE, IRAM_SIZE, size)) {
         uint32_t off = addr - IRAM_BASE;
         if (size == 1) iram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&iram[off], &val, 2);
@@ -433,21 +470,22 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
         (unsigned)cause, (unsigned)tval, (unsigned)trap_pc, (unsigned)pc);
 }
 
-static void check_interrupts() {
-    if (!(csr_mstatus & MSTATUS_MIE)) return;
+static bool check_interrupts() {
+    if (!(csr_mstatus & MSTATUS_MIE)) return false;
 
     bool timer_irq = (mtime >= mtimecmp &&
                       mtimecmp != 0xFFFFFFFFFFFFFFFFULL);
     bool soft_irq  = (msip != 0);
     // external CLIC IRQ not simulated here
 
-    if ((csr_mie & MIP_MEIP) && 0) {
-        // Placeholder: external IRQ not simulated
-    } else if ((csr_mie & MIP_MTIP) && timer_irq) {
+    if ((csr_mie & MIP_MTIP) && timer_irq) {
         take_trap(CAUSE_TIMER_INT, 0, pc);
+        return true;
     } else if ((csr_mie & MIP_MSIP) && soft_irq) {
         take_trap(CAUSE_SOFTWARE_INT, 0, pc);
+        return true;
     }
+    return false;
 }
 
 // ============================================================================
@@ -720,7 +758,7 @@ static void step() {
     // ── 1. Advance counters and check interrupts ──────────────────────────
     // mtime and mcycle are incremented on instruction retirement (below), not here
 
-    check_interrupts();
+    if (check_interrupts()) return;
     if (!running) return;
 
     // ── 2. Fetch instruction ───────────────────────────────────────────────
@@ -1138,12 +1176,16 @@ static bool load_elf(const char *path, uint32_t *entry) {
 // Main
 // ============================================================================
 int main(int argc, char **argv) {
+    std::signal(SIGINT, handle_sigint);
+
     const char *elf_path    = nullptr;
     const char *trace_path  = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
+        } else if (strncmp(argv[i], "--max-insns=", 12) == 0) {
+            max_insns = (uint64_t)strtoull(argv[i] + 12, nullptr, 10);
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
             max_insns = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
@@ -1203,7 +1245,8 @@ int main(int argc, char **argv) {
 
     // Run
     auto time_begin = std::chrono::steady_clock::now();
-    while (running) {
+    while (running && !g_sigint) {
+        if (g_sigint) break;
         if (max_insns && insn_count >= max_insns) {
             DBG(1, "Reached max-insns limit (%llu)\n",
                     (unsigned long long)max_insns);
@@ -1220,6 +1263,12 @@ int main(int argc, char **argv) {
             }
         }
         step();
+    }
+
+    if (g_sigint) {
+        fprintf(stderr, "\n*** SIGINT received: dumping registers and exiting ***\n");
+        dump_registers();
+        exit_code = 1;
     }
 
     DBG(1, "%llu instructions retired\n",

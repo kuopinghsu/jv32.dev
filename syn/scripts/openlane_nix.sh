@@ -17,6 +17,32 @@ OPENLANE_ROOT="${OPENLANE:-$HOME/opt/openlane2}"
 NIX_SHELL_BIN="${NIX_SHELL:-nix-shell}"
 SHELL_NIX="$OPENLANE_ROOT/shell.nix"
 
+# Optional cross-invocation lock keyed by --force-run-dir.
+# This prevents overlapping wrapper invocations (including direct calls that
+# bypass make) from deleting/recreating the same run directory mid-flow.
+FORCE_RUN_DIR=""
+for ((i=1; i<=$#; i++)); do
+    if [[ "${!i}" == "--force-run-dir" ]]; then
+        j=$((i + 1))
+        if [[ $j -le $# ]]; then
+            FORCE_RUN_DIR="${!j}"
+        fi
+        break
+    fi
+done
+
+LOCK_DIR=""
+if [[ -n "$FORCE_RUN_DIR" ]]; then
+    lock_parent="$(dirname "$FORCE_RUN_DIR")"
+    LOCK_DIR="$lock_parent/.openlane-wrapper.lock"
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "ERROR: another OpenLane wrapper invocation is active (lock: $LOCK_DIR)" >&2
+        echo "       Wait for it to finish, or remove the lock if it is stale." >&2
+        exit 1
+    fi
+    trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+fi
+
 if [ ! -f "$SHELL_NIX" ]; then
     echo "ERROR: OpenLane2 shell.nix not found at $SHELL_NIX" >&2
     echo "       Set OPENLANE in env.config to your openlane2 directory." >&2

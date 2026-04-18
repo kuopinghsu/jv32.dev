@@ -18,6 +18,9 @@ endif
 # Load environment configuration (tool paths)
 -include env.config
 
+# Load hardware/simulation configuration (can override on command line)
+-include Makefile.cfg
+
 # Export so sub-makes (sw/Makefile) inherit
 export RISCV_PREFIX
 export VERILATOR
@@ -108,8 +111,19 @@ endif
 ifdef DRAM_SIZE
   VERILATOR_FLAGS += -pvalue+DRAM_SIZE=$(DRAM_SIZE)
 endif
-
-# Debug output
+ifdef BOOT_ADDR
+  VERILATOR_FLAGS += -pvalue+BOOT_ADDR=$(BOOT_ADDR)
+endif
+ifdef IRAM_BASE
+  VERILATOR_FLAGS += -pvalue+IRAM_BASE=$(IRAM_BASE)
+endif
+ifdef DRAM_BASE
+  VERILATOR_FLAGS += -pvalue+DRAM_BASE=$(DRAM_BASE)
+endif
+ifdef CLK_FREQ
+  VERILATOR_FLAGS += -pvalue+CLK_FREQ=$(CLK_FREQ)
+  VERILATOR_FLAGS += -CFLAGS "-DCLK_FREQ_HZ=$(CLK_FREQ)ULL"
+endif
 #   DEBUG=1  — enable level-1 messages (DEBUG1 macro)
 #   DEBUG=2  — enable level-1 + level-2 per-group messages (DEBUG1 + DEBUG2)
 #   DEBUG_GROUP=0x<hex>  — bitmask of groups to show (default: all)
@@ -168,7 +182,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -182,6 +196,8 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 
 # Default: build RTL simulator
 all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
+	@make -f Makefile FAST_MUL=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
+	@make -f Makefile FAST_DIV=1 rtl-all sim-all compare-all
 
 # ============================================================================
 # Build RTL simulator
@@ -428,6 +444,10 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
 	fi
 
+# Build FreeRTOS ELF via rtos/freertos/Makefile
+$(BUILD_DIR)/freertos-%.elf:
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
 # Build ELF via sw/Makefile dispatcher (handles tests/, coremark/, dhry/)
 $(BUILD_DIR)/%.elf:
 	@$(MAKE) -C $(SW_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
@@ -589,21 +609,31 @@ $(BUILD_DIR)/freertos-%.elf: FORCE
 freertos-list-tests:
 	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory list-tests
 
-# Run a FreeRTOS test with the RTL simulator
-rtl-freertos-%: build-rtl $(BUILD_DIR)/freertos-%.elf
+# Internal helper used by rtl-freertos-% and rtl-freertos-all
+.PHONY: __rtl-freertos-run
+__rtl-freertos-run: build-rtl
+	@if [ -z "$(TEST)" ]; then \
+		echo "ERROR: TEST is required (e.g. make __rtl-freertos-run TEST=perf)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory build TEST=$(TEST) BUILD_DIR=$(BUILD_DIR_ABS)
 	@echo "=========================================="
-	@echo "Running FreeRTOS test '$*' with RTL simulator"
+	@echo "Running FreeRTOS test '$(TEST)' with RTL simulator"
 	@echo "=========================================="
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
 	    $(TIMEOUT_ARG) \
-	    freertos-$*.elf
+	    freertos-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
 	fi
+
+# Run a FreeRTOS test with the RTL simulator
+rtl-freertos-%:
+	@$(MAKE) --no-print-directory __rtl-freertos-run TEST=$*
 
 # Run all FreeRTOS tests with the RTL simulator
 rtl-freertos-all: build-rtl
@@ -614,7 +644,7 @@ rtl-freertos-all: build-rtl
 	for t in $$($(MAKE) -s -C $(FREERTOS_DIR) list-tests 2>/dev/null); do \
 		echo ""; \
 		echo "[rtl-freertos-all] $$t"; \
-		if ! $(MAKE) --no-print-directory rtl-freertos-$$t; then failed=1; fi; \
+		if ! $(MAKE) --no-print-directory __rtl-freertos-run TEST=$$t; then failed=1; fi; \
 	done; \
 	echo ""; \
 	if [ $$failed -ne 0 ]; then \

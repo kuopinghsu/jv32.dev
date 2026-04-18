@@ -64,9 +64,9 @@ Original Author: Shay Gal-on
  */
 typedef int CORE_TICKS;
 static inline int clock() {
-    int cycles;
-    asm volatile ("rdcycle %0" : "=r"(cycles));
-    return cycles;
+        int cycles;
+        asm volatile ("rdcycle %0" : "=r"(cycles));
+        return cycles;
 }
 
 /* Definitions : COMPILER_VERSION, COMPILER_FLAGS, MEM_LOCATION

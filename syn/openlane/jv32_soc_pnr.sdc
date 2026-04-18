@@ -1,11 +1,11 @@
 ###############################################################################
 # jv32_soc — PnR Timing Constraints (OpenROAD/OpenLane2)
 # Process: Nangate 45nm Open Cell Library (FreePDK45)
-# Target:  100 MHz (10 ns period)
+# Target:  80 MHz (12.5 ns period)
 ###############################################################################
 
 # ── Primary clocks ────────────────────────────────────────────────────────────
-create_clock -name core_clk -period 10.0 [get_ports clk]
+create_clock -name core_clk -period 12.5 [get_ports clk]
 
 # JTAG TCK is asynchronous to the core clock domain; give it a conservative
 # 10 MHz constraint so the TAP/DTM logic is analyzed without coupling it to the
@@ -23,8 +23,8 @@ set_clock_transition  1.0 [get_clocks jtag_tck]
 
 # ── Input / output delay constraints ──────────────────────────────────────────
 # 20% of clock period for I/O delay budget
-set input_delay  2.0
-set output_delay 2.0
+set input_delay  2.5
+set output_delay 2.5
 
 set clk_input [get_ports clk]
 set jtag_clk_input [get_ports jtag_pin0_tck_i]

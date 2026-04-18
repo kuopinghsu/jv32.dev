@@ -16,7 +16,7 @@
 
 module jv32_alu #(
     parameter bit FAST_MUL   = 1'b1,
-    parameter bit FAST_DIV   = 1'b1,
+    parameter bit FAST_DIV   = 1'b0,
     parameter bit FAST_SHIFT = 1'b1
 )(
     input  logic        clk,
@@ -29,6 +29,7 @@ module jv32_alu #(
     input  logic [31:0] operand_a,
     input  logic [31:0] operand_b,
     input  logic        operand_stall,
+    input  logic        result_hold,
     output logic [31:0] result,
     output logic        ready
 );
@@ -49,6 +50,7 @@ module jv32_alu #(
         end else begin : gen_serial_shift
             logic [4:0]  sh_count, sh_total;
             logic [31:0] sh_val;
+            logic [31:0] sh_result;
             logic        sh_active, sh_valid;
             logic        sh_arith;
             logic        sh_left;
@@ -57,14 +59,22 @@ module jv32_alu #(
             logic is_shift_op;
             assign is_shift_op = (alu_op == ALU_SLL || alu_op == ALU_SRL || alu_op == ALU_SRA);
 
+            logic [31:0] sh_next_val;
+            assign sh_next_val = sh_left ? {sh_val[30:0], 1'b0} :
+                                 sh_arith ? {sh_sign_fill[31], sh_val[31:1]} :
+                                            {1'b0, sh_val[31:1]};
+
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
                     sh_count  <= 5'd0; sh_total <= 5'd0;
                     sh_val    <= 32'd0; sh_active <= 1'b0;
+                    sh_result <= 32'd0;
                     sh_valid  <= 1'b0; sh_arith  <= 1'b0; sh_left <= 1'b0;
                     sh_sign_fill <= 32'd0;
                 end else begin
-                    sh_valid <= 1'b0;
+                    if (sh_valid && !result_hold)
+                        sh_valid <= 1'b0;
+
                     if (is_shift_op && !sh_active && !sh_valid && !operand_stall) begin
                         sh_total <= operand_b[4:0];
                         sh_arith <= (alu_op == ALU_SRA);
@@ -72,6 +82,7 @@ module jv32_alu #(
                         sh_sign_fill <= {32{operand_a[31]}};
                         if (operand_b[4:0] == 5'd0) begin
                             sh_val   <= operand_a;
+                            sh_result <= operand_a;
                             sh_valid <= 1'b1;
                         end else begin
                             sh_count  <= 5'd0;
@@ -79,10 +90,9 @@ module jv32_alu #(
                             sh_active <= 1'b1;
                         end
                     end else if (sh_active) begin
-                        if (sh_left) sh_val <= {sh_val[30:0], 1'b0};
-                        else if (sh_arith) sh_val <= {sh_sign_fill[31], sh_val[31:1]};
-                        else sh_val <= {1'b0, sh_val[31:1]};
+                        sh_val <= sh_next_val;
                         if (sh_count + 1 >= sh_total) begin
+                            sh_result <= sh_next_val;
                             sh_valid  <= 1'b1;
                             sh_active <= 1'b0;
                         end else sh_count <= sh_count + 1;
@@ -90,10 +100,14 @@ module jv32_alu #(
                 end
             end
 
-            assign result_sll  = sh_val;
-            assign result_srl  = sh_val;
-            assign result_sra  = sh_val;
-            assign shift_ready = !is_shift_op || (!sh_active && (operand_b[4:0]==5'd0 || sh_valid));
+            assign result_sll  = sh_valid ? sh_result : sh_val;
+            assign result_srl  = sh_valid ? sh_result : sh_val;
+            assign result_sra  = sh_valid ? sh_result : sh_val;
+            // shift_ready is only asserted once sh_valid is set.
+            // The operand_b==0 shortcut was removed: it caused shift_ready to
+            // fire one cycle early (before the FF latches sh_result), producing
+            // stale sh_val as the result for shift-by-0 operations.
+            assign shift_ready = !is_shift_op || (!sh_active && (operand_stall || sh_valid));
         end
     endgenerate
 
@@ -149,7 +163,8 @@ module jv32_alu #(
                     mul_count<=6'd0; mul_total<=6'd0; mul_a_shift<=64'd0; mul_b_reg<=32'd0;
                     mul_acc<=64'd0; mul_valid<=1'b0; mul_active<=1'b0; mul_neg<=1'b0; mul_result<=64'd0;
                 end else begin
-                    mul_valid <= 1'b0;
+                    if (mul_valid && !result_hold)
+                        mul_valid <= 1'b0;
                     if (is_mul_op && !mul_active && !mul_valid && clz_b_mul!=6'd32 && !operand_stall) begin
                         mul_total   <= 6'd32 - clz_b_mul;
                         mul_count   <= 6'd0;
@@ -178,7 +193,7 @@ module jv32_alu #(
             assign result_mulh_hi   = use_mul_result ? mul_result[63:32] : 32'd0;
             assign result_mulhsu_hi = use_mul_result ? mul_result[63:32] : 32'd0;
             assign result_mulhu_hi  = use_mul_result ? mul_result[63:32] : 32'd0;
-            assign mul_ready = !is_mul_op || (!mul_active && (clz_b_mul==6'd32 || mul_valid));
+            assign mul_ready = !is_mul_op || (!mul_active && (operand_stall || clz_b_mul==6'd32 || mul_valid));
         end
     endgenerate
 
@@ -241,7 +256,8 @@ module jv32_alu #(
                     div_by_zero_lat<=1'b0; div_signed_ovf_lat<=1'b0;
                     div_operand_a_lat<=32'd0; div_result_q<=32'd0; div_result_r<=32'd0;
                 end else begin
-                    div_valid <= 1'b0;
+                    if (div_valid && !result_hold)
+                        div_valid <= 1'b0;
                     if (is_div_op && !div_active && !div_valid && !operand_stall) begin
                         if (!div_by_zero && !signed_ovf) begin
                             div_total<=6'd32-clz_a; div_count<=6'd0;
@@ -274,7 +290,7 @@ module jv32_alu #(
             assign result_divu = eff_by_zero?32'hffffffff:div_result_q;
             assign result_rem  = eff_by_zero?eff_operand_a:eff_signed_ovf?32'h0:div_result_r;
             assign result_remu = eff_by_zero?eff_operand_a:div_result_r;
-            assign div_ready = !is_div_op || (!div_active&&(div_by_zero||signed_ovf||div_valid));
+            assign div_ready = !is_div_op || (!div_active && (operand_stall || div_by_zero || signed_ovf || div_valid));
         end
     endgenerate
 
@@ -309,7 +325,7 @@ module jv32_alu #(
 
 `ifndef SYNTHESIS
     logic _unused_clk;
-    assign _unused_clk = &{1'b0, clk, rst_n, operand_stall};
+    assign _unused_clk = &{1'b0, clk, rst_n, operand_stall, result_hold};
 `endif
 
 endmodule

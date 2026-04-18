@@ -27,7 +27,8 @@ ACT_SENTINEL := $(ACT_VENV)/.act-setup-done
 # ── JV32 DUT config ──────────────────────────────────────────────────────────
 DUT_CONFIG   := $(VERIF_DIR)config/jv32-rv32imac
 WORKDIR      ?= $(JV32_ROOT)/build/arch-test-work
-ARCH_TEST_JOBS ?= $(if $(JOBS),$(JOBS),$(shell nproc))
+ARCH_TEST_JOBS ?= $(if $(JOBS),$(JOBS),$(shell command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.logicalcpu 2>/dev/null || echo 1))
+ARCH_TEST_CONFIG := $(WORKDIR)/test_config.generated.yaml
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
@@ -40,6 +41,13 @@ UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 .PHONY: all arch-test-setup arch-test-run arch-test-clean help
 
 all: help
+
+# Generate a toolchain-adjusted ACT config for this run.
+$(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml
+	@mkdir -p "$(WORKDIR)"
+	@sed -e 's|^compiler_exe:.*|compiler_exe: $(RISCV_PREFIX)gcc|' \
+	     -e 's|^objdump_exe:.*|objdump_exe: $(RISCV_PREFIX)objdump|' \
+	     "$(DUT_CONFIG)/test_config.yaml" > "$@"
 
 # ============================================================================
 # arch-test-setup: clone riscv-arch-test (act4 branch) and install Python venv
@@ -78,7 +86,7 @@ arch-test-setup: $(ACT_SENTINEL)
 #   JOBS              — parallel build jobs (default: nproc)
 #   WORKDIR           — build/output dir (default: build/arch-test-work)
 # ============================================================================
-arch-test-run: $(ACT_SENTINEL)
+arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
 	@mkdir -p "$(WORKDIR)"
 	@echo "=========================================="
 	@echo "[arch-test] Work directory: $(WORKDIR)"
@@ -89,7 +97,7 @@ arch-test-run: $(ACT_SENTINEL)
 	@echo "[arch-test] Phase 2/3: generating self-checking ELFs"
 	@echo "=========================================="
 	@$(MAKE) -C $(ACT_DIR) \
-	    CONFIG_FILES=$(DUT_CONFIG)/test_config.yaml \
+	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS)
@@ -104,9 +112,9 @@ arch-test-run: $(ACT_SENTINEL)
 # ============================================================================
 # arch-test-%: pass-through any other target to the ACT4 Makefile
 # ============================================================================
-arch-test-%: $(ACT_SENTINEL)
+arch-test-%: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
 	@$(MAKE) -C $(ACT_DIR) \
-	    CONFIG_FILES=$(DUT_CONFIG)/test_config.yaml \
+	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
 	    $*
 

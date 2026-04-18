@@ -58,17 +58,46 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
     fprintf(fp, "%s%*s; %s\n", base.c_str(), pad, "", disasm.c_str());
 }
 
-#define CLK_PERIOD_NS  10ULL
-#define CLK_HALF_PS    (CLK_PERIOD_NS * 500ULL)   // half period in ps
+#ifndef CLK_FREQ_HZ
+#  define CLK_FREQ_HZ    80'000'000ULL   // default; override via -DCLK_FREQ_HZ=
+#endif
+#define CLK_PERIOD_PS  (1'000'000'000'000ULL / CLK_FREQ_HZ)  // derived period
+#define CLK_HALF_PS    (CLK_PERIOD_PS / 2ULL)                 // half period
 
 // Magic exit address
 #define MAGIC_EXIT_ADDR  0x40000000U
 
-static volatile bool g_abort = false;
-static void sig_handler(int) { g_abort = true; }
+static volatile sig_atomic_t g_sigint = 0;
+static void sig_handler(int) { g_sigint = 1; }
 
 static bool g_exit_requested = false;
 static int  g_exit_code      = 0;
+
+// DPI-C import: read a GPR by index from the running SV simulation
+extern "C" int get_gpr(int idx);
+
+static const char* gpr_name(int i) {
+    static const char* names[32] = {
+        "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+        "s0",   "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+        "a6",   "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+        "s8",   "s9", "s10","s11","t3", "t4", "t5", "t6"
+    };
+    return (i >= 0 && i < 32) ? names[i] : "??";
+}
+
+static void dump_registers(Vtb_jv32_soc* dut) {
+    fprintf(stderr, "\n=== Register Dump (SIGINT) ===\n");
+    fprintf(stderr, "PC  : 0x%08x\n", (uint32_t)dut->trace_pc);
+    for (int i = 0; i < 32; i += 4) {
+        fprintf(stderr, "%4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x\n",
+                gpr_name(i),   (uint32_t)get_gpr(i),
+                gpr_name(i+1), (uint32_t)get_gpr(i+1),
+                gpr_name(i+2), (uint32_t)get_gpr(i+2),
+                gpr_name(i+3), (uint32_t)get_gpr(i+3));
+    }
+    fprintf(stderr, "==============================\n");
+}
 
 // ============================================================================
 // SoC memory image (shared with SV via DPI or direct Verilator signal write)
@@ -124,8 +153,12 @@ int main(int argc, char** argv) {
             trace_file = argv[++i];
         } else if (strcmp(argv[i], "--rtl-trace") == 0 && i+1 < argc) {
             rtl_trace_file = argv[++i];
+        } else if (strncmp(argv[i], "--max-cycles=", 13) == 0) {
+            max_cycles = (uint64_t)strtoull(argv[i] + 13, nullptr, 10);
         } else if (strcmp(argv[i], "--max-cycles") == 0 && i+1 < argc) {
             max_cycles = (uint64_t)strtoull(argv[++i], nullptr, 10);
+        } else if (strcmp(argv[i], "--timeout") == 0 && i+1 < argc) {
+            timeout_seconds = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
             timeout_seconds = (uint64_t)strtoull(argv[i] + 10, nullptr, 10);
         } else if (!elf_path) {
@@ -190,11 +223,9 @@ int main(int argc, char** argv) {
     // Open RTL trace file
     // -------------------------------------------------------------------------
     FILE* rtl_tfp = nullptr;
-    bool  rtl_tfp_is_stdout = false;
     if (rtl_trace_file) {
         if (strcmp(rtl_trace_file, "-") == 0) {
             rtl_tfp = stdout;
-            rtl_tfp_is_stdout = true;
         } else {
             rtl_tfp = fopen(rtl_trace_file, "w");
             if (!rtl_tfp) {
@@ -212,8 +243,9 @@ int main(int argc, char** argv) {
     bool     timeout_hit = false;
     auto     time_begin  = std::chrono::steady_clock::now();
 
-    while (!g_abort && !g_exit_requested && !ctx->gotFinish() &&
+    while (!g_sigint && !g_exit_requested && !ctx->gotFinish() &&
            (max_cycles == 0 || cycle < max_cycles)) {
+        if (g_sigint) break;
         if (timeout_seconds > 0) {
             uint64_t elapsed = (uint64_t)std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::steady_clock::now() - time_begin).count();
@@ -251,7 +283,7 @@ int main(int argc, char** argv) {
     // cycles = 72 cycles.  The idle threshold must exceed 72; use 160 (20
     // bit-periods at 8 cycles/bit) so there is ample margin.
     static constexpr uint64_t UART_IDLE_THRESH = 160;
-    if (g_exit_requested && !g_abort) {
+    if (g_exit_requested && !g_sigint) {
         uint64_t idle_count = 0;
         while (idle_count < UART_IDLE_THRESH &&
                (max_cycles == 0 || cycle < max_cycles)) {
@@ -262,9 +294,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (tfp) { tfp->flush(); tfp->close(); }
-    if (rtl_tfp && !rtl_tfp_is_stdout) { fflush(rtl_tfp); fclose(rtl_tfp); }
-    else if (rtl_tfp) { fflush(rtl_tfp); }
+    if (g_sigint) {
+        fprintf(stderr, "\n*** SIGINT received: dumping registers and exiting ***\n");
+        dump_registers(dut);
+    }
 
     fprintf(stderr, "[SIM] %llu cycles, %llu instructions retired\n",
            (unsigned long long)cycle, (unsigned long long)instret);
@@ -273,6 +306,12 @@ int main(int argc, char** argv) {
     delete dut;
     delete ctx;
     if (tfp) delete tfp;
+    if (rtl_tfp && rtl_tfp != stdout) {
+        fflush(rtl_tfp);
+        fclose(rtl_tfp);
+    } else if (rtl_tfp) {
+        fflush(rtl_tfp);
+    }
 
     if (g_exit_requested) return g_exit_code;
     if (timeout_hit) {

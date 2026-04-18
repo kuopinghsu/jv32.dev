@@ -44,7 +44,7 @@
 
 module jv32_top #(
     parameter bit          FAST_MUL   = 1'b1,
-    parameter bit          FAST_DIV   = 1'b1,
+    parameter bit          FAST_DIV   = 1'b0,
     parameter bit          FAST_SHIFT = 1'b1,
     parameter bit          BP_EN      = 1'b1,
     parameter int unsigned IRAM_SIZE  = 128*1024,   // bytes, power-of-2 (128 KB)

@@ -469,10 +469,8 @@ module jv32_dtm #(
             resume_req_sync_chain <= 3'b0;
             halted_clk_chain      <= 3'b0;
             halted_clk            <= 1'b0;
-            dcsr_cause_r          <= 3'd0;
             dbg_halted_prev       <= 1'b0;
             trigger_halt_pulse    <= 1'b0;
-            dpc_reg               <= 32'h8000_0000; // Boot address (matches jv32 BOOT_ADDR)
         end else begin
             halt_req_sync_chain   <= {halt_req_sync_chain[1:0],   haltreq};
             resume_req_sync_chain <= {resume_req_sync_chain[1:0], resumereq};
@@ -482,19 +480,6 @@ module jv32_dtm #(
             // dcsr.cause update: detect rising edge of dbg_halted_i
             dbg_halted_prev    <= dbg_halted_i;
             trigger_halt_pulse <= dbg_halted_i && !dbg_halted_prev && trigger_halt_i;
-            if (dbg_halted_i && !dbg_halted_prev) begin
-                // Hart just entered debug mode — record cause.
-                // Skip DPC capture during CMD_EXEC halts (exec_waiting_halt=1):
-                // those halt at the debug-ROM ebreak and should not overwrite dpc_reg.
-                if (!exec_waiting_halt)
-                    dpc_reg <= dbg_pc_i;  // Save actual PC at halt (haltreq or step)
-                if (dcsr_reg[2] && !halt_req_sync_chain[2])
-                    dcsr_cause_r <= 3'd4;  // single-step
-                else if (trigger_halt_i)
-                    dcsr_cause_r <= 3'd2;  // trigger module
-                else
-                    dcsr_cause_r <= 3'd3;  // debug request (haltreq)
-            end
         end
     end
 
@@ -1202,6 +1187,20 @@ module jv32_dtm #(
             // Clear latch on resume (falling edge of dbg_halted_i)
             if (!dbg_halted_i && dbg_halted_prev_fsm)
                 trigger_hit_latch <= '0;
+
+            if (dbg_halted_i && !dbg_halted_prev_fsm) begin
+                // Hart just entered debug mode. Skip DPC capture for CMD_EXEC,
+                // because that halt comes from the debug ROM ebreak.
+                if (!exec_waiting_halt)
+                    dpc_reg <= dbg_pc_i;
+
+                if (dcsr_reg[2] && !halt_req_sync_chain[2])
+                    dcsr_cause_r <= 3'd4;
+                else if (trigger_halt_i)
+                    dcsr_cause_r <= 3'd2;
+                else
+                    dcsr_cause_r <= 3'd3;
+            end
 
             dbg_halted_prev_fsm <= dbg_halted_i;  // keep edge detector current
 

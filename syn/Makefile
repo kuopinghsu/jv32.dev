@@ -17,6 +17,7 @@
 SHELL := /bin/bash
 
 -include ../env.config
+-include $(SYN_DIR)/common/core_params.mk
 
 ifdef PATH_APPEND
 export PATH := $(PATH_APPEND):$(PATH)
@@ -227,6 +228,7 @@ gen-mem:
 # ── OpenLane2 full flow (synthesis + place + route + signoff) ────────────────
 OPENLANE_RUN_DIR := $(BUILD_DIR)/openlane_run
 TCM_PARAMS_YAML  := $(BUILD_DIR)/tcm_params.yaml
+SYNTH_LOCK_DIR   := $(BUILD_DIR)/.synth.lock
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -248,14 +250,21 @@ synth: check $(BUILD_DIR)
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
-	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) > $(TCM_PARAMS_YAML)
+	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
 	@# Since tcm_params.yaml lives in BUILD_DIR, copy the path-referenced
 	@# files there so OpenLane finds them.
 	@cp $(OPENLANE_DIR)/jv32_soc_pnr.sdc  $(BUILD_DIR)/jv32_soc_pnr.sdc
 	@cp $(OPENLANE_DIR)/macro_placement.cfg $(BUILD_DIR)/macro_placement.cfg
 	@( \
+	    if ! mkdir $(SYNTH_LOCK_DIR) 2>/dev/null; then \
+	        echo "ERROR: another 'make synth' is already running (lock: $(SYNTH_LOCK_DIR))"; \
+	        echo "       Wait for it to finish, or remove the lock if it is stale."; \
+	        exit 1; \
+	    fi; \
+	    trap 'rmdir $(SYNTH_LOCK_DIR) 2>/dev/null || true' EXIT INT TERM; \
+	    rm -rf $(OPENLANE_RUN_DIR); \
 	    mkdir -p $(OPENLANE_RUN_DIR); \
 	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
 	    export NANGATE_HOME="$(NANGATE_HOME)"; \

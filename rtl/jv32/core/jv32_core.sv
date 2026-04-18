@@ -19,7 +19,7 @@
 
 module jv32_core #(
     parameter bit          FAST_MUL   = 1'b1,
-    parameter bit          FAST_DIV   = 1'b1,
+    parameter bit          FAST_DIV   = 1'b0,
     parameter bit          FAST_SHIFT = 1'b1,
     parameter bit          BP_EN      = 1'b1,
     parameter logic [31:0] BOOT_ADDR  = 32'h8000_0000
@@ -173,6 +173,7 @@ module jv32_core #(
     alu_op_e     alu_op_d;
     logic [31:0] alu_op_a, alu_op_b;
     logic        alu_operand_stall;
+    logic        alu_result_hold;
     logic [31:0] alu_result;
     logic        alu_ready;
 
@@ -194,6 +195,7 @@ module jv32_core #(
         .operand_a     (alu_op_a),
         .operand_b     (alu_op_b),
         .operand_stall (alu_operand_stall),
+        .result_hold   (alu_result_hold),
         .result        (alu_result),
         .ready         (alu_ready)
     );
@@ -272,6 +274,7 @@ module jv32_core #(
     logic [31:0] wb_exc_tval;
     // irq_cancel declared here (defined in Trace output section below)
     logic        irq_cancel;
+    logic        wb_retire;
 
     // EX→WB pipeline register
     ex_wb_t ex_wb_r;
@@ -288,8 +291,8 @@ module jv32_core #(
         .exception_cause  (wb_exc_cause),
         .exception_pc     (ex_wb_r.pc),
         .exception_tval   (wb_exc_tval),
-        .mret             (ex_wb_r.valid && ex_wb_r.mret),
-        .wb_valid         (ex_wb_r.valid),
+        .mret             (ex_wb_r.mret && wb_retire),
+        .wb_valid         (wb_retire),
         .irq_mepc         (ex_wb_r.pc),
         .mtvec_o          (mtvec_csr),
         .mepc_o           (mepc_csr),
@@ -399,6 +402,7 @@ module jv32_core #(
     end
     logic ex_stall;   // stall EX stage (and upstream)
     logic ex_flush;   // inject bubble into EX
+    logic load_use_stall;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -424,6 +428,11 @@ module jv32_core #(
         end else if (!ex_stall) begin
             if (ex_flush || if_flush || dbg_enter_debug) begin
                 if_ex_r <= '0;
+            end else if (load_use_stall) begin
+                // Extra bubble stall: the dependent instruction must stay in the
+                // IF→EX slot while the register file is written by the load WB.
+                // Do NOT advance if_ex_r; hold it implicitly (no assignment).
+                // (if_stall=1 has already prevented pc_if from advancing.)
             end else if (imem_resp_fault) begin
                 // Preserve the original request PC for an instruction-access fault
                 // without letting the RVC path consume/advance the bad fetch word.
@@ -472,11 +481,29 @@ module jv32_core #(
     // =====================================================================
     // Forwarding: WB→EX (single forwarding path)
     // =====================================================================
+    // Suppress WB→EX forwarding when the WB result is sourced from a live
+    // SRAM output (regular loads and LR atomics).  The SRAM launches on the
+    // falling clock edge, leaving only half a period (~5 ns) before ex_wb_r
+    // must capture – far too little for the alignment→sign-extend→fwd-mux→
+    // ALU→ex_wb_r chain.  Instead, a load-use stall (see below) guarantees
+    // the register file is written one full cycle before the dependent
+    // instruction re-enters EX, so it reads a registered value there.
+    //
+    // Non-load forwarding (ex_wb_r.rd_data is already a registered FF
+    // output) remains active and still meets timing with a full 10 ns window.
+    //
+    // AMO non-LR operations forward from amo_load_data (registered), so
+    // they are also safe and left enabled.
+    logic load_uses_sram; // true when WB write-back data comes from live SRAM
+    assign load_uses_sram = ex_wb_r.mem_read &&
+                            (!ex_wb_r.is_amo || ex_wb_r.amo_op == AMO_LR);
+
     logic [31:0] fwd_rs1, fwd_rs2;
     always_comb begin
         fwd_rs1 = rs1_data;
         fwd_rs2 = rs2_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0
+                && !load_uses_sram) begin
             if (ex_wb_r.rd_addr == dec_rs1) fwd_rs1 = wb_rd_data;
             if (ex_wb_r.rd_addr == dec_rs2) fwd_rs2 = wb_rd_data;
         end
@@ -726,12 +753,17 @@ module jv32_core #(
         end
     end
 
-    // Load-use hazard: EX has a load, WB still waiting for data
-    // (simplified: stall if previous instruction was a load targeting any rs of current)
-    logic load_use_stall;
-    assign load_use_stall = ex_wb_r.valid && ex_wb_r.mem_read && !dmem_resp_valid &&
+    // Load-use hazard: stall whenever WB holds a load/LR result (live SRAM
+    // data) and EX needs it.  The condition is intentionally NOT gated on
+    // !dmem_resp_valid: even for TCM loads that respond in one cycle, we
+    // must add one extra bubble so that (a) forwarding through the long
+    // SRAM→ALU path is never needed and (b) the register file is written
+    // before the dependent instruction re-reads it.  Non-LR AMO ops use
+    // amo_load_data (registered) and are therefore excluded.
+    assign load_use_stall = ex_wb_r.valid && load_uses_sram &&
                             ((ex_wb_r.rd_addr == dec_rs1 && dec_rs1 != 5'd0) ||
-                             (ex_wb_r.rd_addr == dec_rs2 && dec_rs2 != 5'd0 && !dec_alu_src));
+                             (ex_wb_r.rd_addr == dec_rs2 && dec_rs2 != 5'd0 &&
+                              (!dec_alu_src || dec_mem_write || dec_branch || dec_is_amo)));
 
     // AMO state machine
     typedef enum logic [1:0] {AMO_IDLE, AMO_LOAD_WAIT, AMO_STORE_WAIT} amo_state_e;
@@ -958,6 +990,9 @@ module jv32_core #(
     // Operand stall: forwarding not yet available (load in WB not done)
     assign alu_operand_stall = load_use_stall;
 
+    // External EX holds can delay retirement of a completed multi-cycle ALU op.
+    assign alu_result_hold = dmem_stall || dbg_halted_r;
+
     // =====================================================================
     // Hazard control
     // =====================================================================
@@ -966,6 +1001,9 @@ module jv32_core #(
 
     // if_stall: hold IF (do not advance PC or consume RVC output)
     assign if_stall = ex_stall || load_use_stall;
+
+    // WB retirement pulse (single-cycle commit point for side effects).
+    assign wb_retire = ex_wb_r.valid && !ex_stall && !dbg_halted_r;
 
     // -------------------------------------------------------------------------
     // WB-phase data-memory fault: AXI DECERR on load or store response.
@@ -1000,14 +1038,18 @@ module jv32_core #(
         end else if (csr_irq_pending && ex_wb_r.valid && !dbg_step_pending_r) begin
             if_flush    = 1'b1;
             if_flush_pc = csr_irq_pc;
-        end else if (redirect_ex && !ex_stall) begin
+        end else if (redirect_ex && !ex_stall && !load_use_stall) begin
             if_flush    = 1'b1;
             if_flush_pc = redirect_pc_ex;
         end
     end
 
-    // ex_flush: squash IF/EX content (branch resolved, inserting bubble)
-    assign ex_flush = redirect_ex && !ex_stall;
+    // ex_flush: squash IF/EX content (branch resolved, inserting bubble).
+    // Must be suppressed during a load_use_stall cycle: in that cycle the EX
+    // computation uses stale operands (the dependent load result is not yet in
+    // the register file) and the bubble injected into ex_wb_r discards the
+    // result, so any branch decision made here is meaningless.
+    assign ex_flush = redirect_ex && !ex_stall && !load_use_stall;
 
     // wb_redirect: WB stage is redirecting the PC (exception/mret/irq).
     // When this fires, the instruction currently in IF/EX must be squashed
@@ -1145,7 +1187,7 @@ module jv32_core #(
         rf_we    = 1'b0;
         rf_rd    = ex_wb_r.rd_addr;
         rf_wdata = ex_wb_r.rd_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && !irq_cancel && !dbg_halted_r && !dmem_fault_active) begin
+        if (wb_retire && ex_wb_r.reg_we && !irq_cancel && !dmem_fault_active) begin
             rf_we = 1'b1;
             // AMO checked first: decoder sets mem_read=1 for AMO too.
             if (ex_wb_r.is_amo) begin
@@ -1170,25 +1212,22 @@ module jv32_core #(
     // During single-step (dbg_step_pending_r=1), interrupts are suppressed
     // to implement dcsr.stepie=0 (the reset / default value of dcsr.stepie):
     // the Debug Spec says "interrupt enable is cleared while in single step mode".
-    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !ex_wb_r.exception && !dmem_fault_active
+    assign irq_cancel = csr_irq_pending && wb_retire && !ex_wb_r.exception && !dmem_fault_active
                         && !ex_wb_r.mret && !dbg_step_pending_r;
 
-    assign trace_valid    = ex_wb_r.valid && !ex_wb_r.exception && !dmem_fault_active
-                            && !dmem_stall && !irq_cancel && !dbg_halted_r;
-    assign trace_reg_we   = ex_wb_r.valid && ex_wb_r.reg_we
+    assign trace_valid    = wb_retire && !ex_wb_r.exception && !dmem_fault_active
+                            && !dmem_stall && !irq_cancel;
+    assign trace_reg_we   = trace_valid && ex_wb_r.reg_we
                             && (ex_wb_r.rd_addr != 5'd0)
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
-                            && !dbg_halted_r;
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
     assign trace_pc       = ex_wb_r.pc;
     assign trace_rd       = ex_wb_r.rd_addr;
     assign trace_rd_data  = rf_wdata;
     assign trace_instr    = ex_wb_r.orig_instr;
-    assign trace_mem_we   = ex_wb_r.valid && ex_wb_r.mem_write
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
-                            && !dbg_halted_r;
-    assign trace_mem_re   = ex_wb_r.valid && ex_wb_r.mem_read
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
-                            && !dbg_halted_r;
+    assign trace_mem_we   = trace_valid && ex_wb_r.mem_write
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
+    assign trace_mem_re   = trace_valid && ex_wb_r.mem_read
+                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
     assign trace_mem_addr = ex_wb_r.mem_addr;
     assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
                             ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :

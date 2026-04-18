@@ -7,13 +7,13 @@
 `timescale 1ns/1ps
 
 module tb_jv32_soc #(
-    parameter int unsigned CLK_FREQ  = 100_000_000,
+    parameter int unsigned CLK_FREQ  = 80_000_000,
     parameter int unsigned BAUD_RATE = 115_200,
     parameter bit          USE_CJTAG = 1'b0,
     parameter int unsigned IRAM_SIZE = 128*1024,
     parameter int unsigned DRAM_SIZE = 128*1024,
     parameter bit          FAST_MUL  = 1'b1,
-    parameter bit          FAST_DIV  = 1'b1,
+    parameter bit          FAST_DIV  = 1'b0,
     parameter bit          FAST_SHIFT= 1'b1,
     parameter bit          BP_EN     = 1'b1,
     parameter logic [31:0] BOOT_ADDR = 32'h8000_0000,
@@ -55,6 +55,9 @@ module tb_jv32_soc #(
     export "DPI-C" function mem_write_byte;
     export "DPI-C" function mem_read_byte;
 
+    // DPI-C export: read GPR by index (used for Ctrl-C register dump)
+    export "DPI-C" function get_gpr;
+
     localparam int unsigned IRAM_LIMIT = IRAM_BASE + IRAM_SIZE;
     localparam int unsigned DRAM_LIMIT = DRAM_BASE + DRAM_SIZE;
 
@@ -87,6 +90,12 @@ module tb_jv32_soc #(
             return byte'(u_soc.u_jv32.u_dram.mem[widx][bank*8 +: 8]);
         end
         return 8'hFF;
+    endfunction
+
+    // Read GPR by index (0=zero..31=t6) for Ctrl-C register dump
+    function int get_gpr(input int idx);
+        if (idx <= 0 || idx > 31) return 0;
+        return int'(u_soc.u_jv32.u_core.u_regfile.regs[idx]);
     endfunction
 
     logic uart_tx_o;
