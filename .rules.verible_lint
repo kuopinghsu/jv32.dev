@@ -1,0 +1,10 @@
+# Verible lint baseline for JV32 RTL.
+#
+# These style-only checks currently report a large legacy backlog and are
+# disabled to keep lint signal focused on functional/synthesis-relevant issues.
+# Re-enable incrementally as files are cleaned up.
+
+-line-length
+-parameter-name-style
+-explicit-parameter-storage-type
+-unpacked-dimensions-range-ordering
