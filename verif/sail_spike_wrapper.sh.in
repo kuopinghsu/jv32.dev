@@ -47,4 +47,21 @@ if [ -z "$elf" ] || [ -z "$sig_file" ]; then
     exit 2
 fi
 
-exec "__SPIKE_BIN__" "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"
+spike_isa="${SPIKE_ISA:-}"
+if [ -z "$spike_isa" ]; then
+    # Infer ISA width from ELF header so RV32 tests don't run on Spike's RV64 default.
+    elf_class="$(LC_ALL=C file -b "$elf" 2>/dev/null || true)"
+    case "$elf_class" in
+        *ELF*32-bit*)
+            spike_isa="rv32imac"
+            ;;
+        *ELF*64-bit*)
+            spike_isa="rv64imac"
+            ;;
+        *)
+            spike_isa="rv32imac"
+            ;;
+    esac
+fi
+
+exec "__SPIKE_BIN__" --isa="$spike_isa" --misaligned "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"

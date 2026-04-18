@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-
 def split_trailing_comment(line: str) -> Tuple[str, Optional[str]]:
     in_string = False
     escaped = False
@@ -24,10 +23,8 @@ def split_trailing_comment(line: str) -> Tuple[str, Optional[str]]:
 
     return line.rstrip("\n"), None
 
-
 def get_indent(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
-
 
 def is_group_breaker(line: str) -> bool:
     """Return True if this line ends the current alignment group."""
@@ -41,7 +38,6 @@ def is_group_breaker(line: str) -> bool:
     if stripped.startswith("`"):
         return True
     return False
-
 
 def align_file(path: Path) -> bool:
     lines = path.read_text().splitlines(keepends=True)
@@ -82,7 +78,6 @@ def align_file(path: Path) -> bool:
         path.write_text("".join(updated_lines))
     return changed
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Align trailing // comments in consecutive same-indentation blocks.")
     parser.add_argument("files", nargs="+", help="Files to process")
@@ -91,7 +86,6 @@ def main() -> int:
     for file_name in args.files:
         align_file(Path(file_name))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

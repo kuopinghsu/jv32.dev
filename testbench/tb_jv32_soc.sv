@@ -4,30 +4,30 @@
 // Description: Verilator Testbench Wrapper for JV32 SoC
 // ============================================================================
 
-`timescale 1ns/1ps
+`timescale 1ns / 1ps
 
 module tb_jv32_soc #(
-    parameter int unsigned CLK_FREQ  = 80_000_000,
-    parameter int unsigned BAUD_RATE = 115_200,
-    parameter bit          USE_CJTAG = 1'b0,
-    parameter int unsigned IRAM_SIZE = 128*1024,
-    parameter int unsigned DRAM_SIZE = 128*1024,
-    parameter bit          FAST_MUL  = 1'b1,
-    parameter bit          FAST_DIV  = 1'b0,
-    parameter bit          FAST_SHIFT= 1'b1,
-    parameter bit          BP_EN     = 1'b1,
-    parameter logic [31:0] BOOT_ADDR = 32'h8000_0000,
-    parameter logic [31:0] IRAM_BASE = 32'h8000_0000,
-    parameter logic [31:0] DRAM_BASE = 32'hC000_0000
-)(
-    input  logic clk,
-    input  logic rst_n,
+    parameter int unsigned        CLK_FREQ   = 80_000_000,
+    parameter int unsigned        BAUD_RATE  = 115_200,
+    parameter bit                 USE_CJTAG  = 1'b0,
+    parameter int unsigned        IRAM_SIZE  = 128 * 1024,
+    parameter int unsigned        DRAM_SIZE  = 128 * 1024,
+    parameter bit                 FAST_MUL   = 1'b1,
+    parameter bit                 FAST_DIV   = 1'b0,
+    parameter bit                 FAST_SHIFT = 1'b1,
+    parameter bit                 BP_EN      = 1'b1,
+    parameter logic        [31:0] BOOT_ADDR  = 32'h8000_0000,
+    parameter logic        [31:0] IRAM_BASE  = 32'h8000_0000,
+    parameter logic        [31:0] DRAM_BASE  = 32'hC000_0000
+) (
+    input logic clk,
+    input logic rst_n,
 
     // Trace outputs
     output logic        trace_valid,
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
-    output logic [4:0]  trace_rd,
+    output logic [ 4:0] trace_rd,
     output logic [31:0] trace_rd_data,
     output logic [31:0] trace_instr,
     output logic        trace_mem_we,
@@ -36,18 +36,18 @@ module tb_jv32_soc #(
     output logic [31:0] trace_mem_data,
 
     // DPI-C memory init
-    input  logic        uart_rx_i,
-    output logic        uart_tx_o_monitor,  // UART TX line for exit-drain detection
+    input  logic uart_rx_i,
+    output logic uart_tx_o_monitor, // UART TX line for exit-drain detection
 
     // Exposed JTAG / cJTAG pins for debugger-driven simulation
-    input  logic        jtag_ntrst_i,
-    input  logic        jtag_pin0_tck_i,
-    input  logic        jtag_pin1_tms_i,
-    output logic        jtag_pin1_tms_o,
-    output logic        jtag_pin1_tms_oe,
-    input  logic        jtag_pin2_tdi_i,
-    output logic        jtag_pin3_tdo_o,
-    output logic        jtag_pin3_tdo_oe
+    input  logic jtag_ntrst_i,
+    input  logic jtag_pin0_tck_i,
+    input  logic jtag_pin1_tms_i,
+    output logic jtag_pin1_tms_o,
+    output logic jtag_pin1_tms_oe,
+    input  logic jtag_pin2_tdi_i,
+    output logic jtag_pin3_tdo_o,
+    output logic jtag_pin3_tdo_oe
 );
     import "DPI-C" function void sim_request_exit(input int exit_code);
 
@@ -65,14 +65,15 @@ module tb_jv32_soc #(
         automatic int unsigned uaddr = unsigned'(addr);
         if (uaddr >= IRAM_BASE && uaddr < IRAM_LIMIT) begin
             automatic int offset = uaddr - IRAM_BASE;
-            automatic int bank   = offset & 3;
-            automatic int widx   = offset >> 2;
-            u_soc.u_jv32.u_iram.mem[widx][bank*8 +: 8] = data;
-        end else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
+            automatic int bank = offset & 3;
+            automatic int widx = offset >> 2;
+            u_soc.u_jv32.u_iram.mem[widx][bank*8+:8] = data;
+        end
+        else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
             automatic int offset = uaddr - DRAM_BASE;
-            automatic int bank   = offset & 3;
-            automatic int widx   = offset >> 2;
-            u_soc.u_jv32.u_dram.mem[widx][bank*8 +: 8] = data;
+            automatic int bank = offset & 3;
+            automatic int widx = offset >> 2;
+            u_soc.u_jv32.u_dram.mem[widx][bank*8+:8] = data;
         end
     endfunction
 
@@ -80,14 +81,15 @@ module tb_jv32_soc #(
         automatic int unsigned uaddr = unsigned'(addr);
         if (uaddr >= IRAM_BASE && uaddr < IRAM_LIMIT) begin
             automatic int offset = uaddr - IRAM_BASE;
-            automatic int bank   = offset & 3;
-            automatic int widx   = offset >> 2;
-            return byte'(u_soc.u_jv32.u_iram.mem[widx][bank*8 +: 8]);
-        end else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
+            automatic int bank = offset & 3;
+            automatic int widx = offset >> 2;
+            return byte'(u_soc.u_jv32.u_iram.mem[widx][bank*8+:8]);
+        end
+        else if (uaddr >= DRAM_BASE && uaddr < DRAM_LIMIT) begin
             automatic int offset = uaddr - DRAM_BASE;
-            automatic int bank   = offset & 3;
-            automatic int widx   = offset >> 2;
-            return byte'(u_soc.u_jv32.u_dram.mem[widx][bank*8 +: 8]);
+            automatic int bank = offset & 3;
+            automatic int widx = offset >> 2;
+            return byte'(u_soc.u_jv32.u_dram.mem[widx][bank*8+:8]);
         end
         return 8'hFF;
     endfunction
@@ -105,62 +107,74 @@ module tb_jv32_soc #(
 
     // SIM_CLKS_PER_BIT: must be >= 4 for uart_loopback to centre-sample correctly.
     // Use 8 cycles/bit; the large TX FIFO prevents back-pressure on the CPU.
-    localparam int unsigned  SIM_CLKS_PER_BIT   = 8;
-    localparam int unsigned  SIM_BAUD_RATE       = CLK_FREQ / SIM_CLKS_PER_BIT;
-    localparam logic [15:0]  LOOPBACK_CLKS_PER_BIT = 16'(SIM_CLKS_PER_BIT);
+    localparam int unsigned SIM_CLKS_PER_BIT      = 8;
+    localparam int unsigned SIM_BAUD_RATE         = CLK_FREQ / SIM_CLKS_PER_BIT;
+    localparam logic [15:0] LOOPBACK_CLKS_PER_BIT = 16'(SIM_CLKS_PER_BIT);
 
     uart_loopback u_uart_loopback (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        .rx           (uart_tx_o),
-        .tx           (uart_loopback_tx),
-        .clks_per_bit (LOOPBACK_CLKS_PER_BIT)
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .rx          (uart_tx_o),
+        .tx          (uart_loopback_tx),
+        .clks_per_bit(LOOPBACK_CLKS_PER_BIT)
     );
 
     jv32_soc #(
-        .CLK_FREQ        (CLK_FREQ),
-        .BAUD_RATE       (SIM_BAUD_RATE),  // 8 cycles/bit — fast yet loopback-safe
-        .UART_FIFO_DEPTH (4096),           // deep FIFO; CPU never stalls on TX
-        .USE_CJTAG       (USE_CJTAG),
-        .IRAM_SIZE       (IRAM_SIZE),
-        .DRAM_SIZE       (DRAM_SIZE),
-        .FAST_MUL        (FAST_MUL),
-        .FAST_DIV        (FAST_DIV),
-        .FAST_SHIFT      (FAST_SHIFT),
-        .BP_EN           (BP_EN),
-        .BOOT_ADDR       (BOOT_ADDR),
-        .IRAM_BASE       (IRAM_BASE),
-        .DRAM_BASE       (DRAM_BASE)
+        .CLK_FREQ       (CLK_FREQ),
+        .BAUD_RATE      (SIM_BAUD_RATE),  // 8 cycles/bit — fast yet loopback-safe
+        .UART_FIFO_DEPTH(4096),           // deep FIFO; CPU never stalls on TX
+        .USE_CJTAG      (USE_CJTAG),
+        .IRAM_SIZE      (IRAM_SIZE),
+        .DRAM_SIZE      (DRAM_SIZE),
+        .FAST_MUL       (FAST_MUL),
+        .FAST_DIV       (FAST_DIV),
+        .FAST_SHIFT     (FAST_SHIFT),
+        .BP_EN          (BP_EN),
+        .BOOT_ADDR      (BOOT_ADDR),
+        .IRAM_BASE      (IRAM_BASE),
+        .DRAM_BASE      (DRAM_BASE)
     ) u_soc (
-        .clk                (clk),
-        .rst_n              (rst_n),
-        .uart_rx_i          (uart_rx_i),
-        .uart_tx_o          (uart_tx_o),
-        .jtag_ntrst_i       (jtag_ntrst_i),
-        .jtag_pin0_tck_i    (jtag_pin0_tck_i),
-        .jtag_pin1_tms_i    (jtag_pin1_tms_i),
-        .jtag_pin1_tms_o    (jtag_pin1_tms_o),
-        .jtag_pin1_tms_oe   (jtag_pin1_tms_oe),
-        .jtag_pin2_tdi_i    (jtag_pin2_tdi_i),
-        .jtag_pin3_tdo_o    (jtag_pin3_tdo_o),
-        .jtag_pin3_tdo_oe   (jtag_pin3_tdo_oe),
-        .ext_irq_i          (16'h0),
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .uart_rx_i       (uart_rx_i),
+        .uart_tx_o       (uart_tx_o),
+        .jtag_ntrst_i    (jtag_ntrst_i),
+        .jtag_pin0_tck_i (jtag_pin0_tck_i),
+        .jtag_pin1_tms_i (jtag_pin1_tms_i),
+        .jtag_pin1_tms_o (jtag_pin1_tms_o),
+        .jtag_pin1_tms_oe(jtag_pin1_tms_oe),
+        .jtag_pin2_tdi_i (jtag_pin2_tdi_i),
+        .jtag_pin3_tdo_o (jtag_pin3_tdo_o),
+        .jtag_pin3_tdo_oe(jtag_pin3_tdo_oe),
+        .ext_irq_i       (16'h0),
         // TCM slave: tied off (ELF loading uses DPI mem_write_byte)
-        .s_tcm_araddr   (32'h0), .s_tcm_arvalid (1'b0), .s_tcm_arready (),
-        .s_tcm_rdata    (),      .s_tcm_rresp   (),     .s_tcm_rvalid  (), .s_tcm_rready(1'b1),
-        .s_tcm_awaddr   (32'h0), .s_tcm_awvalid (1'b0), .s_tcm_awready (),
-        .s_tcm_wdata    (32'h0), .s_tcm_wstrb   (4'h0), .s_tcm_wvalid  (1'b0), .s_tcm_wready(),
-        .s_tcm_bresp    (),      .s_tcm_bvalid  (),     .s_tcm_bready  (1'b1),
-        .trace_valid    (trace_valid),
-        .trace_reg_we   (trace_reg_we),
-        .trace_pc       (trace_pc),
-        .trace_rd       (trace_rd),
-        .trace_rd_data  (trace_rd_data),
-        .trace_instr    (trace_instr),
-        .trace_mem_we   (trace_mem_we),
-        .trace_mem_re   (trace_mem_re),
-        .trace_mem_addr (trace_mem_addr),
-        .trace_mem_data (trace_mem_data)
+        .s_tcm_araddr    (32'h0),
+        .s_tcm_arvalid   (1'b0),
+        .s_tcm_arready   (),
+        .s_tcm_rdata     (),
+        .s_tcm_rresp     (),
+        .s_tcm_rvalid    (),
+        .s_tcm_rready    (1'b1),
+        .s_tcm_awaddr    (32'h0),
+        .s_tcm_awvalid   (1'b0),
+        .s_tcm_awready   (),
+        .s_tcm_wdata     (32'h0),
+        .s_tcm_wstrb     (4'h0),
+        .s_tcm_wvalid    (1'b0),
+        .s_tcm_wready    (),
+        .s_tcm_bresp     (),
+        .s_tcm_bvalid    (),
+        .s_tcm_bready    (1'b1),
+        .trace_valid     (trace_valid),
+        .trace_reg_we    (trace_reg_we),
+        .trace_pc        (trace_pc),
+        .trace_rd        (trace_rd),
+        .trace_rd_data   (trace_rd_data),
+        .trace_instr     (trace_instr),
+        .trace_mem_we    (trace_mem_we),
+        .trace_mem_re    (trace_mem_re),
+        .trace_mem_addr  (trace_mem_addr),
+        .trace_mem_data  (trace_mem_data)
     );
 
 endmodule

@@ -24,6 +24,8 @@ endif
 # Export so sub-makes (sw/Makefile) inherit
 export RISCV_PREFIX
 export VERILATOR
+export VERIBLE
+export VERIBLE_FORMAT
 
 # Append additional tool paths if specified
 ifdef PATH_APPEND
@@ -58,6 +60,8 @@ OBJDUMP = $(RISCV_PREFIX)objdump
 # ============================================================================
 VERILATOR      ?= verilator
 VERILATOR_JOBS ?= 0
+VERIBLE        ?= None
+VERIBLE_FORMAT ?= None
 SVLINT         ?= None
 
 VERILATOR_FLAGS  = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
@@ -156,8 +160,7 @@ RTL_SOURCES = \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
     $(wildcard $(MEM_DIR)/*.sv) \
-    $(TB_DIR)/uart_loopback.sv \
-    $(TB_DIR)/tb_jv32_soc.sv
+	$(wildcard $(TB_DIR)/*.sv)
 
 TB_SOURCES = \
     $(TB_DIR)/tb_jv32_soc.cpp \
@@ -189,7 +192,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 # ============================================================================
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
-        lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
+	lint-verible lint-svlint format-verible sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests
@@ -299,9 +302,9 @@ $(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(VPI_SOURCES)
 # Lint
 # ============================================================================
 
-# Lint umbrella: runs all four lint passes in sequence.
+# Lint umbrella: runs all lint passes in sequence.
 # Stops on the first failing pass.
-lint: lint-full lint-modules lint-decl lint-ffreset lint-svlint
+lint: lint-full lint-modules lint-decl lint-ffreset lint-verible lint-svlint
 
 # Full-design Verilator lint (all RTL + testbench compiled together)
 lint-full:
@@ -377,6 +380,35 @@ lint-ffreset:
 # svlint structural/intent lint of RTL source files.
 # Skipped automatically when SVLINT is 'None' or the binary does not exist.
 # Rules are read from .svlint.toml.
+lint-verible:
+	@echo "=========================================="
+	@echo "Verible RTL check"
+	@echo "=========================================="
+	@if [ "$(VERIBLE)" = "None" ] || [ -z "$(VERIBLE)" ]; then \
+	    echo "VERIBLE is set to None or unset - skipping Verible."; \
+	else \
+	    if [[ "$(VERIBLE)" == */* ]]; then \
+	        if ! [ -x "$(VERIBLE)" ]; then \
+	            echo "Verible binary not executable at: $(VERIBLE) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VCBIN="$(VERIBLE)"; \
+	    else \
+	        if ! command -v "$(VERIBLE)" >/dev/null 2>&1; then \
+	            echo "Verible binary not found in PATH: $(VERIBLE) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VCBIN="$(VERIBLE)"; \
+	    fi; \
+	    echo "verible: $$VCBIN"; \
+	    echo "config: .rules.verible_lint"; \
+	    $$VCBIN --rules_config .rules.verible_lint $(RTL_ONLY_SRCS) && \
+	    echo "" && \
+	    echo "==========================================" && \
+	    echo "Verible passed!" && \
+	    echo "=========================================="; \
+	fi
+
 lint-svlint:
 	@echo "=========================================="
 	@echo "svlint RTL check"
@@ -752,6 +784,47 @@ cleanup-all:
 	@bash scripts/cleanup -all
 
 # ============================================================================
+# SystemVerilog formatting with Verible
+# Usage:
+#   make format-verible
+#   make format-verible FILES="rtl/jv32/core/jv32_rvc.sv rtl/axi/axi_clic.sv"
+# ============================================================================
+format-verible:
+	@echo "=========================================="
+	@echo "Verible SystemVerilog format"
+	@echo "=========================================="
+	@if [ "$(VERIBLE_FORMAT)" = "None" ] || [ -z "$(VERIBLE_FORMAT)" ]; then \
+	    echo "VERIBLE_FORMAT is set to None or unset - skipping format."; \
+	else \
+	    if [[ "$(VERIBLE_FORMAT)" == */* ]]; then \
+	        if ! [ -x "$(VERIBLE_FORMAT)" ]; then \
+	            echo "Verible formatter not executable at: $(VERIBLE_FORMAT) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VFBIN="$(VERIBLE_FORMAT)"; \
+	    else \
+	        if ! command -v "$(VERIBLE_FORMAT)" >/dev/null 2>&1; then \
+	            echo "Verible formatter not found in PATH: $(VERIBLE_FORMAT) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VFBIN="$(VERIBLE_FORMAT)"; \
+	    fi; \
+	    echo "verible-format: $$VFBIN"; \
+	    echo "flagfile: .rules.verible_format"; \
+	    $$VFBIN \
+	        --inplace \
+	        --flagfile=.rules.verible_format \
+	        $(if $(FILES),$(FILES),$(RTL_SOURCES)) \
+	        >/dev/null && \
+	    python3 scripts/align_localparams.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
+	    python3 scripts/align_trailing_comments.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
+	    echo "" && \
+	    echo "==========================================" && \
+	    echo "Format complete!" && \
+	    echo "=========================================="; \
+	fi
+
+# ============================================================================
 # Info / Help
 # ============================================================================
 info:
@@ -780,10 +853,12 @@ help:
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"
-	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-svlint)"
+	@echo "  format-verible       Format SystemVerilog files with Verible (all RTL or FILES=...)"
+	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-verible + lint-svlint)"
 	@echo "  lint-full            Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules         Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
 	@echo "  lint-decl            Check signal declaration order (use-before-declare)"
+	@echo "  lint-verible         Verible lint check (skipped if VERIBLE=None or binary absent)"
 	@echo "  lint-svlint          svlint structural/intent check (skipped if SVLINT=None or binary absent)"
 	@echo "  clean                Remove all build artifacts"
 	@echo "  info                 Print tool and path configuration"
@@ -797,6 +872,8 @@ help:
 	@echo ""
 	@echo "Toolchain variables (set in env.config or command line):"
 	@echo "  VERILATOR=<path>     Verilator binary"
+	@echo "  VERIBLE=<path>       Verible lint binary"
+	@echo "  VERIBLE_FORMAT=<p>   Verible formatter binary"
 	@echo "  RISCV_PREFIX=<pfx>   RISC-V toolchain prefix"
 	@echo ""
 	@echo "RTL parameters (override on command line):"

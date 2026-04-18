@@ -4,16 +4,13 @@ import argparse
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-
 ParsedLine = Tuple[str, str, str, str, Optional[str]]
-
 
 def split_comment(line: str) -> Tuple[str, Optional[str]]:
     comment_index = line.find("//")
     if comment_index == -1:
         return line.rstrip("\n"), None
     return line[:comment_index].rstrip(), line[comment_index:].rstrip("\n")
-
 
 def parse_localparam_line(line: str) -> Optional[ParsedLine]:
     code, comment = split_comment(line)
@@ -37,7 +34,6 @@ def parse_localparam_line(line: str) -> Optional[ParsedLine]:
     type_part = lhs[: -len(name)].rstrip()
     return indent, type_part, name, rhs, comment
 
-
 def format_block(parsed_lines: List[ParsedLine]) -> List[str]:
     max_type_width = max(len(type_part) for _, type_part, _, _, _ in parsed_lines)
     max_name_width = max(len(name) for _, _, name, _, _ in parsed_lines)
@@ -53,7 +49,6 @@ def format_block(parsed_lines: List[ParsedLine]) -> List[str]:
         formatted.append(line + "\n")
 
     return formatted
-
 
 def align_file(path: Path) -> bool:
     lines = path.read_text().splitlines(keepends=True)
@@ -95,7 +90,6 @@ def align_file(path: Path) -> bool:
         path.write_text("".join(updated_lines))
     return changed
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Align consecutive single-line localparam declarations.")
     parser.add_argument("files", nargs="+", help="Files to process")
@@ -104,7 +98,6 @@ def main() -> int:
     for file_name in args.files:
         align_file(Path(file_name))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

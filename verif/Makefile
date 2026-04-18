@@ -30,6 +30,8 @@ WORKDIR      ?= $(JV32_ROOT)/build/arch-test-work
 ARCH_TEST_JOBS ?= $(if $(JOBS),$(JOBS),$(shell command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.logicalcpu 2>/dev/null || echo 1))
 ARCH_TEST_CONFIG := $(WORKDIR)/test_config.generated.yaml
 ARCH_TEST_REF_WRAPPER := $(WORKDIR)/sail_riscv_sim.wrapper.sh
+ARCH_TEST_CONFIG_DIR := $(WORKDIR)/jv32-rv32imac
+ARCH_TEST_EXTENSIONS_FILE := $(ARCH_TEST_CONFIG_DIR)/extensions.txt
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
@@ -45,7 +47,7 @@ all: help
 
 # Create a local wrapper that emulates the subset of Sail CLI ACT4 uses,
 # while delegating signature generation to Spike.
-$(ARCH_TEST_REF_WRAPPER):
+$(ARCH_TEST_REF_WRAPPER): $(VERIF_DIR)sail_spike_wrapper.sh.in $(VERIF_DIR)Makefile
 	@mkdir -p "$(WORKDIR)"
 	@spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
 	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
@@ -55,59 +57,8 @@ $(ARCH_TEST_REF_WRAPPER):
 	    echo "[arch-test] ERROR: spike executable not found (set SPIKE=/path/to/spike)."; \
 	    exit 1; \
 	fi; \
-	cat > "$(ARCH_TEST_REF_WRAPPER)" <<EOF
-#!/bin/sh
-set -eu
-
-if [ "${1:-}" = "--version" ]; then
-	# ACT4 checks Sail version exactly; keep compatibility.
-	echo "0.10"
-	exit 0
-fi
-
-sig_file=""
-sig_granularity="4"
-elf=""
-
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-		--trace-all)
-			shift
-			;;
-		--trace-output)
-			# Trace output file (Sail-only) is ignored by spike backend.
-			shift 2
-			;;
-		--config)
-			# Sail JSON config is ignored by spike backend.
-			shift 2
-			;;
-		--test-signature=*)
-			sig_file="${1#*=}"
-			shift
-			;;
-		--signature-granularity)
-			sig_granularity="${2:-4}"
-			shift 2
-			;;
-		--*)
-			shift
-			;;
-		*)
-			elf="$1"
-			shift
-			;;
-	esac
-done
-
-if [ -z "$elf" ] || [ -z "$sig_file" ]; then
-	echo "sail wrapper error: missing ELF or --test-signature" >&2
-	exit 2
-fi
-
-exec "__SPIKE_BIN__" "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"
-EOF
-	@spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
+	cp "$(JV32_ROOT)/verif/sail_spike_wrapper.sh.in" "$(ARCH_TEST_REF_WRAPPER)"; \
+	spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
 	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
 	    spike_bin="/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike"; \
 	fi; \
@@ -116,12 +67,24 @@ EOF
 	chmod +x "$(ARCH_TEST_REF_WRAPPER)"
 
 # Generate a toolchain-adjusted ACT config for this run.
-$(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml $(ARCH_TEST_REF_WRAPPER)
+$(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml $(ARCH_TEST_REF_WRAPPER) $(VERIF_DIR)Makefile
 	@mkdir -p "$(WORKDIR)"
-	@sed -e 's|^compiler_exe:.*|compiler_exe: $(RISCV_PREFIX)gcc|' \
-	     -e 's|^objdump_exe:.*|objdump_exe: $(RISCV_PREFIX)objdump|' \
-	     -e 's|^ref_model_exe:.*|ref_model_exe: $(ARCH_TEST_REF_WRAPPER)|' \
+	@sed -e 's|^[[:space:]]*compiler_exe:.*|compiler_exe: $(RISCV_PREFIX)gcc|' \
+	     -e 's|^[[:space:]]*objdump_exe:.*|objdump_exe: $(RISCV_PREFIX)objdump|' \
+	     -e 's|^[[:space:]]*ref_model_exe:.*|ref_model_exe: $(ARCH_TEST_REF_WRAPPER)|' \
+	     -e 's|^[[:space:]]*udb_config:.*|udb_config: $(DUT_CONFIG)/jv32-rv32imac.yaml|' \
+	     -e 's|^[[:space:]]*linker_script:.*|linker_script: $(DUT_CONFIG)/link.ld|' \
+	     -e 's|^[[:space:]]*dut_include_dir:.*|dut_include_dir: $(DUT_CONFIG)|' \
 	     "$(DUT_CONFIG)/test_config.yaml" > "$@"
+
+# Pre-generate implemented extension list directly from DUT UDB YAML.
+# If this file is present and up-to-date, ACT skips invoking external UDB tooling
+# (which may require container or newer Ruby runtime on host).
+$(ARCH_TEST_EXTENSIONS_FILE): $(DUT_CONFIG)/jv32-rv32imac.yaml $(VERIF_DIR)Makefile
+	@mkdir -p "$(ARCH_TEST_CONFIG_DIR)"
+	@sed -nE 's|.*name:[[:space:]]*([^,}[:space:]]+).*|\1|p' "$(DUT_CONFIG)/jv32-rv32imac.yaml" > "$@"
+	@ext_count=$$(wc -l < "$@" | tr -d '[:space:]'); \
+	  echo "[arch-test] Prepared $$ext_count implemented extensions in $(ARCH_TEST_EXTENSIONS_FILE)"
 
 # ============================================================================
 # arch-test-setup: clone riscv-arch-test (act4 branch) and install Python venv
@@ -133,13 +96,14 @@ $(ACT_SENTINEL):
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi
 	@# ── 2. Clone / update riscv-arch-test ────────────────────────────────
-	@if [ ! -d "$(ACT_DIR)/.git" ]; then \
+	@if git -C $(JV32_ROOT) config --file .gitmodules --get-regexp '^submodule\.verif/riscv-arch-test\.url$$' >/dev/null 2>&1; then \
+	    echo "[arch-test] Initializing/updating existing submodule $(ACT_DIR)..."; \
+	    git -C $(JV32_ROOT) submodule sync -- verif/riscv-arch-test; \
+	    git -C $(JV32_ROOT) submodule update --init --remote verif/riscv-arch-test; \
+	else \
 	    echo "[arch-test] Cloning $(ACT_REPO) (branch $(ACT_BRANCH))..."; \
 	    git -C $(JV32_ROOT) submodule add -b $(ACT_BRANCH) $(ACT_REPO) verif/riscv-arch-test; \
 	    git -C $(JV32_ROOT) submodule update --init verif/riscv-arch-test; \
-	else \
-	    echo "[arch-test] Updating $(ACT_DIR)..."; \
-	    git -C $(JV32_ROOT) submodule update --remote verif/riscv-arch-test; \
 	fi
 	@# ── 3. Bootstrap Python venv via uv ──────────────────────────────────
 	@echo "[arch-test] Installing Python environment (uv sync)..."
@@ -160,7 +124,7 @@ arch-test-setup: $(ACT_SENTINEL)
 #   JOBS              — parallel build jobs (default: nproc)
 #   WORKDIR           — build/output dir (default: build/arch-test-work)
 # ============================================================================
-arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
+arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@mkdir -p "$(WORKDIR)"
 	@echo "=========================================="
 	@echo "[arch-test] Work directory: $(WORKDIR)"
@@ -170,7 +134,7 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
 	@echo "=========================================="
 	@echo "[arch-test] Phase 2/3: generating self-checking ELFs"
 	@echo "=========================================="
-	@$(MAKE) -C $(ACT_DIR) \
+	@IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
@@ -186,7 +150,7 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
 # ============================================================================
 # arch-test-%: pass-through any other target to the ACT4 Makefile
 # ============================================================================
-arch-test-%: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG)
+arch-test-%: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@$(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
