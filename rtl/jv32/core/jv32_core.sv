@@ -646,10 +646,10 @@ module jv32_core #(
             if (if_ex_r.ifetch_fault) begin
                 // AXI DECERR on I-fetch raises EXC_INSTR_ACCESS_FAULT (cause=1).
                 // Checked before dec_illegal since the instruction data is meaningless.
-                // `mepc` already records the faulting PC; ACT4 expects `mtval=0` here.
+                // Report the faulting fetch address in mtval.
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_INSTR_ACCESS_FAULT;
-                ex_exc_tval  = 32'h0;
+                ex_exc_tval  = if_ex_r.pc;
             end
             else if (dec_illegal) begin
                 ex_exception = 1'b1;
@@ -659,26 +659,12 @@ module jv32_core #(
             else if (dec_is_ebreak && !dbg_enter_debug) begin
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_BREAKPOINT;
-                ex_exc_tval  = 32'h0;
+                ex_exc_tval  = if_ex_r.pc;
             end
             else if (dec_is_ecall) begin
                 ex_exception = 1'b1;
                 ex_exc_cause = EXC_ECALL_MMODE;
                 ex_exc_tval  = 32'h0;
-            end
-            else if (dec_mem_read &&
-                     (((dec_mem_op == MEM_HALF || dec_mem_op == MEM_HALF_U) && mem_addr_ex[0]) ||
-                      (dec_mem_op == MEM_WORD && mem_addr_ex[1:0] != 2'b00))) begin
-                ex_exception = 1'b1;
-                ex_exc_cause = EXC_LOAD_ADDR_MISALIGNED;
-                ex_exc_tval  = mem_addr_ex;
-            end
-            else if (dec_mem_write &&
-                     (((dec_mem_op == MEM_HALF || dec_mem_op == MEM_HALF_U) && mem_addr_ex[0]) ||
-                      (dec_mem_op == MEM_WORD && mem_addr_ex[1:0] != 2'b00))) begin
-                ex_exception = 1'b1;
-                ex_exc_cause = EXC_STORE_ADDR_MISALIGNED;
-                ex_exc_tval  = mem_addr_ex;
             end
         end
     end

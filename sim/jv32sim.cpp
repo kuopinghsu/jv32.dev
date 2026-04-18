@@ -1006,7 +1006,7 @@ static void step() {
             if      (sys_imm == 0x000) { // ECALL
                 exc_pending = true; exc_cause = CAUSE_ECALL_M; exc_tval = 0;
             } else if (sys_imm == 0x001) { // EBREAK
-                exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = 0;
+                exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
             } else if (sys_imm == 0x302) { // MRET
                 uint32_t mpie = (csr_mstatus >> 7) & 1u;
                 csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
@@ -1271,8 +1271,17 @@ int main(int argc, char **argv) {
         exit_code = 1;
     }
 
-    DBG(1, "%llu instructions retired\n",
+        auto   time_end = std::chrono::steady_clock::now();
+        double elapsed_seconds = std::chrono::duration<double>(time_end - time_begin).count();
+        double eff_hz = (elapsed_seconds > 0.0) ? ((double)csr_mcycle / elapsed_seconds) : 0.0;
+        double eff_mhz = eff_hz / 1.0e6;
+
+        DBG(1, "%llu instructions retired\n",
             (unsigned long long)insn_count);
+        fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
+            elapsed_seconds,
+            (unsigned long long)csr_mcycle,
+            eff_mhz);
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);
     return exit_code;

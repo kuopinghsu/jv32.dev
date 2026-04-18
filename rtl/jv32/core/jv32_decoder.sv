@@ -253,6 +253,12 @@ module jv32_decoder (
                             instr[31:20] != CSR_MCYCLEH    &&
                             instr[31:20] != CSR_MINSTRET   &&
                             instr[31:20] != CSR_MINSTRETH  &&
+                            instr[31:20] != CSR_CYCLE      &&
+                            instr[31:20] != CSR_TIME       &&
+                            instr[31:20] != CSR_INSTRET    &&
+                            instr[31:20] != CSR_CYCLEH     &&
+                            instr[31:20] != CSR_TIMEH      &&
+                            instr[31:20] != CSR_INSTRETH   &&
                             instr[31:20] != CSR_MVENDORID  &&
                             instr[31:20] != CSR_MARCHID    &&
                             instr[31:20] != CSR_MIMPID     &&

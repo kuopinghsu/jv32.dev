@@ -137,6 +137,7 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
+	    EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zicntr \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS)
 	@elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \

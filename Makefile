@@ -503,21 +503,28 @@ rtl-all: build-rtl
 	@echo "Running all software tests with RTL simulator"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[rtl-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory rtl-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory rtl-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "rtl-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "rtl-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "RTL Test Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Run all software tests with the software simulator
 sim-all: sim-build
@@ -525,21 +532,28 @@ sim-all: sim-build
 	@echo "Running all software tests with software simulator"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[sim-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory sim-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory sim-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "sim-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "sim-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "Simulator Test Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Compare software-vs-RTL traces for all software tests
 compare-all: $(JV32SIM) build-rtl
@@ -547,21 +561,28 @@ compare-all: $(JV32SIM) build-rtl
 	@echo "Comparing traces for all software tests"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[compare-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory compare-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory compare-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "compare-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "compare-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "Comparison Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Build a specific software test: make sw-hello, make sw-coremark, make sw-dhry
 sw-%:

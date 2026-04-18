@@ -299,8 +299,17 @@ int main(int argc, char** argv) {
         dump_registers(dut);
     }
 
-    fprintf(stderr, "[SIM] %llu cycles, %llu instructions retired\n",
-           (unsigned long long)cycle, (unsigned long long)instret);
+        auto   time_end = std::chrono::steady_clock::now();
+        double elapsed_seconds = std::chrono::duration<double>(time_end - time_begin).count();
+        double eff_hz = (elapsed_seconds > 0.0) ? ((double)cycle / elapsed_seconds) : 0.0;
+        double eff_mhz = eff_hz / 1.0e6;
+
+        fprintf(stderr, "[SIM] %llu cycles, %llu instructions retired\n",
+            (unsigned long long)cycle, (unsigned long long)instret);
+        fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
+             elapsed_seconds,
+             (unsigned long long)cycle,
+             eff_mhz);
 
     dut->final();
     delete dut;
