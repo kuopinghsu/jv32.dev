@@ -1285,7 +1285,8 @@ module jv32_core #(
     // During single-step (dbg_step_pending_r=1), interrupts are suppressed
     // to implement dcsr.stepie=0 (the reset / default value of dcsr.stepie):
     // the Debug Spec says "interrupt enable is cleared while in single step mode".
-    assign irq_cancel = csr_irq_pending && wb_retire && !ex_wb_r.exception && !dmem_fault_active
+    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !dbg_halted_r
+                        && !ex_wb_r.exception && !dmem_fault_active
                         && !ex_wb_r.mret && !dbg_step_pending_r;
 
     assign trace_valid = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
