@@ -15,11 +15,18 @@ set_clock_groups -asynchronous \
     -group [get_clocks core_clk] \
     -group [get_clocks jtag_tck]
 
-# Clock uncertainty and transition (10% of period typical for 45nm)
-set_clock_uncertainty 0.5 [get_clocks core_clk]
+# Clock uncertainty and transition.
+# Keep conservative setup uncertainty while using a realistic hold uncertainty
+# to avoid over-constraining short FF->FF hold paths.
+set_clock_uncertainty -setup 0.5 [get_clocks core_clk]
+set_clock_uncertainty -hold  0.05 [get_clocks core_clk]
 set_clock_transition  0.3 [get_clocks core_clk]
-set_clock_uncertainty 1.0 [get_clocks jtag_tck]
-set_clock_transition  1.0 [get_clocks jtag_tck]
+# JTAG TCK: large setup uncertainty (pessimistic) but small hold uncertainty.
+# Applying 1.0ns symmetrically on a 100ns clock causes hold violations on
+# short JTAG sync-register paths (~0.2ns data delay) — use -setup/-hold split.
+set_clock_uncertainty -setup 1.0 [get_clocks jtag_tck]
+set_clock_uncertainty -hold  0.1 [get_clocks jtag_tck]
+set_clock_transition         1.0 [get_clocks jtag_tck]
 
 # ── Input / output delay constraints ──────────────────────────────────────────
 # 20% of clock period for I/O delay budget
