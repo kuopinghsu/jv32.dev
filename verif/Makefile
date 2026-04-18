@@ -29,6 +29,7 @@ DUT_CONFIG   := $(VERIF_DIR)config/jv32-rv32imac
 WORKDIR      ?= $(JV32_ROOT)/build/arch-test-work
 ARCH_TEST_JOBS ?= $(if $(JOBS),$(JOBS),$(shell command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.logicalcpu 2>/dev/null || echo 1))
 ARCH_TEST_CONFIG := $(WORKDIR)/test_config.generated.yaml
+ARCH_TEST_REF_WRAPPER := $(WORKDIR)/sail_riscv_sim.wrapper.sh
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
@@ -42,11 +43,84 @@ UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 
 all: help
 
+# Create a local wrapper that emulates the subset of Sail CLI ACT4 uses,
+# while delegating signature generation to Spike.
+$(ARCH_TEST_REF_WRAPPER):
+	@mkdir -p "$(WORKDIR)"
+	@spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
+	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
+	    spike_bin="/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike"; \
+	fi; \
+	if [ -z "$$spike_bin" ]; then \
+	    echo "[arch-test] ERROR: spike executable not found (set SPIKE=/path/to/spike)."; \
+	    exit 1; \
+	fi; \
+	cat > "$(ARCH_TEST_REF_WRAPPER)" <<EOF
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+	# ACT4 checks Sail version exactly; keep compatibility.
+	echo "0.10"
+	exit 0
+fi
+
+sig_file=""
+sig_granularity="4"
+elf=""
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--trace-all)
+			shift
+			;;
+		--trace-output)
+			# Trace output file (Sail-only) is ignored by spike backend.
+			shift 2
+			;;
+		--config)
+			# Sail JSON config is ignored by spike backend.
+			shift 2
+			;;
+		--test-signature=*)
+			sig_file="${1#*=}"
+			shift
+			;;
+		--signature-granularity)
+			sig_granularity="${2:-4}"
+			shift 2
+			;;
+		--*)
+			shift
+			;;
+		*)
+			elf="$1"
+			shift
+			;;
+	esac
+done
+
+if [ -z "$elf" ] || [ -z "$sig_file" ]; then
+	echo "sail wrapper error: missing ELF or --test-signature" >&2
+	exit 2
+fi
+
+exec "__SPIKE_BIN__" "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"
+EOF
+	@spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
+	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
+	    spike_bin="/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike"; \
+	fi; \
+	sed -i.bak "s|__SPIKE_BIN__|$$spike_bin|g" "$(ARCH_TEST_REF_WRAPPER)"; \
+	rm -f "$(ARCH_TEST_REF_WRAPPER).bak"; \
+	chmod +x "$(ARCH_TEST_REF_WRAPPER)"
+
 # Generate a toolchain-adjusted ACT config for this run.
-$(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml
+$(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml $(ARCH_TEST_REF_WRAPPER)
 	@mkdir -p "$(WORKDIR)"
 	@sed -e 's|^compiler_exe:.*|compiler_exe: $(RISCV_PREFIX)gcc|' \
 	     -e 's|^objdump_exe:.*|objdump_exe: $(RISCV_PREFIX)objdump|' \
+	     -e 's|^ref_model_exe:.*|ref_model_exe: $(ARCH_TEST_REF_WRAPPER)|' \
 	     "$(DUT_CONFIG)/test_config.yaml" > "$@"
 
 # ============================================================================
