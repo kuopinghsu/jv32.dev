@@ -95,7 +95,7 @@ export OPENRAM
 export OPENLANE
 export NIX_SHELL
 
-.PHONY: all check openram-setup syn-setup gen-mem synth pnr timing-report clean cleanall help
+.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report clean cleanall help
 
 all: synth
 
@@ -231,6 +231,8 @@ gen-mem:
 OPENLANE_RUN_DIR := $(BUILD_DIR)/openlane_run
 TCM_PARAMS_YAML  := $(BUILD_DIR)/tcm_params.yaml
 SYNTH_LOCK_DIR   := $(BUILD_DIR)/.synth.lock
+RESUME           ?= 0
+OPENLANE_FROM    ?=
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -266,23 +268,53 @@ synth: check $(BUILD_DIR)
 	        exit 1; \
 	    fi; \
 	    trap 'rmdir $(SYNTH_LOCK_DIR) 2>/dev/null || true' EXIT INT TERM; \
-	    rm -rf $(OPENLANE_RUN_DIR); \
-	    mkdir -p $(OPENLANE_RUN_DIR); \
 	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
 	    export NANGATE_HOME="$(NANGATE_HOME)"; \
-	    cd $(OPENLANE_DIR) && \
-	    $(OPENLANE_CMD) \
-	        --pdk-root $(PDK_ROOT) \
-	        --pdk $(PDK) \
-	        --manual-pdk \
-	        --force-run-dir $(OPENLANE_RUN_DIR) \
-	        config.yaml \
-	        $(TCM_PARAMS_YAML) \
+	    if [ "$(RESUME)" = "1" ]; then \
+	        if [ ! -f "$(OPENLANE_RUN_DIR)/flow.log" ]; then \
+	            echo "ERROR: cannot resume because $(OPENLANE_RUN_DIR)/flow.log was not found."; \
+	            echo "       Run 'make synth' first, or set OPENLANE_FROM=<step-id> and rerun with RESUME=1."; \
+	            exit 1; \
+	        fi; \
+	        resume_from="$(OPENLANE_FROM)"; \
+	        if [ -z "$$resume_from" ]; then \
+	            resume_from="$$($(PYTHON3) $(SYN_DIR)/scripts/openlane_resume_step.py $(OPENLANE_RUN_DIR)/flow.log)"; \
+	        fi; \
+	        if [ -z "$$resume_from" ]; then \
+	            echo "ERROR: failed to determine a resume step from $(OPENLANE_RUN_DIR)/flow.log"; \
+	            echo "       Set OPENLANE_FROM=<step-id> explicitly, e.g. OPENLANE_FROM=KLayout.StreamOut"; \
+	            exit 1; \
+	        fi; \
+	        echo "Resuming OpenLane2 from step: $$resume_from"; \
+	        cd $(OPENLANE_DIR) && \
+	        $(OPENLANE_CMD) \
+	            --pdk-root $(PDK_ROOT) \
+	            --pdk $(PDK) \
+	            --manual-pdk \
+	            --force-run-dir $(OPENLANE_RUN_DIR) \
+	            -F "$$resume_from" \
+	            config.yaml \
+	            $(TCM_PARAMS_YAML); \
+	    else \
+	        rm -rf $(OPENLANE_RUN_DIR); \
+	        mkdir -p $(OPENLANE_RUN_DIR); \
+	        cd $(OPENLANE_DIR) && \
+	        $(OPENLANE_CMD) \
+	            --pdk-root $(PDK_ROOT) \
+	            --pdk $(PDK) \
+	            --manual-pdk \
+	            --force-run-dir $(OPENLANE_RUN_DIR) \
+	            config.yaml \
+	            $(TCM_PARAMS_YAML); \
+	    fi \
 	)
 	@echo "========================================"
 	@echo " OpenLane2 run complete."
 	@echo " Results: $(OPENLANE_RUN_DIR)/"
 	@echo "========================================"
+
+synth-resume: RESUME=1
+synth-resume: synth
 
 # ── Standalone OpenROAD P&R ──────────────────────────────────────────────────
 # Inputs expected:
@@ -435,6 +467,7 @@ help:
 	@echo "  make syn-setup                # pre-fetch OpenLane2 Nix deps (run once)"
 	@echo "  make gen-mem                  # compile OpenRAM SRAM macros (freepdk45)"
 	@echo "  make synth                    # run OpenLane2 (synth + PnR)"
+	@echo "  make synth-resume             # resume last OpenLane2 run from failed step"
 	@echo "  make pnr                      # standalone OpenROAD P&R (after synth)"
 	@echo "  make timing-report            # post-route STA (after pnr)"
 	@echo "  make check                    # verify tool paths"
@@ -452,6 +485,8 @@ help:
 	@echo "  DRAM_BANKS     = $(DRAM_BANKS)  (N × 8 KB = $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB DRAM)"
 	@echo "  OPENRAM_CFG    = $(OPENRAM_CFG)  (static config in lib/openram/)"
 	@echo "  OPENRAM_OPTIMIZE = $(OPENRAM_OPTIMIZE) (speed|area)"
+	@echo "  RESUME         = $(RESUME)  (set to 1 to resume instead of starting clean)"
+	@echo "  OPENLANE_FROM  = $(if $(OPENLANE_FROM),$(OPENLANE_FROM),(auto-detect from flow.log))"
 	@echo ""
 	@echo "  NOTE: SYNTH_PARAMETERS are generated into build/tcm_params.yaml at"
 	@echo "        synth time and passed to OpenLane2 as a second config file."
