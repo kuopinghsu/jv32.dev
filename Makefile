@@ -195,7 +195,8 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
 	lint-verible lint-svlint format-verible sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
-        compare-freertos-% compare-freertos-all freertos-list-tests
+        compare-freertos-% compare-freertos-all freertos-list-tests \
+        submodule-init
 
 # Default: build RTL simulator
 all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
@@ -771,6 +772,20 @@ compare-freertos-all:
 	echo "compare-freertos-all: all tests passed."
 
 # ============================================================================
+# Submodule initialization (avoids pulling large nested submodules like llvm-project)
+# ============================================================================
+# DO NOT use `git clone --recurse-submodules` — it will recursively clone
+# riscv-arch-test → riscv-unified-db → llvm-project (~4 GB).
+# Use `make submodule-init` instead after a plain `git clone`.
+# ============================================================================
+submodule-init:
+	@echo "[submodule] Initializing verif/riscv-arch-test..."
+	@git submodule update --init verif/riscv-arch-test
+	@echo "[submodule] Initializing riscv-arch-test nested submodules (excluding llvm-project)..."
+	@git -C verif/riscv-arch-test submodule update --init external/riscv-unified-db docs/docs-resources
+	@echo "[submodule] Done. llvm-project was intentionally skipped (not needed for arch tests)."
+
+# ============================================================================
 # Arch-test (ACT4) — delegated to verif/Makefile
 # ============================================================================
 # All arch-test-* targets are implemented in verif/Makefile to keep this
@@ -867,8 +882,7 @@ help:
 	@echo "  rtl-<test>           Build & run <test>.elf with RTL simulator"
 	@echo "  rtl-all              Build & run all tests under sw/ with RTL simulator"
 	@echo "  compare-<test>       Build & compare traces: software vs RTL simulator"
-	@echo "  compare-all          Build & compare traces for all tests under sw/"
-	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
+	@echo "  compare-all          Build & compare traces for all tests under sw/"  @echo "  submodule-init       Init submodules safely (skips llvm-project; use instead of --recurse-submodules)"	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
 	@echo "  arch-test-run        Generate self-checking ELFs and run on JV32 RTL sim"
 	@echo "  arch-test-<tgt>      Forward <tgt> to verif/Makefile (see make -C verif help)"
 	@echo "  sw-all               Build all software tests"
