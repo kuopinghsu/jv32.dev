@@ -15,14 +15,14 @@
 
 module axi_xbar #(
     parameter int unsigned N_SLAVES = 5,
-    parameter logic [31:0] SLAVE_BASE[N_SLAVES] = '{
+    parameter bit [31:0] SLAVE_BASE[N_SLAVES] = '{
         32'h8000_0000,
         32'hC000_0000,
         32'h2001_0000,
         32'h0200_0000,
         32'h4000_0000
     },
-    parameter logic [31:0] SLAVE_MASK[N_SLAVES] = '{
+    parameter bit [31:0] SLAVE_MASK[N_SLAVES] = '{
         32'hFFFF_0000,
         32'hFFFF_0000,
         32'hFFFF_FF00,
@@ -99,15 +99,14 @@ module axi_xbar #(
         end
         else if (!rd_active) begin
             if (m_arvalid) begin
-                automatic int s = decode_addr(m_araddr);
                 rd_active <= 1'b1;
                 rd_addr_r <= m_araddr;
-                if (s < 0) begin
+                if (decode_addr(m_araddr) < 0) begin
                     rd_sel <= '0;
                     rd_err <= 1'b1;
                 end
                 else begin
-                    rd_sel <= $clog2(N_SLAVES)'(s);
+                    rd_sel <= $clog2(N_SLAVES)'(decode_addr(m_araddr));
                     rd_err <= 1'b0;
                 end
             end
@@ -158,16 +157,15 @@ module axi_xbar #(
         end
         else if (!wr_active) begin
             if (m_awvalid) begin
-                automatic int s = decode_addr(m_awaddr);
                 wr_active <= 1'b1;
                 wr_addr_r <= m_awaddr;
                 aw_sent   <= 1'b0;
-                if (s < 0) begin
+                if (decode_addr(m_awaddr) < 0) begin
                     wr_sel <= '0;
                     wr_err <= 1'b1;
                 end
                 else begin
-                    wr_sel <= $clog2(N_SLAVES)'(s);
+                    wr_sel <= $clog2(N_SLAVES)'(decode_addr(m_awaddr));
                     wr_err <= 1'b0;
                 end
             end

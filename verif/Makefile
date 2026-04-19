@@ -125,26 +125,36 @@ arch-test-setup: $(ACT_SENTINEL)
 #   WORKDIR           — build/output dir (default: build/arch-test-work)
 # ============================================================================
 arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
-	@mkdir -p "$(WORKDIR)"
-	@echo "=========================================="
-	@echo "[arch-test] Work directory: $(WORKDIR)"
-	@echo "[arch-test] Phase 1/3: building RTL simulator"
-	@echo "=========================================="
-	@$(MAKE) -C $(JV32_ROOT) --no-print-directory build-rtl
-	@echo "=========================================="
-	@echo "[arch-test] Phase 2/3: generating self-checking ELFs"
-	@echo "=========================================="
-	@IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
+	@set -e; \
+	stty_state="$$(stty -g 2>/dev/null || true)"; \
+	restore_tty() { \
+	  if [ -n "$$stty_state" ]; then \
+	    stty "$$stty_state" 2>/dev/null || stty sane 2>/dev/null || true; \
+	  else \
+	    stty sane 2>/dev/null || true; \
+	  fi; \
+	}; \
+	trap 'restore_tty' EXIT INT TERM; \
+	mkdir -p "$(WORKDIR)"; \
+	echo "=========================================="; \
+	echo "[arch-test] Work directory: $(WORKDIR)"; \
+	echo "[arch-test] Phase 1/3: building RTL simulator"; \
+	echo "=========================================="; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory build-rtl; \
+	echo "=========================================="; \
+	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
+	echo "=========================================="; \
+	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
 	    EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zicntr \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
-	    --jobs $(ARCH_TEST_JOBS)
-	@elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
-	  echo "[arch-test] Phase 3/3: running $$elf_count ELF tests on JV32 RTL"; \
-	  echo "[arch-test] Logs: $(WORKDIR)/jv32-rv32imac/logs"; \
-	  echo "[arch-test] Summary: $(WORKDIR)/jv32-rv32imac/summary.log"
-	@cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
+	    --jobs $(ARCH_TEST_JOBS); \
+	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
+	echo "[arch-test] Phase 3/3: running $$elf_count ELF tests on JV32 RTL"; \
+	echo "[arch-test] Logs: $(WORKDIR)/jv32-rv32imac/logs"; \
+	echo "[arch-test] Summary: $(WORKDIR)/jv32-rv32imac/summary.log"; \
+	cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
 	    "$(JV32_ROOT)/build/jv32soc" \
 	    "$(WORKDIR)/jv32-rv32imac/elfs"
 

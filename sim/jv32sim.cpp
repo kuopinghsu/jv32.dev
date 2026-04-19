@@ -37,8 +37,10 @@
 // ============================================================================
 static const uint32_t IRAM_BASE  = 0x80000000U;
 static const uint32_t IRAM_SIZE  = 128*1024;
+static const uint32_t IRAM_ALIAS_BASE = 0x60000000U;
 static const uint32_t DRAM_BASE  = 0xC0000000U;
 static const uint32_t DRAM_SIZE  = 128*1024;
+static const uint32_t DRAM_ALIAS_BASE = 0x70000000U;
 static const uint32_t CLIC_BASE  = 0x02000000U;
 static const uint32_t UART_BASE  = 0x20010000U;
 static const uint32_t MAGIC_BASE = 0x40000000U;
@@ -263,10 +265,35 @@ static inline bool in_range(uint32_t addr, uint32_t base, uint32_t span, int siz
     return off <= (span - n);
 }
 
-static uint32_t mem_read(uint32_t addr, int size) {
-    // IRAM
+static inline bool iram_offset_for_addr(uint32_t addr, int size, uint32_t *off) {
     if (in_range(addr, IRAM_BASE, IRAM_SIZE, size)) {
-        uint32_t off = addr - IRAM_BASE;
+        *off = addr - IRAM_BASE;
+        return true;
+    }
+    if (in_range(addr, IRAM_ALIAS_BASE, IRAM_SIZE, size)) {
+        *off = addr - IRAM_ALIAS_BASE;
+        return true;
+    }
+    return false;
+}
+
+static inline bool dram_offset_for_addr(uint32_t addr, int size, uint32_t *off) {
+    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
+        *off = addr - DRAM_BASE;
+        return true;
+    }
+    if (in_range(addr, DRAM_ALIAS_BASE, DRAM_SIZE, size)) {
+        *off = addr - DRAM_ALIAS_BASE;
+        return true;
+    }
+    return false;
+}
+
+static uint32_t mem_read(uint32_t addr, int size) {
+    uint32_t off = 0;
+
+    // IRAM (primary + alias)
+    if (iram_offset_for_addr(addr, size, &off)) {
         if (size == 1) return iram[off];
         if (size == 2) {
             uint32_t v;
@@ -277,9 +304,8 @@ static uint32_t mem_read(uint32_t addr, int size) {
         memcpy(&v, &iram[off], 4);
         return v;
     }
-    // DRAM
-    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
-        uint32_t off = addr - DRAM_BASE;
+    // DRAM (primary + alias)
+    if (dram_offset_for_addr(addr, size, &off)) {
         if (size == 1) return dram[off];
         if (size == 2) {
             uint32_t v;
@@ -316,17 +342,17 @@ static uint32_t mem_read(uint32_t addr, int size) {
 }
 
 static void mem_write(uint32_t addr, uint32_t val, int size) {
-    // DRAM
-    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
-        uint32_t off = addr - DRAM_BASE;
+    uint32_t off = 0;
+
+    // DRAM (primary + alias)
+    if (dram_offset_for_addr(addr, size, &off)) {
         if (size == 1) dram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&dram[off], &val, 2);
         else memcpy(&dram[off], &val, 4);
         return;
     }
-    // IRAM (writable if mapped, rare but allowed)
-    if (in_range(addr, IRAM_BASE, IRAM_SIZE, size)) {
-        uint32_t off = addr - IRAM_BASE;
+    // IRAM (primary + alias, writable if mapped)
+    if (iram_offset_for_addr(addr, size, &off)) {
         if (size == 1) iram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&iram[off], &val, 2);
         else memcpy(&iram[off], &val, 4);

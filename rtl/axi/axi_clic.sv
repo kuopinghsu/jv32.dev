@@ -107,6 +107,15 @@ module axi_clic #(
     logic        w_active;
     logic [31:0] w_data_r;
     logic [ 3:0] w_strb_r;
+    logic [31:0] wr_addr_sel;
+    logic [31:0] wr_data_sel;
+    logic [ 3:0] wr_strb_sel;
+    logic [31:0] wr_msk;
+
+    assign wr_addr_sel = aw_active ? aw_addr_r : s_awaddr;
+    assign wr_data_sel = w_active ? w_data_r : s_wdata;
+    assign wr_strb_sel = w_active ? w_strb_r : s_wstrb;
+    assign wr_msk      = {{8{wr_strb_sel[3]}}, {8{wr_strb_sel[2]}}, {8{wr_strb_sel[1]}}, {8{wr_strb_sel[0]}}};
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -145,29 +154,26 @@ module axi_clic #(
                 s_bvalid  <= 1'b1;
                 // Perform write
                 begin
-                    automatic logic [31:0] addr = aw_active ? aw_addr_r : s_awaddr;
-                    automatic logic [31:0] dat = w_active ? w_data_r : s_wdata;
-                    automatic logic [ 3:0] strb = w_active ? w_strb_r : s_wstrb;
-                    // byte-enable helper
-                    automatic logic [31:0] msk = {{8{strb[3]}}, {8{strb[2]}}, {8{strb[1]}}, {8{strb[0]}}};
 `ifndef SYNTHESIS
                     `DEBUG1(
                         ("[CLIC] AXI write: addr=0x%h data=0x%h aw_active=%b w_active=%b s_awaddr=0x%h aw_addr_r=0x%h",
-                        addr, dat, aw_active, w_active, s_awaddr, aw_addr_r));
+                        wr_addr_sel,
+                        wr_data_sel,
+                        aw_active, w_active, s_awaddr, aw_addr_r));
 `endif
-                    casez (addr[15:0])
-                        16'h0000: msip <= dat[0];
-                        16'h4000: mtime[31:0] <= (mtime[31:0] & ~msk) | (dat & msk);
-                        16'h4004: mtime[63:32] <= (mtime[63:32] & ~msk) | (dat & msk);
-                        16'h4008: mtimecmp[31:0] <= (mtimecmp[31:0] & ~msk) | (dat & msk);
-                        16'h400C: mtimecmp[63:32] <= (mtimecmp[63:32] & ~msk) | (dat & msk);
+                    casez (wr_addr_sel[15:0])
+                        16'h0000: msip <= wr_data_sel[0];
+                        16'h4000: mtime[31:0] <= (mtime[31:0] & ~wr_msk) | (wr_data_sel & wr_msk);
+                        16'h4004: mtime[63:32] <= (mtime[63:32] & ~wr_msk) | (wr_data_sel & wr_msk);
+                        16'h4008: mtimecmp[31:0] <= (mtimecmp[31:0] & ~wr_msk) | (wr_data_sel & wr_msk);
+                        16'h400C: mtimecmp[63:32] <= (mtimecmp[63:32] & ~wr_msk) | (wr_data_sel & wr_msk);
                         default: begin
-                            if (addr[15:12] == 4'h1) begin
+                            if (wr_addr_sel[15:12] == 4'h1) begin
                                 // CLICINT[n]: 0x1000 + n*4
-                                automatic int n = int'({22'b0, addr[11:2]});
-                                if (n < NUM_IRQ) begin
-                                    if (strb[0]) clicint_ie[n] <= dat[1];
-                                    if (strb[2]) clicint_ctl[n] <= dat[23:16];
+                                if (int'({22'b0, wr_addr_sel[11:2]}) < NUM_IRQ) begin
+                                    if (wr_strb_sel[0]) clicint_ie[int'({22'b0, wr_addr_sel[11:2]})] <= wr_data_sel[1];
+                                    if (wr_strb_sel[2])
+                                        clicint_ctl[int'({22'b0, wr_addr_sel[11:2]})] <= wr_data_sel[23:16];
                                 end
                             end
                         end
@@ -199,8 +205,14 @@ module axi_clic #(
                 default: begin
                     s_rdata <= 32'h0;
                     if (s_araddr[15:12] == 4'h1) begin
-                        automatic int n = int'({22'b0, s_araddr[11:2]});
-                        if (n < NUM_IRQ) s_rdata <= {8'h0, clicint_ctl[n], 14'h0, clicint_ie[n], ext_irq_i[n]};
+                        if (int'({22'b0, s_araddr[11:2]}) < NUM_IRQ)
+                            s_rdata <= {
+                                8'h0,
+                                clicint_ctl[int'({22'b0, s_araddr[11:2]})],
+                                14'h0,
+                                clicint_ie[int'({22'b0, s_araddr[11:2]})],
+                                ext_irq_i[int'({22'b0, s_araddr[11:2]})]
+                            };
                     end
                 end
             endcase
