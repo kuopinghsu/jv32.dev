@@ -220,6 +220,8 @@ gen-mem:
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
 	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(OPENRAM_CFG)
+	@echo "Snapping OpenRAM LEF pin geometry to manufacturing grid..."
+	@$(PYTHON3) $(SYN_DIR)/common/fix_openram_lef_grid.py $(OPENRAM_OUTDIR)/sram_1rw_2048x32.lef
 	@echo "========================================"
 	@echo " OpenRAM macros compiled in $(OPENRAM_OUTDIR)/"
 	@echo " Run 'make synth' to proceed to OpenLane2."

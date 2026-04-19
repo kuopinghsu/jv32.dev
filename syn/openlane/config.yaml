@@ -162,7 +162,12 @@ RT_MAX_LAYER: metal9
 GRT_ALLOW_CONGESTION: true
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
-RUN_ANTENNA_REPAIR: true
+# Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so
+# OpenROAD `repair_antennas` fails with GRT-0244. Use the OpenLane heuristic
+# diode insertion path instead, which only needs the diode cell/pin for ODB
+# connectivity and legalization.
+RUN_HEURISTIC_DIODE_INSERTION: true
+RUN_ANTENNA_REPAIR: false
 
 # ── Fill insertion ────────────────────────────────────────────────────────────
 RUN_FILL_INSERTION: true
