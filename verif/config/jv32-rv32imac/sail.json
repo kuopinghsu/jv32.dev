@@ -9,7 +9,7 @@
 //   0x80000000  IRAM  64KB  (code + data — arch tests live here)
 //   0xC0000000  DRAM  64KB  (not used by arch tests)
 //   0x02000000  CLIC  (MSIP, mtime, mtimecmp — compatible with CLINT layout)
-//   Unmapped regions → DECERR (no access-fault exception in JV32 core)
+//   Unmapped regions → AXI DECERR → EXC_LOAD/STORE_ACCESS_FAULT (cause=5/7) in JV32 core
 {
   "$schema": "/opt/riscv/share/sail-riscv/sail_riscv_config_schema.json",
   "base": {
@@ -34,13 +34,15 @@
       "software_breakpoint": false,  // mtval = 0 (JV32 sets tval=0 for EBREAK)
       "hardware_breakpoint": false,
       "load_address_misaligned": true,   // mtval = fault address
-      "load_access_fault": false,        // not supported (DECERR not converted)
+      "load_access_fault": true,         // JV32 sets mtval = fault address (wb_exc_tval = mem_addr)
       "load_page_fault": false,          // no MMU
       "samo_address_misaligned": true,   // mtval = fault address
-      "samo_access_fault": false,        // not supported
+      "samo_access_fault": true,         // JV32 sets mtval = fault address (wb_exc_tval = mem_addr)
       "samo_page_fault": false,          // no MMU
-      "fetch_address_misaligned": false, // JV32 doesn't support fetch misalign
-      "fetch_access_fault": false,
+      "fetch_address_misaligned": false, // JV32 has C extension (IALIGN=16): hardware always
+      //   clears bit[0] of JALR/JAL/branch targets, so the target is always
+      //   16-bit aligned and a fetch-misaligned exception never fires.
+      "fetch_access_fault": true,        // JV32 sets mtval = fetch PC (ex_exc_tval = if_ex_r.pc)
       "fetch_page_fault": false,
       "software_check": false,
       "reserved_exceptions": false
@@ -64,9 +66,10 @@
       "napot_supported": false
     },
     "misaligned": {
-      // JV32 handles misaligned load/store in hardware (two-cycle access)
-      // No misaligned address exception is raised.
-      "supported": true,
+      // JV32 raises EXC_LOAD_ADDR_MISALIGNED (cause=4) or
+      // EXC_STORE_ADDR_MISALIGNED (cause=6) for any misaligned load or store.
+      // Hardware does NOT transparently split misaligned accesses.
+      "supported": false,
       "byte_by_byte": false,
       "order_decreasing": false,
       "allowed_within_exp": 0
@@ -78,13 +81,53 @@
       "len": 64,
       "value": "0x1000"
     },
+    // Only the addresses actually decoded by JV32's AXI crossbar are covered here.
+    // Any access to an unmapped address is NOT in any region → Sail raises
+    // EXC_LOAD_ACCESS_FAULT / EXC_STORE_ACCESS_FAULT, matching JV32 RTL behaviour.
+    // RVMODEL_ACCESS_FAULT_ADDRESS = 0x00000000 is intentionally NOT in any region.
     "regions": [
-      // MMIO: covers CLIC (0x02000000-0x03FFFFFF), MAGIC (0x40000000-0x4FFFFFFF),
-      //       UART (0x20010000), and other device spaces.
-      // Marked non-cacheable, non-idempotent with alignment-fault for misaligned.
+      // CLIC: 0x02000000-0x021FFFFF (AXI mask 0xFFE00000 → 2 MB)
+      // Sail routes CLINT MSIP/mtime/mtimecmp accesses into this region.
       {
-        "base": { "len": 64, "value": "0x0" },
-        "size": { "len": 64, "value": "0x80000000" },
+        "base": { "len": 64, "value": "0x02000000" },
+        "size": { "len": 64, "value": "0x200000" },
+        "attributes": {
+          "cacheable": false,
+          "coherent": true,
+          "executable": false,
+          "readable": true,
+          "writable": true,
+          "read_idempotent": false,
+          "write_idempotent": false,
+          "misaligned_fault": "AlignmentFault",
+          "reservability": "RsrvNone",
+          "supports_cbo_zero": false
+        },
+        "include_in_device_tree": false
+      },
+      // UART: 0x20010000-0x200100FF (AXI mask 0xFFFFFF00 → 256 bytes)
+      {
+        "base": { "len": 64, "value": "0x20010000" },
+        "size": { "len": 64, "value": "0x100" },
+        "attributes": {
+          "cacheable": false,
+          "coherent": true,
+          "executable": false,
+          "readable": true,
+          "writable": true,
+          "read_idempotent": false,
+          "write_idempotent": false,
+          "misaligned_fault": "AlignmentFault",
+          "reservability": "RsrvNone",
+          "supports_cbo_zero": false
+        },
+        "include_in_device_tree": false
+      },
+      // Magic: 0x40000000-0x4FFFFFFF (AXI mask 0xF0000000 → 256 MB)
+      // CONSOLE_MAGIC @ 0x40000000 (char output), EXIT_MAGIC @ 0x40000004 (test halt).
+      {
+        "base": { "len": 64, "value": "0x40000000" },
+        "size": { "len": 64, "value": "0x10000000" },
         "attributes": {
           "cacheable": false,
           "coherent": true,
@@ -112,7 +155,7 @@
           "writable": true,
           "read_idempotent": true,
           "write_idempotent": true,
-          "misaligned_fault": "NoFault",
+          "misaligned_fault": "AlignmentFault",  // JV32 raises EXC_LOAD/STORE_ADDR_MISALIGNED
           "reservability": "RsrvEventual",
           "supports_cbo_zero": false
         },

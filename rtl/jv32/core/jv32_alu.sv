@@ -6,16 +6,19 @@
 // Supports RV32I base + M extension (multiply/divide).
 // No B-extension.  FAST_SHIFT adds optional barrel shifter.
 //
-// FAST_MUL=1  : combinatorial multiply (1 cycle)
-// FAST_MUL=0  : serial shift-and-add, variable latency
-// FAST_DIV=1  : combinatorial divide (1 cycle)
-// FAST_DIV=0  : serial restoring divider, variable latency
-// FAST_SHIFT=1: barrel shifter (1 cycle)
-// FAST_SHIFT=0: 1-bit-per-cycle serial shifter
+// FAST_MUL=1, MUL_MC=1 : 2-stage pipelined multiply — stage 1 computes four unsigned 16×16
+//                         partial products; stage 2 accumulates + sign-corrects; 2 cycles.
+// FAST_MUL=1, MUL_MC=0 : 1-cycle combinatorial 32×32 multiply (no pipeline stall).
+// FAST_MUL=0            : serial shift-and-add, variable latency
+// FAST_DIV=1            : combinatorial divide (1 cycle)
+// FAST_DIV=0            : serial restoring divider, variable latency
+// FAST_SHIFT=1          : barrel shifter (1 cycle)
+// FAST_SHIFT=0          : 1-bit-per-cycle serial shifter
 // ============================================================================
 
 module jv32_alu #(
     parameter bit FAST_MUL   = 1'b1,
+    parameter bit MUL_MC     = 1'b1,  // 1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)
     parameter bit FAST_DIV   = 1'b0,
     parameter bit FAST_SHIFT = 1'b1
 ) (
@@ -126,7 +129,85 @@ module jv32_alu #(
     logic mul_ready;
 
     generate
-        if (FAST_MUL == 1) begin : gen_fast_mul
+        if (FAST_MUL == 1 && MUL_MC == 1) begin : gen_fast_mul_pipe
+            // ----------------------------------------------------------------
+            // 2-stage pipelined multiplier.
+            // Stage 1 (dispatch cycle): compute four unsigned 16×16 partial
+            //   products and register them.  Pipeline stalls (mul_ready=0).
+            // Stage 2 (result cycle):   accumulate partial products into a
+            //   64-bit unsigned product, then subtract sign-correction terms
+            //   for MULH / MULHSU variants.  Pipeline released (mul_ready=1).
+            //
+            // Breaking the 32×32 multiply into four 16×16 multiplications
+            // halves the combinatorial depth of the critical path and
+            // eliminates the need for any STA multicycle-path constraint.
+            //
+            // Sign-correction identity (upper 32 bits only):
+            //   signed_a × signed_b = unsigned_a × unsigned_b
+            //                       − op_a_r[31] × op_b_r × 2^32   (a<0)
+            //                       − op_b_r[31] × op_a_r × 2^32   (b<0)
+            //   For MULHSU only the first correction applies.
+            // ----------------------------------------------------------------
+            logic is_mul_op;
+            assign is_mul_op = (alu_op == ALU_MUL || alu_op == ALU_MULH || alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
+
+            // Stage-1 combinatorial partial products (unsigned 16×16 → 32-bit)
+            logic [31:0] pp_ll, pp_lh, pp_hl, pp_hh;
+            assign pp_ll = {16'b0, operand_a[15:0]} * {16'b0, operand_b[15:0]};
+            assign pp_lh = {16'b0, operand_a[15:0]} * {16'b0, operand_b[31:16]};
+            assign pp_hl = {16'b0, operand_a[31:16]} * {16'b0, operand_b[15:0]};
+            assign pp_hh = {16'b0, operand_a[31:16]} * {16'b0, operand_b[31:16]};
+
+            // Stage-1 → Stage-2 pipeline registers
+            logic [31:0] pp_ll_r, pp_lh_r, pp_hl_r, pp_hh_r;
+            logic [31:0] op_a_r, op_b_r;  // latched operands for sign correction
+            logic s1_valid;               // stage-1 partial products are ready
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    pp_ll_r  <= 32'd0;
+                    pp_lh_r  <= 32'd0;
+                    pp_hl_r  <= 32'd0;
+                    pp_hh_r  <= 32'd0;
+                    op_a_r   <= 32'd0;
+                    op_b_r   <= 32'd0;
+                    s1_valid <= 1'b0;
+                end
+                else begin
+                    if (s1_valid && !result_hold) s1_valid <= 1'b0;  // result consumed
+                    else if (is_mul_op && !s1_valid && !operand_stall) begin
+                        pp_ll_r  <= pp_ll;
+                        pp_lh_r  <= pp_lh;
+                        pp_hl_r  <= pp_hl;
+                        pp_hh_r  <= pp_hh;
+                        op_a_r   <= operand_a;
+                        op_b_r   <= operand_b;
+                        s1_valid <= 1'b1;
+                    end
+                end
+            end
+
+            assign mul_ready = !is_mul_op || operand_stall || s1_valid;
+
+            // Stage-2 accumulation:
+            //   unsigned_product = pp_hh*2^32 + (pp_hl+pp_lh)*2^16 + pp_ll
+            logic [63:0] acc;
+            assign acc = {pp_hh_r, 32'b0} + {16'b0, pp_hl_r, 16'b0} + {16'b0, pp_lh_r, 16'b0} + {32'b0, pp_ll_r};
+
+            // Sign-correction terms (32-bit, applied to upper half of result)
+            logic [31:0] corr_a, corr_b;
+            assign corr_a           = op_a_r[31] ? op_b_r : 32'b0;
+            assign corr_b           = op_b_r[31] ? op_a_r : 32'b0;
+
+            assign result_mul_lo    = acc[31:0];
+            assign result_mulhu_hi  = acc[63:32];
+            assign result_mulh_hi   = acc[63:32] - corr_a - corr_b;
+            assign result_mulhsu_hi = acc[63:32] - corr_a;
+        end
+        else if (FAST_MUL == 1 && MUL_MC == 0) begin : gen_fast_mul_1c
+            // ----------------------------------------------------------------
+            // 1-cycle combinatorial 32×32 multiplier.  No pipeline stall.
+            // ----------------------------------------------------------------
             logic [63:0] result_mul, result_mulu, result_mulsu;
             assign result_mul = $signed({{32{operand_a[31]}}, operand_a}) * $signed({{32{operand_b[31]}}, operand_b});
             assign result_mulu = $unsigned({{32{1'b0}}, operand_a}) * $unsigned({{32{1'b0}}, operand_b});
@@ -136,8 +217,8 @@ module jv32_alu #(
             assign result_mulhsu_hi = result_mulsu[63:32];
             assign result_mulhu_hi = result_mulu[63:32];
             assign mul_ready = 1'b1;
-            logic _unused_mul;
-            assign _unused_mul = &{1'b0, result_mulu[31:0], result_mulsu[31:0]};
+            logic _unused_mul_1c;
+            assign _unused_mul_1c = &{1'b0, result_mulu[31:0], result_mulsu[31:0]};
         end
         else begin : gen_serial_mul
             logic [5:0] mul_count, mul_total;
@@ -375,6 +456,8 @@ module jv32_alu #(
     assign ready = div_ready && mul_ready && shift_ready;
 
 `ifndef SYNTHESIS
+    // Suppress unused clk/rst_n warnings for all-combinatorial configurations
+    // (FAST_MUL=1,MUL_MC=0 + FAST_DIV=1 + FAST_SHIFT=1).
     logic _unused_clk;
     assign _unused_clk = &{1'b0, clk, rst_n, operand_stall, result_hold};
 `endif

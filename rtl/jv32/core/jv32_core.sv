@@ -19,6 +19,7 @@
 
 module jv32_core #(
     parameter bit        FAST_MUL   = 1'b1,
+    parameter bit        MUL_MC     = 1'b1,
     parameter bit        FAST_DIV   = 1'b0,
     parameter bit        FAST_SHIFT = 1'b1,
     parameter bit        BP_EN      = 1'b1,
@@ -188,6 +189,7 @@ module jv32_core #(
 
     jv32_alu #(
         .FAST_MUL  (FAST_MUL),
+        .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT)
     ) u_alu (
@@ -666,6 +668,15 @@ module jv32_core #(
                 ex_exc_cause = EXC_ECALL_MMODE;
                 ex_exc_tval  = 32'h0;
             end
+            else if ((dec_mem_read || dec_mem_write) && !dec_is_amo &&
+                     (((dec_mem_op == MEM_HALF || dec_mem_op == MEM_HALF_U) && mem_addr_ex[0]) ||
+                      (dec_mem_op == MEM_WORD && mem_addr_ex[1:0] != 2'b00))) begin
+                // Misaligned load/store: raise address-misaligned exception.
+                // tval = faulting virtual address (RISC-V spec §3.1.16).
+                ex_exception = 1'b1;
+                ex_exc_cause = dec_mem_write ? EXC_STORE_ADDR_MISALIGNED : EXC_LOAD_ADDR_MISALIGNED;
+                ex_exc_tval  = mem_addr_ex;
+            end
         end
     end
 
@@ -786,43 +797,9 @@ module jv32_core #(
     amo_state_e        amo_state;
     logic       [31:0] amo_store_val;
 
-    // Misaligned-access (MSA) state machine
-    // MSA_IDLE     : no misalign operation in progress
-    // MSA_HIGH_WAIT: first (low) word done, second (high) word request in flight
-    typedef enum logic {
-        MSA_IDLE,
-        MSA_HIGH_WAIT
-    } msa_state_e;
-    msa_state_e        msa_state;
-    logic       [31:0] msa_lo_data;  // first word captured for cross-word load
-
-    // Misalign detection (evaluated in WB stage using ex_wb_r)
-    logic              msa_detect;  // any misaligned load/store
-    logic              msa_within;  // halfword at byte offset 1: within one aligned word
-    logic              msa_cross;   // access spans two aligned words: needs 2 accesses
-    assign msa_detect = !ex_wb_r.exception && !ex_wb_r.is_amo &&
-                        ((ex_wb_r.mem_read || ex_wb_r.mem_write)) &&
-                        (((ex_wb_r.mem_op == MEM_HALF || ex_wb_r.mem_op == MEM_HALF_U) && ex_wb_r.mem_addr[0]) ||
-                         (ex_wb_r.mem_op == MEM_WORD && ex_wb_r.mem_addr[1:0] != 2'b00));
-    assign msa_within = msa_detect &&
-                        ((ex_wb_r.mem_op == MEM_HALF || ex_wb_r.mem_op == MEM_HALF_U) && ex_wb_r.mem_addr[1:0] == 2'b01);
-    assign msa_cross = msa_detect && !msa_within;
-
-    // Precomputed shift amounts and wstrb masks for cross-word accesses
-    logic [ 5:0] msa_lo_shift;    // byte-offset * 8: 0, 8, 16, 24
-    logic [ 5:0] msa_hi_shift;    // complement: 32, 24, 16, 8
-    logic [ 3:0] msa_base_wstrb;  // 4'b0011 for HALF, 4'b1111 for WORD
-    logic [ 3:0] msa_lo_wstrb;    // wstrb for low aligned word
-    logic [ 3:0] msa_hi_wstrb;    // wstrb for high aligned word
-    logic [31:0] msa_lo_wdata;    // write data for low word  (cross-word store)
-    logic [31:0] msa_hi_wdata;    // write data for high word (cross-word store)
-    assign msa_lo_shift   = {1'b0, ex_wb_r.mem_addr[1:0], 3'b0};
-    assign msa_hi_shift   = 6'd32 - msa_lo_shift;
-    assign msa_base_wstrb = ((ex_wb_r.mem_op == MEM_HALF) || (ex_wb_r.mem_op == MEM_HALF_U)) ? 4'b0011 : 4'b1111;
-    assign msa_lo_wstrb   = msa_base_wstrb << ex_wb_r.mem_addr[1:0];
-    assign msa_hi_wstrb   = msa_base_wstrb >> (3'd4 - {1'b0, ex_wb_r.mem_addr[1:0]});
-    assign msa_lo_wdata   = ex_wb_r.store_data << msa_lo_shift[4:0];
-    assign msa_hi_wdata   = ex_wb_r.store_data >> msa_hi_shift[4:0];
+    // Misaligned loads/stores raise EXC_LOAD/STORE_ADDR_MISALIGNED in the EX stage
+    // (detected above in the ex_exception always_comb block).  No hardware
+    // misalignment-splitting state machine is present.
 
     always_comb begin
         case (ex_wb_r.amo_op)
@@ -907,52 +884,6 @@ module jv32_core #(
                     default: ;
                 endcase
             end
-            else if (msa_cross) begin
-                // -------------------------------------------------------
-                // Cross-word misaligned access: two AXI transactions
-                // MSA_IDLE:      issue first (low) request, always stall
-                // MSA_HIGH_WAIT: issue second (high) request, stall until done
-                // -------------------------------------------------------
-                case (msa_state)
-                    MSA_IDLE: begin
-                        dmem_req_valid = 1'b1;
-                        dmem_req_addr  = {ex_wb_r.mem_addr[31:2], 2'b00};
-                        if (ex_wb_r.mem_write) begin
-                            dmem_req_write = 1'b1;
-                            dmem_req_wdata = msa_lo_wdata;
-                            dmem_req_wstrb = msa_lo_wstrb;
-                        end
-                        dmem_stall = 1'b1;  // always stall: transition to HIGH_WAIT
-                    end
-                    MSA_HIGH_WAIT: begin
-                        dmem_req_valid = 1'b1;
-                        dmem_req_addr  = {ex_wb_r.mem_addr[31:2] + 30'd1, 2'b00};
-                        if (ex_wb_r.mem_write) begin
-                            dmem_req_write = 1'b1;
-                            dmem_req_wdata = msa_hi_wdata;
-                            dmem_req_wstrb = msa_hi_wstrb;
-                        end
-                        if (!dmem_resp_valid) dmem_stall = 1'b1;
-                        // resp_valid: stall clears, instruction completes
-                    end
-                    default: ;
-                endcase
-            end
-            else if (msa_within) begin
-                // -------------------------------------------------------
-                // Within-word misaligned halfword (A[1:0]=01):
-                // Single read/write to the containing aligned word.
-                // For stores: shift data so low byte lands at byte 1, high at byte 2.
-                // -------------------------------------------------------
-                dmem_req_valid = 1'b1;
-                dmem_req_addr  = {ex_wb_r.mem_addr[31:2], 2'b00};
-                if (ex_wb_r.mem_write) begin
-                    dmem_req_write = 1'b1;
-                    dmem_req_wdata = msa_lo_wdata;  // store_data << 8: [lo,hi] at bytes [1,2]
-                    dmem_req_wstrb = 4'b0110;       // bytes 1 & 2
-                end
-                if (!dmem_resp_valid) dmem_stall = 1'b1;
-            end
             else if (ex_wb_r.mem_read) begin
                 dmem_req_valid = 1'b1;
                 dmem_req_addr  = ex_wb_r.mem_addr;
@@ -1011,31 +942,6 @@ module jv32_core #(
             endcase
         end
         else if (!ex_wb_r.valid) amo_state <= AMO_IDLE;
-    end
-
-    // MSA state machine sequential
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            msa_state   <= MSA_IDLE;
-            msa_lo_data <= 32'h0;
-        end
-        else if (ex_wb_r.valid) begin
-            case (msa_state)
-                MSA_IDLE: begin
-                    if (msa_cross && dmem_resp_valid) begin
-                        msa_lo_data <= dmem_resp_data;  // save first word
-                        msa_state   <= MSA_HIGH_WAIT;
-                    end
-                end
-                MSA_HIGH_WAIT: begin
-                    if (dmem_resp_valid) msa_state <= MSA_IDLE;
-                end
-                default: msa_state <= MSA_IDLE;
-            endcase
-        end
-        else begin
-            msa_state <= MSA_IDLE;
-        end
     end
 
     // Multi-cycle ALU stall
@@ -1213,31 +1119,19 @@ module jv32_core #(
     // =====================================================================
     // WB Stage: load data sign extension + register writeback
     // =====================================================================
-    // Combined 64-bit window for cross-word loads: {hi_word, lo_word}
-    // Shifted by byte offset to extract the misaligned value.
-    logic [63:0] msa_window;
+    // WB-stage load data extraction (all accesses are aligned: misaligned
+    // accesses raise an exception in EX and never reach here with mem_read=1).
     logic [ 7:0] load_byte;
     logic [15:0] load_half;
-    assign msa_window = {dmem_resp_data, msa_lo_data};
-    // load_byte: always within one word (byte accesses are always aligned)
     assign load_byte = dmem_resp_data[8*ex_wb_r.mem_addr[1:0]+:8];
-    // load_half:
-    //   - aligned/within-word (A[1:0]=00,01,10): extract from single word
-    //   - cross-word (A[1:0]=11, MSA_HIGH_WAIT): combine lo_word[31:24] + hi_word[7:0]
-    assign load_half = (msa_state == MSA_HIGH_WAIT) ?
-                       {dmem_resp_data[7:0], msa_lo_data[31:24]} :
-                       dmem_resp_data[8*ex_wb_r.mem_addr[1:0] +: 16];
+    assign load_half = dmem_resp_data[8*ex_wb_r.mem_addr[1:0]+:16];
     always_comb begin
         case (ex_wb_r.mem_op)
             MEM_BYTE:   load_result = {{24{load_byte[7]}}, load_byte};
             MEM_HALF:   load_result = {{16{load_half[15]}}, load_half};
             MEM_BYTE_U: load_result = {24'd0, load_byte};
             MEM_HALF_U: load_result = {16'd0, load_half};
-            default: begin
-                // Word: cross-word case uses msa_window; aligned uses dmem_resp_data
-                if (msa_state == MSA_HIGH_WAIT) load_result = msa_window[msa_lo_shift+:32];
-                else load_result = dmem_resp_data;
-            end
+            default:    load_result = dmem_resp_data;
         endcase
     end
 

@@ -27,6 +27,26 @@ def main() -> int:
         print("", end="")
         return 1
 
+    # Some environments ship a Magic build that fails in
+    # Magic.SpiceExtraction (e.g. missing magic::i2u in wrapper.tcl).
+    # In this project we already run with:
+    #   RUN_LVS: false
+    #   ERROR_ON_ILLEGAL_OVERLAPS: false
+    # classic.py now gates Magic.SpiceExtraction on RUN_LVS, but keep this
+    # bypass for runs started before that patch.
+    if last_step == "Magic.SpiceExtraction":
+        print("Yosys.EQY")
+        return 0
+
+    # Odb.CheckDesignAntennaProperties requires the design LEF produced by
+    # Magic.WriteLEF.  When RUN_MAGIC_WRITE_LEF: false the LEF is never
+    # generated and this step errors with "missing required input 'LEF'".
+    # classic.py now gates this step on RUN_MAGIC_WRITE_LEF, but keep this
+    # bypass for runs started before that patch.
+    if last_step == "Odb.CheckDesignAntennaProperties":
+        print("KLayout.XOR")
+        return 0
+
     print(last_step)
     return 0
 

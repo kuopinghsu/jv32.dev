@@ -26,9 +26,9 @@
 #define RVMODEL_BOOT
 
 # Address to use for load/store fault tests that should cause an access fault.
-# JV32 does not raise load/store access fault exceptions — the AXI xbar returns
-# DECERR for unmapped addresses but the core does not convert that to an exception.
-# Use 0x00000000 (unmapped) as a placeholder; access-fault tests are excluded.
+# JV32 raises EXC_LOAD_ACCESS_FAULT (cause=5) or EXC_STORE_ACCESS_FAULT (cause=7)
+# when the AXI crossbar returns DECERR for unmapped addresses.
+# 0x00000000 is unmapped in the JV32 address space (lowest mapped address is CLIC at 0x02000000).
 #define RVMODEL_ACCESS_FAULT_ADDRESS 0x00000000
 
 ##### TERMINATION #####

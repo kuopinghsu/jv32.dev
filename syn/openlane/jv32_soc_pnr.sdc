@@ -54,8 +54,13 @@ set_load 0.01 [all_outputs]
 set_false_path -from [get_ports {rst_n jtag_ntrst_i}]
 set_false_path -from [get_ports {jtag_pin1_tms_i jtag_pin2_tdi_i}] -to [get_clocks core_clk]
 
-# ── Multicycle paths: none (fully-pipelined design) ───────────────────────────
-# Add here if any multicycle paths are identified post-synthesis.
+# ── Multicycle paths ──────────────────────────────────────────────────────────
+# No multicycle-path exceptions are required for the multiplier.
+# When FAST_MUL=1 the design uses a 2-stage pipelined multiplier (gen_fast_mul_pipe):
+#   stage 1 computes four unsigned 16×16 partial products and registers them;
+#   stage 2 accumulates and sign-corrects in the following cycle.
+# The pipeline stalls for one cycle via mul_ready, so the STA tool sees a
+# normal single-cycle reg-to-reg path for each stage — no exceptions needed.
 
 ###############################################################################
 # SRAM macro timing exceptions

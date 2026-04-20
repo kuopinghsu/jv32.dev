@@ -17,6 +17,7 @@
 SHELL := /bin/bash
 
 -include ../env.config
+-include ../Makefile.cfg
 -include $(SYN_DIR)/common/core_params.mk
 
 ifdef PATH_APPEND
@@ -82,6 +83,10 @@ IRAM_BANKS   ?= 2             # N × 8 KB  →  default 16 KB IRAM
 DRAM_BANKS   ?= 2             # N × 8 KB  →  default 16 KB DRAM
 IRAM_SIZE    := $(shell echo $$(( $(IRAM_BANKS) * $(MACRO_BYTES) )))
 DRAM_SIZE    := $(shell echo $$(( $(DRAM_BANKS) * $(MACRO_BYTES) )))
+
+# MUL_MC: 1=2-stage pipelined multiplier (16x16 partial products, 2 cycles; better timing).
+#         0=1-cycle combinatorial 32x32 multiply.  Requires FAST_MUL=1.  Default 1.
+MUL_MC       ?= 1
 
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
 OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
@@ -254,8 +259,8 @@ synth: check $(BUILD_DIR)
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
-	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
+	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
 	@# Since tcm_params.yaml lives in BUILD_DIR, copy the path-referenced
 	@# files there so OpenLane finds them.
@@ -311,6 +316,28 @@ synth: check $(BUILD_DIR)
 	@echo "========================================"
 	@echo " OpenLane2 run complete."
 	@echo " Results: $(OPENLANE_RUN_DIR)/"
+	@echo "========================================"
+	@echo " Generating summary report..."
+	@$(PYTHON3) $(SYN_DIR)/scripts/gen_report.py \
+	    $(OPENLANE_RUN_DIR) \
+	    $(SYN_DIR)/REPORT.md \
+	    --fast-mul   $(FAST_MUL)   \
+	    --mul-mc     $(MUL_MC)     \
+	    --fast-div   $(FAST_DIV)   \
+	    --fast-shift $(FAST_SHIFT) \
+	    --bp-en      $(BP_EN)      \
+	    --iram-kb    $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) \
+	    --dram-kb    $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) \
+	    --clock-mhz  80
+	@echo " Summary : $(SYN_DIR)/REPORT.md"
+	@echo " Generating layout diagram..."
+	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_diag.py \
+	    $(OPENLANE_RUN_DIR) \
+	    $(BUILD_DIR)/LAYOUT.png \
+	    --lef-dir $(SYN_DIR)/lib/openram \
+	    --title "$(DESIGN) — Layout Floorplan ($(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB IRAM / $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB DRAM)" \
+	    || echo " WARNING: layout diagram generation failed (matplotlib required)"
+	@echo " Layout  : $(BUILD_DIR)/LAYOUT.png"
 	@echo "========================================"
 
 synth-resume: RESUME=1

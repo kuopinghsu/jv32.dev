@@ -1,24 +1,131 @@
-# FreePDK45 KLayout DEF layer map stub
-# Maps DEF/LEF layer names to GDS layer numbers for Nangate 45nm.
-# Synthesis-only flows do not invoke KLayout for stream-out.
+# FreePDK45/Nangate KLayout LEF/DEF layer map
 #
-# Format: <LEF_layer_name> <GDS_layer>/<GDS_datatype>
-metal1  34/0
-metal2  35/0
-metal3  36/0
-metal4  37/0
-metal5  38/0
-metal6  39/0
-metal7  40/0
-metal8  41/0
-metal9  42/0
-metal10 43/0
-via1    50/0
-via2    51/0
-via3    52/0
-via4    53/0
-via5    54/0
-via6    55/0
-via7    56/0
-via8    57/0
-via9    58/0
+# Format understood by KLayout LEF/DEF reader:
+#   <layer_name> <purpose> <gds_layer> <gds_datatype>
+#
+# Keep this map purpose-aware so DEF routes/pins/obs and LEF-generated VIA
+# geometry are materialized during KLayout stream-out.
+
+# Die outline / boundary
+OUTLINE      DIEAREA   100 0
+
+# Routing metals
+metal1       DRAWING    34 0
+metal1       NET        34 0
+metal1       SPNET      34 0
+metal1       PIN        34 0
+metal1       LABEL      34 0
+metal1       LEFPIN     34 0
+metal1       LEFLABEL   34 0
+metal1       LEFOBS     34 0
+metal1       VIA        34 0
+
+metal2       DRAWING    35 0
+metal2       NET        35 0
+metal2       SPNET      35 0
+metal2       PIN        35 0
+metal2       LABEL      35 0
+metal2       LEFPIN     35 0
+metal2       LEFLABEL   35 0
+metal2       LEFOBS     35 0
+metal2       VIA        35 0
+
+metal3       DRAWING    36 0
+metal3       NET        36 0
+metal3       SPNET      36 0
+metal3       PIN        36 0
+metal3       LABEL      36 0
+metal3       LEFPIN     36 0
+metal3       LEFLABEL   36 0
+metal3       LEFOBS     36 0
+metal3       VIA        36 0
+
+metal4       DRAWING    37 0
+metal4       NET        37 0
+metal4       SPNET      37 0
+metal4       PIN        37 0
+metal4       LABEL      37 0
+metal4       LEFPIN     37 0
+metal4       LEFLABEL   37 0
+metal4       LEFOBS     37 0
+metal4       VIA        37 0
+
+metal5       DRAWING    38 0
+metal5       NET        38 0
+metal5       SPNET      38 0
+metal5       PIN        38 0
+metal5       LABEL      38 0
+metal5       LEFPIN     38 0
+metal5       LEFLABEL   38 0
+metal5       LEFOBS     38 0
+metal5       VIA        38 0
+
+metal6       DRAWING    39 0
+metal6       NET        39 0
+metal6       SPNET      39 0
+metal6       PIN        39 0
+metal6       LABEL      39 0
+metal6       LEFPIN     39 0
+metal6       LEFLABEL   39 0
+metal6       LEFOBS     39 0
+metal6       VIA        39 0
+
+metal7       DRAWING    40 0
+metal7       NET        40 0
+metal7       SPNET      40 0
+metal7       PIN        40 0
+metal7       LABEL      40 0
+metal7       LEFPIN     40 0
+metal7       LEFLABEL   40 0
+metal7       LEFOBS     40 0
+metal7       VIA        40 0
+
+metal8       DRAWING    41 0
+metal8       NET        41 0
+metal8       SPNET      41 0
+metal8       PIN        41 0
+metal8       LABEL      41 0
+metal8       LEFPIN     41 0
+metal8       LEFLABEL   41 0
+metal8       LEFOBS     41 0
+metal8       VIA        41 0
+
+metal9       DRAWING    42 0
+metal9       NET        42 0
+metal9       SPNET      42 0
+metal9       PIN        42 0
+metal9       LABEL      42 0
+metal9       LEFPIN     42 0
+metal9       LEFLABEL   42 0
+metal9       LEFOBS     42 0
+metal9       VIA        42 0
+
+metal10      DRAWING    43 0
+metal10      NET        43 0
+metal10      SPNET      43 0
+metal10      PIN        43 0
+metal10      LABEL      43 0
+metal10      LEFPIN     43 0
+metal10      LEFLABEL   43 0
+metal10      LEFOBS     43 0
+metal10      VIA        43 0
+
+# Cut layers
+via1         DRAWING    50 0
+via1         VIA        50 0
+via2         DRAWING    51 0
+via2         VIA        51 0
+via3         DRAWING    52 0
+via3         VIA        52 0
+via4         DRAWING    53 0
+via4         VIA        53 0
+via5         DRAWING    54 0
+via5         VIA        54 0
+via6         DRAWING    55 0
+via6         VIA        55 0
+via7         DRAWING    56 0
+via7         VIA        56 0
+via8         DRAWING    57 0
+via8         VIA        57 0
+via9         DRAWING    58 0
+via9         VIA        58 0

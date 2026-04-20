@@ -35,6 +35,7 @@ module jv32_soc #(
     parameter int unsigned        IRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter int unsigned        DRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter bit                 FAST_MUL        = 1'b1,
+    parameter bit                 MUL_MC          = 1'b1,
     parameter bit                 FAST_DIV        = 1'b0,
     parameter bit                 FAST_SHIFT      = 1'b1,
     parameter bit                 BP_EN           = 1'b1,
@@ -475,6 +476,7 @@ module jv32_soc #(
     // =====================================================================
     jv32_top #(
         .FAST_MUL  (FAST_MUL),
+        .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),

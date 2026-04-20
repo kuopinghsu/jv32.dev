@@ -100,6 +100,9 @@ LINT_MOD_FLAGS += -I$(CORE_DIR) -I$(JV32_DIR) -I$(AXI_DIR) -I$(RTL_DIR)
 ifdef FAST_MUL
   VERILATOR_FLAGS += -pvalue+FAST_MUL=$(FAST_MUL)
 endif
+ifdef MUL_MC
+  VERILATOR_FLAGS += -pvalue+MUL_MC=$(MUL_MC)
+endif
 ifdef FAST_DIV
   VERILATOR_FLAGS += -pvalue+FAST_DIV=$(FAST_DIV)
 endif
@@ -185,7 +188,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -196,12 +199,16 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
-        submodule-init
+        submodule-init extra-tests
 
 # Default: build RTL simulator
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
-	@make -f Makefile FAST_MUL=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
-	@make -f Makefile FAST_DIV=1 rtl-all sim-all compare-all
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all extra-tests arch-test-run
+
+extra-tests:
+	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
+	@make -f Makefile FAST_DIV=1 FAST_MUL=1 MUL_MC=1 rtl-all sim-all compare-all
+	@make -f Makefile FAST_DIV=0 FAST_MUL=1 MUL_MC=0 rtl-all sim-all compare-all
+	@make -C openocd
 
 # ============================================================================
 # Build RTL simulator
@@ -913,6 +920,7 @@ help:
 	@echo ""
 	@echo "RTL parameters (override on command line):"
 	@echo "  FAST_MUL=0|1         Serial/combinatorial multiplier"
+	@echo "  MUL_MC=0|1           1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)"
 	@echo "  FAST_DIV=0|1         Serial/combinatorial divider"
 	@echo "  FAST_SHIFT=0|1       Serial/barrel shifter"
 	@echo "  BP_EN=0|1            Branch predictor enable"

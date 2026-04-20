@@ -91,10 +91,27 @@ Hardware parameters are set in `Makefile.cfg` and can be overridden on the comma
 
 | Parameter | Default | Description |
 |---|---|---|
-| `FAST_MUL` | `1` | `1` = combinatorial multiplier; `0` = serial shift-and-add (variable latency) |
+| `FAST_MUL` | `1` | `1` = fast multiplier (see `MUL_MC`); `0` = serial shift-and-add (variable latency) |
+| `MUL_MC` | `1` | `1` = 2-stage pipelined multiply (2 cycles, better timing); `0` = 1-cycle combinatorial (requires `FAST_MUL=1`) |
 | `FAST_DIV` | `0` | `1` = combinatorial divider; `0` = serial restoring divider (variable latency) |
 | `FAST_SHIFT` | `1` | `1` = barrel shifter (1 cycle); `0` = 1-bit-per-cycle serial shifter |
 | `BP_EN` | `1` | `1` = enable branch predictor; `0` = always-not-taken |
+
+#### Multiplier configuration guide (Nangate 45 nm / FreePDK45)
+
+The multiplier has three modes, selectable via `FAST_MUL` and `MUL_MC`:
+
+| Mode | `FAST_MUL` | `MUL_MC` | Latency | Critical path | Recommendation |
+|---|:---:|:---:|---|---|---|
+| Serial shift-and-add | `0` | — | variable (up to 32 cycles) | minimal (FF-chain) | area-critical designs |
+| 1-cycle combinatorial | `1` | `0` | 1 cycle | full 32×32 multiply tree | ≤ 75 MHz |
+| 2-stage pipelined | `1` | `1` | 2 cycles | 16×16 partial-product stage | > 75 MHz |
+
+**Selection advice:**
+
+- **≤ 75 MHz target** — use `FAST_MUL=1 MUL_MC=0`.  The single-cycle combinatorial 32×32 multiply fits comfortably within a ~13 ns period and requires no pipeline stall overhead for most MUL instructions.
+- **> 75 MHz target** — use `FAST_MUL=1 MUL_MC=1` (default).  Splitting the multiply into four 16×16 partial products halves the combinatorial depth; the pipeline absorbs the extra cycle as a 1-stall bubble.  No `set_multicycle_path` SDC exception is needed because each pipeline stage closes timing independently.
+- The exact crossover frequency depends on place-and-route results; always run `make -C syn synth` for both settings and compare the post-PnR WNS/TNS reports to determine which is best for your target clock period.
 
 ### Memory Map
 

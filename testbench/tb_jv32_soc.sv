@@ -13,6 +13,7 @@ module tb_jv32_soc #(
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,
     parameter bit                 FAST_MUL   = 1'b1,
+    parameter bit                 MUL_MC     = 1'b1,
     parameter bit                 FAST_DIV   = 1'b0,
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
@@ -147,6 +148,7 @@ module tb_jv32_soc #(
     logic tb_alias_is_iram;
     logic tb_alias_rd_sel, tb_alias_wr_sel;
     logic tb_alias_active;
+    logic decerr_bpending;
     logic alias_arready, alias_rvalid, alias_awready, alias_wready, alias_bvalid;
     logic [31:0] alias_rdata;
     logic [1:0] alias_rresp, alias_bresp;
@@ -221,6 +223,19 @@ module tb_jv32_soc #(
         end
     end
 
+    // Latch a pending DECERR B-response for non-alias unmapped writes.
+    // bvalid must stay asserted until bready, but wvalid drops before
+    // jv32_top transitions from BUS_DAW to BUS_DB and asserts bready.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            decerr_bpending <= 1'b0;
+        end
+        else begin
+            if (!tb_alias_active && !tb_alias_wr_sel && ext_axi_wvalid && !decerr_bpending) decerr_bpending <= 1'b1;
+            else if (decerr_bpending && ext_axi_bready) decerr_bpending <= 1'b0;
+        end
+    end
+
     // Drive external TCM slave interfaces from testbench alias bridge.
     always_comb begin
         s_iram_tcm_araddr = tb_alias_addr_r;
@@ -264,7 +279,7 @@ module tb_jv32_soc #(
             ext_axi_rresp   = 2'b11;
             ext_axi_awready = 1'b1;
             ext_axi_wready  = 1'b1;
-            ext_axi_bvalid  = ext_axi_wvalid;
+            ext_axi_bvalid  = decerr_bpending;
             ext_axi_bresp   = 2'b11;
         end
     end
@@ -335,6 +350,7 @@ module tb_jv32_soc #(
         .IRAM_SIZE      (IRAM_SIZE),
         .DRAM_SIZE      (DRAM_SIZE),
         .FAST_MUL       (FAST_MUL),
+        .MUL_MC         (MUL_MC),
         .FAST_DIV       (FAST_DIV),
         .FAST_SHIFT     (FAST_SHIFT),
         .BP_EN          (BP_EN),

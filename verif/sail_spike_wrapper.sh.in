@@ -53,10 +53,10 @@ if [ -z "$spike_isa" ]; then
     elf_class="$(LC_ALL=C file -b "$elf" 2>/dev/null || true)"
     case "$elf_class" in
         *ELF*32-bit*)
-            spike_isa="rv32imac"
+            spike_isa="rv32imac_zicntr_zicsr"
             ;;
         *ELF*64-bit*)
-            spike_isa="rv64imac"
+            spike_isa="rv64imac_zicntr_zicsr"
             ;;
         *)
             spike_isa="rv32imac"
@@ -64,4 +64,4 @@ if [ -z "$spike_isa" ]; then
     esac
 fi
 
-exec "__SPIKE_BIN__" --isa="$spike_isa" --misaligned "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"
+exec "__SPIKE_BIN__" --isa="$spike_isa" "+signature=$sig_file" "+signature-granularity=$sig_granularity" "$elf"

@@ -9,7 +9,7 @@
 // JV32 IRAM size: 64KB
 `define LARGEST_PROGRAM     32'h00010000
 
-// Unmapped address (axi_xbar returns DECERR, but JV32 core does not convert to exception)
+// Unmapped address → axi_xbar returns DECERR → JV32 core raises EXC_LOAD/STORE_ACCESS_FAULT
 `define ACCESS_FAULT_ADDRESS 64'h00000000
 
 // JV32 CLIC base at same address as standard CLINT

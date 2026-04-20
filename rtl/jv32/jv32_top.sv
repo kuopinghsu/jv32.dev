@@ -44,6 +44,7 @@
 
 module jv32_top #(
     parameter bit                 FAST_MUL   = 1'b1,
+    parameter bit                 MUL_MC     = 1'b1,
     parameter bit                 FAST_DIV   = 1'b0,
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
@@ -225,6 +226,7 @@ module jv32_top #(
 
     jv32_core #(
         .FAST_MUL  (FAST_MUL),
+        .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),

@@ -920,15 +920,16 @@ static void step() {
     // ── Loads ─────────────────────────────────────────────────────────────
     case 0x03: {
         uint32_t addr = a + imm_i();
-        // JV32 handles misaligned loads transparently, so model loads directly
-        // at the requested byte address instead of raising misalignment traps.
         switch (funct3) {
-        case 0: result = (uint32_t)sign_extend(mem_read(addr, 1) & 0xFFu, 8);      break; // LB
-        case 1: result = (uint32_t)sign_extend(mem_read(addr, 2) & 0xFFFFu, 16);   break; // LH
-        case 2: result = mem_read(addr, 4);                                        break; // LW
-        case 4: result = mem_read(addr, 1) & 0xFFu;                                break; // LBU
-        case 5: result = mem_read(addr, 2) & 0xFFFFu;                              break; // LHU
-        default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;   break;
+        case 0: result = (uint32_t)sign_extend(mem_read(addr, 1) & 0xFFu, 8);     break; // LB
+        case 1: if (!check_align(addr, 2, true)) break;
+                result = (uint32_t)sign_extend(mem_read(addr, 2) & 0xFFFFu, 16);  break; // LH
+        case 2: if (!check_align(addr, 4, true)) break;
+                result = mem_read(addr, 4);                                        break; // LW
+        case 4: result = mem_read(addr, 1) & 0xFFu;                               break; // LBU
+        case 5: if (!check_align(addr, 2, true)) break;
+                result = mem_read(addr, 2) & 0xFFFFu;                             break; // LHU
+        default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;  break;
         }
         do_write = !exc_pending;
         if (do_write) {

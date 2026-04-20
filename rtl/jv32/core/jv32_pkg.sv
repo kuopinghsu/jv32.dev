@@ -94,6 +94,7 @@ package jv32_pkg;
     // Top-Level SoC Configuration Parameters
     // ========================================================================
     localparam int unsigned FAST_MUL       = 1;              // 1=comb, 0=serial (32 cyc)
+    localparam int unsigned MUL_MC         = 1;              // 1=2-stage pipelined (2 cyc); 0=1-cycle comb.
     localparam int unsigned FAST_DIV       = 0;              // 1=comb, 0=serial (33 cyc)
     localparam int unsigned FAST_SHIFT     = 1;              // 1=barrel, 0=serial 1-bit/cyc
     localparam int unsigned BP_EN          = 1;              // 1=BTB+RAS, 0=predict-not-taken

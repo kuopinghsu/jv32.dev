@@ -55,19 +55,18 @@ params:
   REPORT_VA_IN_MTVAL_ON_LOAD_MISALIGNED: true
   REPORT_VA_IN_MTVAL_ON_STORE_AMO_MISALIGNED: true
   REPORT_VA_IN_MTVAL_ON_INSTRUCTION_MISALIGNED: false
-  REPORT_VA_IN_MTVAL_ON_LOAD_ACCESS_FAULT: false
-  REPORT_VA_IN_MTVAL_ON_STORE_AMO_ACCESS_FAULT: false
-  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_ACCESS_FAULT: false
+  REPORT_VA_IN_MTVAL_ON_LOAD_ACCESS_FAULT: true        # RTL: wb_exc_tval = mem_addr
+  REPORT_VA_IN_MTVAL_ON_STORE_AMO_ACCESS_FAULT: true   # RTL: wb_exc_tval = mem_addr
+  REPORT_VA_IN_MTVAL_ON_INSTRUCTION_ACCESS_FAULT: true  # RTL: ex_exc_tval = if_ex_r.pc
   REPORT_ENCODING_IN_MTVAL_ON_ILLEGAL_INSTRUCTION: true
   MTVAL_WIDTH: 32
 
   # ── Misaligned load/store / atomics ──────────────────────────────────────
-  # JV32 handles misaligned loads/stores transparently in hardware, but does
-  # not support misaligned AMOs or any special LR/SC VA-synonym behavior.
-  MISALIGNED_LDST: true
-  MISALIGNED_LDST_EXCEPTION_PRIORITY: low
+  # JV32 raises EXC_LOAD_ADDR_MISALIGNED (cause=4) or EXC_STORE_ADDR_MISALIGNED
+  # (cause=6) for any misaligned load or store.  tval = faulting address.
+  # Misaligned AMOs are not supported either (MISALIGNED_AMO: false).
+  MISALIGNED_LDST: false
   MISALIGNED_MAX_ATOMICITY_GRANULE_SIZE: 0
-  MISALIGNED_SPLIT_STRATEGY: custom
   MISALIGNED_AMO: false
   LRSC_RESERVATION_STRATEGY: "reserve exactly enough to cover the access"
   LRSC_FAIL_ON_VA_SYNONYM: false

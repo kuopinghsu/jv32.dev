@@ -88,9 +88,9 @@ VERILOG_DEFINES:
   - NO_ASSERTION
   - GENERIC_SRAM
 
-# SYNTH_PARAMETERS (IRAM_SIZE / DRAM_SIZE) are NOT defined here.
-# The Makefile computes them from IRAM_BANKS * 8192 / DRAM_BANKS * 8192 and
-# writes build/tcm_params.yaml, which is passed to OpenLane2 as a second config.
+# SYNTH_PARAMETERS (IRAM_SIZE / DRAM_SIZE / MUL_MC etc.) are NOT defined here.
+# The Makefile computes them and writes build/tcm_params.yaml, which is passed
+# to OpenLane2 as a second config.
 
 SYNTH_STRATEGY: AREA 0
 
@@ -187,6 +187,9 @@ RUN_KLAYOUT_XOR: false
 # ── Late signoff robustness (post stream-out) ───────────────────────────────
 # Magic LEF/DRC paths are brittle in this FreePDK45+Nangate setup; keep the
 # flow on KLayout signoff and avoid non-actionable Magic/LVS hard stops.
+# NOTE: Odb.CheckDesignAntennaProperties depends on the LEF output of
+#       Magic.WriteLEF; it is gated on RUN_MAGIC_WRITE_LEF in classic.py so
+#       setting this to false also skips that checker.
 RUN_MAGIC_WRITE_LEF: false
 RUN_MAGIC_DRC: false
 RUN_KLAYOUT_DRC: false

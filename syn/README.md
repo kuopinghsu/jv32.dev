@@ -138,20 +138,44 @@ make gen-mem IRAM_SIZE=65536 DRAM_SIZE=65536
 
 The `openlane/config.yaml` targets:
 - **PDK**: `freepdk45` (Nangate 45nm Open Cell Library)
-- **Clock**: 100 MHz (10 ns period)
-- **Core utilisation**: 35% (sized to fit 4× `sram_1rw_2048x32` macros)
+- **Clock**: 80 MHz (12.5 ns period)
+- **Core utilisation**: 40% placement density (`PL_TARGET_DENSITY: 0.4`)
 - **Global routing**: up to Metal9
 
 The custom PDK configuration lives in `pdk/freepdk45/libs.tech/openlane/`.
 OpenLane2 is invoked with `--pdk-root $(CURDIR)/pdk --pdk freepdk45`.
 
+### Current synthesised configuration
+
+The parameters below are written to `build/tcm_params.yaml` by `make synth` /
+`make gen-mem` and are passed to Yosys via `SYNTH_PARAMETERS`:
+
+| Parameter | Value | Description |
+|---|---|---|
+| `IRAM_SIZE` | `16384` (16 KB) | IRAM size in bytes |
+| `DRAM_SIZE` | `16384` (16 KB) | DRAM size in bytes |
+| `FAST_MUL` | **`1`** | Combinatorial multiplier (1-cycle) |
+| `FAST_DIV` | **`0`** | Serial restoring divider (variable latency) |
+| `FAST_SHIFT` | **`1`** | Barrel shifter (1-cycle) |
+| `BP_EN` | **`1`** | Branch predictor enabled |
+
+To change any parameter pass it on the `make` command line, e.g.:
+
+```bash
+make synth FAST_MUL=1 FAST_SHIFT=1
+```
+
 ## Variables reference
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENRAM` | `$(HOME)/OpenRAM-1.2.48` | OpenRAM root |
-| `OPENLANE` | `$(HOME)/openlane2` | OpenLane2 root |
+| `OPENRAM` | `$(HOME)/opt/OpenRAM` | OpenRAM root |
+| `OPENLANE` | `$(HOME)/opt/openlane2` | OpenLane2 root |
 | `NANGATE_HOME` | *(must be set)* | Nangate 45nm library root |
 | `IRAM_SIZE` | `16384` (16 KB) | IRAM size in bytes (evaluation; RTL default 128 KB) |
 | `DRAM_SIZE` | `16384` (16 KB) | DRAM size in bytes (evaluation; RTL default 128 KB) |
 | `OPENRAM_OPTIMIZE` | `speed` | `speed` or `area` |
+| `FAST_MUL` | `1` | `1` = combinatorial multiplier; `0` = serial shift-and-add (variable latency) |
+| `FAST_DIV` | `0` | `1` = combinatorial divider; `0` = serial restoring divider (variable latency) |
+| `FAST_SHIFT` | `1` | `1` = barrel shifter (1 cycle); `0` = 1-bit-per-cycle serial shifter |
+| `BP_EN` | `1` | `1` = enable branch predictor; `0` = always-not-taken |

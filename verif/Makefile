@@ -33,6 +33,13 @@ ARCH_TEST_REF_WRAPPER := $(WORKDIR)/sail_riscv_sim.wrapper.sh
 ARCH_TEST_CONFIG_DIR := $(WORKDIR)/jv32-rv32imac
 ARCH_TEST_EXTENSIONS_FILE := $(ARCH_TEST_CONFIG_DIR)/extensions.txt
 
+# ARCH_TEST_IRAM_SIZE: I-jal-00 places its .text segment at 0x80004000 and the
+# section is 0x1c080 bytes long, ending at 0x80020080 — 128 bytes past the
+# default 128 KB IRAM boundary (0x80020000).  All other tests fit in 128 KB.
+# Override to 256 KB (262144) only for the arch-test RTL simulator build so
+# the default IRAM_SIZE in Makefile.cfg and the SV files stays at 128 KB.
+ARCH_TEST_IRAM_SIZE := 262144
+
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
 SPIKE        ?= spike
@@ -123,6 +130,14 @@ arch-test-setup: $(ACT_SENTINEL)
 #   EXTENSIONS        — comma-separated list (default: all in UDB config)
 #   JOBS              — parallel build jobs (default: nproc)
 #   WORKDIR           — build/output dir (default: build/arch-test-work)
+#
+# EXCLUDE_EXTENSIONS rationale:
+#   Sm              — machine-mode CSR tests; excluded pending Sail CSR model alignment
+#   S               — supervisor mode; JV32 is M-mode only
+#   InterruptsSm    — interrupt timing tests; JV32 CLIC quirks not yet modelled
+#   ExceptionsZalrsc/Zaamo — LR/SC and AMO exception tests; not yet validated
+#   PMPSm/PMPZca/PMPmisaligned — PMP tests; JV32 has no PMP
+#   Sv/Svade/...    — virtual memory tests; JV32 has no MMU
 # ============================================================================
 arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@set -e; \
@@ -140,14 +155,14 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	echo "[arch-test] Work directory: $(WORKDIR)"; \
 	echo "[arch-test] Phase 1/3: building RTL simulator"; \
 	echo "=========================================="; \
-	$(MAKE) -C $(JV32_ROOT) --no-print-directory build-rtl; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) build-rtl; \
 	echo "=========================================="; \
 	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
 	echo "=========================================="; \
 	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
-	    EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zicntr \
+            EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS); \
 	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
