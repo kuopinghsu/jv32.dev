@@ -188,6 +188,7 @@ module jv32_soc #(
     logic dbg_singlestep, dbg_ebreakm;
     logic [31:0] progbuf0, progbuf1;
     logic soc_rst_n;
+    logic rst_n_pre, rst_sync_ff1, rst_sync_ff2;
 
     // Trigger interface wires (DTM ↔ core)
     localparam int N_TRIGGERS = 2;
@@ -256,7 +257,23 @@ module jv32_soc #(
         return in_iram(addr) || in_dram(addr);
     endfunction
 
-    assign soc_rst_n      = rst_n & ~dbg_ndmreset;
+    // Reset synchronizer: async assert, synchronous de-assert.
+    // Both the external rst_n and the debug ndmreset can assert the reset
+    // immediately, but de-assertion is delayed two clk cycles to avoid
+    // metastability on downstream flops.
+    assign rst_n_pre = rst_n & ~dbg_ndmreset;
+
+    always_ff @(posedge clk or negedge rst_n_pre) begin
+        if (!rst_n_pre) begin
+            rst_sync_ff1 <= 1'b0;
+            rst_sync_ff2 <= 1'b0;
+        end else begin
+            rst_sync_ff1 <= 1'b1;
+            rst_sync_ff2 <= rst_sync_ff1;
+        end
+    end
+
+    assign soc_rst_n      = rst_sync_ff2;
     assign dbg_tcm_select = (dbg_tcm_state == DBG_TCM_RD_ADDR)
                             || (dbg_tcm_state == DBG_TCM_RD_RESP)
                             || (dbg_tcm_state == DBG_TCM_WR_REQ)
