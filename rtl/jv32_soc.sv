@@ -122,6 +122,7 @@ module jv32_soc #(
     input  logic        ext_axi_bvalid,
 
     // Trace
+    input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
@@ -575,6 +576,7 @@ module jv32_soc #(
         .dbg_tdata1_i      (dbg_tdata1),
         .dbg_tdata2_i      (dbg_tdata2),
         // Trace
+        .trace_en          (trace_en),
         .trace_valid       (trace_valid),
         .trace_reg_we      (trace_reg_we),
         .trace_pc          (trace_pc),

@@ -164,6 +164,7 @@ module jv32_top #(
     // =========================================================================
     // Trace
     // =========================================================================
+    input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
@@ -275,6 +276,7 @@ module jv32_top #(
         .dmem_resp_valid   (dmem_resp_valid),
         .dmem_resp_data    (dmem_resp_data),
         .dmem_resp_fault   (dmem_resp_fault),
+        .trace_en          (trace_en),
         .trace_valid       (trace_valid),
         .trace_reg_we      (trace_reg_we),
         .trace_pc          (trace_pc),

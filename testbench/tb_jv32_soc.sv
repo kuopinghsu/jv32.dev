@@ -24,6 +24,9 @@ module tb_jv32_soc #(
     input logic clk,
     input logic rst_n,
 
+    // Trace enable: set 1 to enable trace outputs, 0 to suppress (save power)
+    input  logic        trace_en,
+
     // Trace outputs
     output logic        trace_valid,
     output logic        trace_reg_we,
@@ -423,6 +426,7 @@ module tb_jv32_soc #(
         .ext_axi_wready    (ext_axi_wready),
         .ext_axi_bresp     (ext_axi_bresp),
         .ext_axi_bvalid    (ext_axi_bvalid),
+        .trace_en          (trace_en),
         .trace_valid       (trace_valid),
         .trace_reg_we      (trace_reg_we),
         .trace_pc          (trace_pc),

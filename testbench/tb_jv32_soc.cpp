@@ -197,6 +197,7 @@ int main(int argc, char** argv) {
     dut->rst_n             = 0;
     dut->clk               = 0;
     dut->uart_rx_i         = 1; // idle
+    dut->trace_en          = 1; // enable trace
     dut->jtag_ntrst_i      = 0;
     dut->jtag_pin0_tck_i   = 0;
     dut->jtag_pin1_tms_i   = 1; // JTAG idle / TAP reset state

@@ -83,6 +83,8 @@ module jv32_core #(
     output logic imem_flush,
 
     // Trace (one entry per retired instruction)
+    // trace_en=0 suppresses all trace outputs to save power.
+    input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
     output logic [31:0] trace_pc,
@@ -1169,22 +1171,52 @@ module jv32_core #(
                         && !ex_wb_r.exception && !dmem_fault_active
                         && !ex_wb_r.mret && !dbg_step_pending_r;
 
-    assign trace_valid = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
-    assign trace_reg_we   = trace_valid && ex_wb_r.reg_we
-                            && (ex_wb_r.rd_addr != 5'd0)
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
-    assign trace_pc = ex_wb_r.pc;
-    assign trace_rd = ex_wb_r.rd_addr;
-    assign trace_rd_data = rf_wdata;
-    assign trace_instr = ex_wb_r.orig_instr;
-    assign trace_mem_we   = trace_valid && ex_wb_r.mem_write
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
-    assign trace_mem_re   = trace_valid && ex_wb_r.mem_read
-                            && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
-    assign trace_mem_addr = ex_wb_r.mem_addr;
-    assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
-                            ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
-                                                         ex_wb_r.store_data;
+    // =====================================================================
+    // Trace output registers
+    // All trace outputs are registered.  trace_en gates the clock enable so
+    // that when trace_en=0 the flops never toggle, saving dynamic power.
+    // =====================================================================
+    logic trace_retire;  // one-cycle retire pulse (combinational, not output)
+    assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active
+                          && !dmem_stall && !irq_cancel;
+
+    logic [31:0] trace_mem_data_c;
+    assign trace_mem_data_c = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
+                              ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
+                                                           ex_wb_r.store_data;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            trace_valid    <= 1'b0;
+            trace_reg_we   <= 1'b0;
+            trace_mem_we   <= 1'b0;
+            trace_mem_re   <= 1'b0;
+            trace_pc       <= 32'h0;
+            trace_rd       <= 5'h0;
+            trace_rd_data  <= 32'h0;
+            trace_instr    <= 32'h0;
+            trace_mem_addr <= 32'h0;
+            trace_mem_data <= 32'h0;
+        end else if (trace_en) begin
+            trace_valid    <= trace_retire;
+            trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
+            trace_mem_we   <= trace_retire && ex_wb_r.mem_write;
+            trace_mem_re   <= trace_retire && ex_wb_r.mem_read;
+            trace_pc       <= ex_wb_r.pc;
+            trace_rd       <= ex_wb_r.rd_addr;
+            trace_rd_data  <= rf_wdata;
+            trace_instr    <= ex_wb_r.orig_instr;
+            trace_mem_addr <= ex_wb_r.mem_addr;
+            trace_mem_data <= trace_mem_data_c;
+        end else begin
+            // trace_en=0: clear valid/we flags so no spurious events appear;
+            // data registers are not clocked (CE=0) to save power.
+            trace_valid    <= 1'b0;
+            trace_reg_we   <= 1'b0;
+            trace_mem_we   <= 1'b0;
+            trace_mem_re   <= 1'b0;
+        end
+    end
 
     // Suppress unused warnings for WFI/fence/fence_i (treated as NOPs here)
     logic _unused;
@@ -1229,7 +1261,7 @@ module jv32_core #(
                 dmem_req_addr, dmem_req_wdata, dmem_req_wstrb));
 
         // PIPE: instruction retired (WB stage)
-        if (trace_valid) `DEBUG2(`DBG_GRP_PIPE, ("WB  pc=0x%h rd=x%-2d data=0x%h", trace_pc, trace_rd, trace_rd_data));
+        if (trace_retire) `DEBUG2(`DBG_GRP_PIPE, ("WB  pc=0x%h rd=x%-2d data=0x%h", ex_wb_r.pc, ex_wb_r.rd_addr, rf_wdata));
     end
 `endif
 
