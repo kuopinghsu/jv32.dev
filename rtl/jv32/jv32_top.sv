@@ -369,16 +369,25 @@ module jv32_top #(
         SLV_WR_RESP   // write accepted, drive bvalid
     } slv_e;
 
-    slv_e iram_slv_state, dram_slv_state;
-    logic [31:0] iram_slv_addr, dram_slv_addr;
-    logic [31:0] iram_slv_wdata, dram_slv_wdata;
-    logic [3:0] iram_slv_wstrb, dram_slv_wstrb;
-    logic [31:0] iram_slv_rdata_r, dram_slv_rdata_r;
-    logic iram_slv_rd_first, dram_slv_rd_first;
+    slv_e        iram_slv_state;
+    slv_e        dram_slv_state;
+    logic [31:0] iram_slv_addr;
+    logic [31:0] dram_slv_addr;
+    logic [31:0] iram_slv_wdata;
+    logic [31:0] dram_slv_wdata;
+    logic [ 3:0] iram_slv_wstrb;
+    logic [ 3:0] dram_slv_wstrb;
+    logic [31:0] iram_slv_rdata_r;
+    logic [31:0] dram_slv_rdata_r;
+    logic        iram_slv_rd_first;
+    logic        dram_slv_rd_first;
 
-    logic slave_wants_iram, slave_wants_dram;
-    logic slave_iram_is_wr, slave_dram_is_wr;
-    logic slave_iram_grant, slave_dram_grant;
+    logic        slave_wants_iram;
+    logic        slave_wants_dram;
+    logic        slave_iram_is_wr;
+    logic        slave_dram_is_wr;
+    logic        slave_iram_grant;
+    logic        slave_dram_grant;
 
     assign slave_wants_iram = (iram_slv_state == SLV_RD_WAIT) | (iram_slv_state == SLV_WR_WAIT);
     assign slave_wants_dram = (dram_slv_state == SLV_RD_WAIT) | (dram_slv_state == SLV_WR_WAIT);

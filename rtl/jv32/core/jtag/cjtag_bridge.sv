@@ -98,8 +98,7 @@ module cjtag_bridge (
     // =========================================================================
     // Input Synchronizers - 2-stage for metastability protection
     // =========================================================================
-    /* verilator lint_off SYNCASYNCNET */
-    always_ff @(posedge clk_i or negedge ntrst_i) begin
+    always_ff @(posedge clk_i) begin
         if (!ntrst_i) begin
             tckc_sync <= 2'b00;
             tmsc_sync <= 2'b00;
@@ -109,7 +108,6 @@ module cjtag_bridge (
             tmsc_sync <= {tmsc_sync[0], tmsc_i};
         end
     end
-    /* verilator lint_on SYNCASYNCNET */
 
     assign tckc_s = tckc_sync[1];
     assign tmsc_s = tmsc_sync[1];
@@ -572,15 +570,15 @@ module cjtag_bridge (
     // Counter Bounds Assertions
     // -------------------------------------------------------------------------
 
-    // Assert: Toggle counter must not exceed 31 (5-bit saturating counter)
-    // Note: This is tautological for a 5-bit counter but useful for formal verification
-    /* verilator lint_off CMPCONST */
-    property toggle_count_bounds;
-        @(posedge clk_i) disable iff (!ntrst_i) tmsc_toggle_count <= 5'd31;
+    // Assert: While counting toggles with TCKC held high, the toggle counter
+    // advances by one each observed TMSC edge.
+    property toggle_count_increments;
+        @(posedge clk_i) disable iff (!ntrst_i) (tckc_is_high && tckc_s && tmsc_edge) |=> (tmsc_toggle_count == ($past(
+            tmsc_toggle_count
+        ) + 5'd1));
     endproperty
-    assert property (toggle_count_bounds)
-    else $error("[ASSERT] Toggle counter overflow: %0d", tmsc_toggle_count);
-    /* verilator lint_on CMPCONST */
+    assert property (toggle_count_increments)
+    else $error("[ASSERT] Toggle counter did not increment on edge: %0d", tmsc_toggle_count);
 
     // Assert: Activation bit counter must be in range 0-11 when in ONLINE_ACT
     property activation_count_bounds;

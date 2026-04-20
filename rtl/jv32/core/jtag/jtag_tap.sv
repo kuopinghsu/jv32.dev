@@ -323,35 +323,5 @@ module jtag_tap #(
         else tdo_o <= tdo_comb;
     end
 
-    // =========================================================================
-    // Debug Info (for simulation)
-    // =========================================================================
-`ifndef SYNTHESIS
-    /* verilator lint_off UNUSED */
-    string state_name;
-    /* verilator lint_on UNUSED */
-    always_comb begin
-        case (state)
-            TEST_LOGIC_RESET: state_name = "RESET";
-            RUN_TEST_IDLE:    state_name = "IDLE";
-            SELECT_DR_SCAN:   state_name = "SEL_DR";
-            CAPTURE_DR:       state_name = "CAP_DR";
-            SHIFT_DR:         state_name = "SHFT_DR";
-            EXIT1_DR:         state_name = "EX1_DR";
-            PAUSE_DR:         state_name = "PAUSE_DR";
-            EXIT2_DR:         state_name = "EX2_DR";
-            UPDATE_DR:        state_name = "UPD_DR";
-            SELECT_IR_SCAN:   state_name = "SEL_IR";
-            CAPTURE_IR:       state_name = "CAP_IR";
-            SHIFT_IR:         state_name = "SHFT_IR";
-            EXIT1_IR:         state_name = "EX1_IR";
-            PAUSE_IR:         state_name = "PAUSE_IR";
-            EXIT2_IR:         state_name = "EX2_IR";
-            UPDATE_IR:        state_name = "UPD_IR";
-            default:          state_name = "UNKNOWN";  // unreachable; keeps case_default satisfied
-        endcase
-    end
-`endif  // SYNTHESIS
-
 endmodule
 

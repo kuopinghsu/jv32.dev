@@ -208,9 +208,7 @@ module jv32_dtm #(
 
     // Synthetic debug CSRs — owned exclusively by CLK domain (read via Capture-DR sync)
     // ntrst_i reset is NOT needed; rst_n resets these via the CLK always_ff block below.
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [          31:0]       dcsr_reg;  // CSR 0x7b0 – debug control/status; bits[8:6] reserved
-    /* verilator lint_on UNUSEDSIGNAL */
+    logic [          31:0]       dcsr_reg;       // CSR 0x7b0 – debug control/status; bits[8:6] reserved
     logic [          31:0]       dscratch0_reg;  // CSR 0x7b2 – debug scratch 0
     logic [          31:0]       dscratch1_reg;  // CSR 0x7b3 – debug scratch 1
 
@@ -344,9 +342,7 @@ module jv32_dtm #(
     logic resumeack_tck;  // dbg_resumeack_i synced to TCK domain
 
     // CPU Control Signals (system clock domain)
-    /* verilator lint_off UNUSEDSIGNAL */
     logic halted_clk;  // dbg_halted_i synchronized to clk domain (reserved for future use)
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // Memory access tracking
     logic mem_req_pending;
@@ -1932,6 +1928,7 @@ module jv32_dtm #(
         dcsr_reg[3],                               // nmip: not implemented in this core
         command_reg_sys[23], command_reg_sys[19],  // reserved bits in AC_ACCESS_REGISTER
         data0_result_valid_sync_r,                 // retained for future edge-detect use
+        halted_clk,                                // synchronized debug-halted status (reserved)
         sbdata0_result_valid_sync_r, sbaddress0_result_valid_sync_r};
 `endif  // SYNTHESIS
 

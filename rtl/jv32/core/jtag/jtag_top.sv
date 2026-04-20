@@ -104,47 +104,31 @@ module jtag_top #(
     // =========================================================================
     // Internal signals for each mode
     logic jtag_tck, jtag_tms, jtag_tdi, jtag_tdo;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic cjtag_tckc, cjtag_tmsc_in, cjtag_tmsc_out, cjtag_tmsc_oen;
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // Demux inputs from shared pins
-    assign jtag_tck      = pin0_tck_i;  // JTAG TCK from pin 0
-    assign jtag_tms      = pin1_tms_i;  // JTAG TMS from pin 1
-    assign jtag_tdi      = pin2_tdi_i;  // JTAG TDI from pin 2
-
-    assign cjtag_tckc    = pin0_tck_i;  // cJTAG TCKC from pin 0
-    assign cjtag_tmsc_in = pin1_tms_i;  // cJTAG TMSC from pin 1
+    assign jtag_tck = pin0_tck_i;  // JTAG TCK from pin 0
+    assign jtag_tms = pin1_tms_i;  // JTAG TMS from pin 1
+    assign jtag_tdi = pin2_tdi_i;  // JTAG TDI from pin 2
 
     // Mux outputs to shared pins based on mode
     if (USE_CJTAG) begin : gen_pin_mux_cjtag
+        logic cjtag_tmsc_out;
+        logic cjtag_tmsc_oen;
+
         // cJTAG mode: Pin 1 is bidirectional TMSC, Pin 3 is unused
         assign pin1_tms_o  = cjtag_tmsc_out;
         assign pin1_tms_oe = cjtag_tmsc_oen;
         assign pin3_tdo_o  = 1'b0;
         assign pin3_tdo_oe = 1'b1;  // Tristate (unused)
 
-    end
-    else begin : gen_pin_mux_jtag
-        // JTAG mode: Pin 1 is input-only TMS, Pin 3 is TDO output
-        assign pin1_tms_o  = 1'b0;
-        assign pin1_tms_oe = 1'b1;  // Tristate (input mode)
-        assign pin3_tdo_o  = jtag_tdo;
-        assign pin3_tdo_oe = 1'b0;  // Drive output
-    end
-
-    // =========================================================================
-    // Conditional cJTAG Bridge Instantiation
-    // =========================================================================
-    if (USE_CJTAG) begin : gen_cjtag_mode
         // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
         cjtag_bridge u_cjtag_bridge (
             .clk_i  (clk_i),
             .ntrst_i(ntrst_i),
 
             // cJTAG Interface (external 2-wire via shared pins)
-            .tckc_i  (cjtag_tckc),
-            .tmsc_i  (cjtag_tmsc_in),
+            .tckc_i  (pin0_tck_i),
+            .tmsc_i  (pin1_tms_i),
             .tmsc_o  (cjtag_tmsc_out),
             .tmsc_oen(cjtag_tmsc_oen),
 
@@ -156,12 +140,18 @@ module jtag_top #(
         );
 
     end
-    else begin : gen_jtag_mode
+    else begin : gen_pin_mux_jtag
+        // JTAG mode: Pin 1 is input-only TMS, Pin 3 is TDO output
+        assign pin1_tms_o  = 1'b0;
+        assign pin1_tms_oe = 1'b1;  // Tristate (input mode)
+        assign pin3_tdo_o  = jtag_tdo;
+        assign pin3_tdo_oe = 1'b0;  // Drive output
+
         // JTAG mode: Direct connection from shared pins
-        assign tap_tck  = jtag_tck;
-        assign tap_tms  = jtag_tms;
-        assign tap_tdi  = jtag_tdi;
-        assign jtag_tdo = tap_tdo;
+        assign tap_tck     = jtag_tck;
+        assign tap_tms     = jtag_tms;
+        assign tap_tdi     = jtag_tdi;
+        assign jtag_tdo    = tap_tdo;
     end
 
     // =========================================================================

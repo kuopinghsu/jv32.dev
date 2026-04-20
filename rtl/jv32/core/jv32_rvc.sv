@@ -48,35 +48,34 @@ module jv32_rvc #(
     logic        init_offset;
     logic        stale_rsp;        // 1 cycle after mr=1: SRAM echoes the old word, must discard
 
-    /* verilator lint_off WIDTHEXPAND */
     function automatic logic [31:0] c_sext6(input logic [5:0] v);
-        c_sext6 = 32'(v);
-        if (v[5]) c_sext6 |= 32'hFFFF_FFC0;
+        c_sext6 = {{26{v[5]}}, v};
     endfunction
-    function automatic logic [31:0] c_sext9(input logic [8:0] v);
-        c_sext9 = 32'(v);
-        if (v[8]) c_sext9 |= 32'hFFFF_FF00;
-    endfunction
-    function automatic logic [31:0] c_sext10(input logic [9:0] v);
-        c_sext10 = 32'(v);
-        if (v[9]) c_sext10 |= 32'hFFFF_FE00;
-    endfunction
-    function automatic logic [31:0] c_sext12(input logic [11:0] v);
-        c_sext12 = 32'(v);
-        if (v[11]) c_sext12 |= 32'hFFFF_F000;
-    endfunction
-    /* verilator lint_on WIDTHEXPAND */
 
-    /* verilator lint_off WIDTHEXPAND */
+    function automatic logic [31:0] c_sext9(input logic [8:0] v);
+        c_sext9 = {{23{v[8]}}, v};
+    endfunction
+
+    function automatic logic [31:0] c_sext10(input logic [9:0] v);
+        c_sext10 = {{22{v[9]}}, v};
+    endfunction
+
+    function automatic logic [31:0] c_sext12(input logic [11:0] v);
+        c_sext12 = {{20{v[11]}}, v};
+    endfunction
+
     function automatic logic [31:0] c_j_off(input logic [15:0] ci);
         c_j_off = c_sext12({ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3], 1'b0});
     endfunction
+
     function automatic logic [31:0] c_b_off(input logic [15:0] ci);
         c_b_off = c_sext9({ci[12], ci[6:5], ci[2], ci[11:10], ci[4:3], 1'b0});
     endfunction
+
     function automatic logic [31:0] enc_jal(input logic [4:0] rd, input logic [31:0] im);
         enc_jal = {im[20], im[10:1], im[11], im[19:12], rd, 7'h6F};
     endfunction
+
     function automatic logic [31:0] enc_br(input logic [2:0] f3, input logic [4:0] rs1, input logic [4:0] rs2,
                                            input logic [31:0] im);
         enc_br = {im[12], im[10:5], rs2, rs1, f3, im[4:1], im[11], 7'h63};
@@ -114,7 +113,7 @@ module jv32_rvc #(
             2'b00:
             case (funct3)
                 3'h0: begin
-                    nzuimm12 = {ci[10:7], ci[12:11], ci[5], ci[6], 2'b00};
+                    nzuimm12 = {2'b00, ci[10:7], ci[12:11], ci[5], ci[6], 2'b00};
                     expand_c = (nzuimm12 == 12'h0) ? 32'h0 : {nzuimm12, 5'd2, 3'h0, rd_p, 7'h13};
                 end
                 3'h2: expand_c = {{5'b0, ci[5], ci[12:10], ci[6], 2'b00}, rs1_p, 3'h2, rd_p, 7'h03};
@@ -244,9 +243,6 @@ module jv32_rvc #(
             default: expand_c = 32'h0;
         endcase
     endfunction
-    /* verilator lint_on UNUSEDSIGNAL */
-    /* verilator lint_on WIDTHEXPAND */
-
     // Effective memory response
     // Gate imem_resp_valid with !stale_rsp so the stale SRAM echo (one cycle after
     // mem_ready=1 advances pc_if) is invisible to all downstream decode logic.
