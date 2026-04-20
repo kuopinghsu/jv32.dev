@@ -29,40 +29,40 @@
 // ============================================================================
 
 // Debug group bit indices
-`define DBG_GRP_FETCH   0
-`define DBG_GRP_PIPE    1
-`define DBG_GRP_EX      2
-`define DBG_GRP_MEM     3
-`define DBG_GRP_CSR     4
-`define DBG_GRP_IRQ     5
-`define DBG_GRP_UART    6
-`define DBG_GRP_CLIC    7
-`define DBG_GRP_MAGIC   8
-`define DBG_GRP_JTAG    9
-`define DBG_GRP_DTM    10
+`define DBG_GRP_FETCH 0
+`define DBG_GRP_PIPE 1
+`define DBG_GRP_EX 2
+`define DBG_GRP_MEM 3
+`define DBG_GRP_CSR 4
+`define DBG_GRP_IRQ 5
+`define DBG_GRP_UART 6
+`define DBG_GRP_CLIC 7
+`define DBG_GRP_MAGIC 8
+`define DBG_GRP_JTAG 9
+`define DBG_GRP_DTM 10
 `define DBG_GRP_ICACHE 13   // legacy alias used by axi_magic.sv
 
 // Default: all groups enabled. Override with +define+DEBUG_GROUP=<decimal>
 `ifndef DEBUG_GROUP
-    `define DEBUG_GROUP 32'hFFFF_FFFF
+`define DEBUG_GROUP 32'hFFFF_FFFF
 `endif
 
 `ifdef SYNTHESIS
-    `define DEBUG1(msg)
-    `define DEBUG2(grp, msg)
+`define DEBUG1(msg)
+`define DEBUG2(grp, msg)
 `else
-  `ifdef DEBUG_LEVEL_1
-    `define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
-  `else
-    `define DEBUG1(msg)
-  `endif
-  `ifdef DEBUG_LEVEL_2
-    `define DEBUG2(grp, msg) \
+`ifdef DEBUG_LEVEL_1
+`define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
+`else
+`define DEBUG1(msg)
+`endif
+`ifdef DEBUG_LEVEL_2
+`define DEBUG2(grp, msg) \
         if (|((`DEBUG_GROUP >> (grp)) & 32'h1)) \
             $display("[%s] %s", jv32_pkg::dbg_grp_name(grp), $sformatf msg)
-  `else
-    `define DEBUG2(grp, msg)
-  `endif
+`else
+`define DEBUG2(grp, msg)
+`endif
 `endif
 
 package jv32_pkg;
@@ -93,14 +93,14 @@ package jv32_pkg;
     // ========================================================================
     // Top-Level SoC Configuration Parameters
     // ========================================================================
-    localparam int unsigned FAST_MUL       = 1;                // 1=comb, 0=serial (32 cyc)
-    localparam int unsigned FAST_DIV       = 1;                // 1=comb, 0=serial (33 cyc)
-    localparam int unsigned FAST_SHIFT     = 1;                // 1=barrel, 0=serial 1-bit/cyc
-    localparam int unsigned BP_EN          = 1;                // 1=BTB+RAS, 0=predict-not-taken
-    localparam int unsigned IRAM_SIZE      = 262144;           // bytes (256 KB)
-    localparam int unsigned DRAM_SIZE      = 262144;           // bytes (256 KB)
-    localparam int unsigned AXI_DATA_WIDTH = 32;               // 32-bit AXI data bus
-    localparam logic [31:0] BOOT_ADDR      = 32'h8000_0000;    // reset PC
+    localparam int unsigned FAST_MUL       = 1;              // 1=comb, 0=serial (32 cyc)
+    localparam int unsigned FAST_DIV       = 0;              // 1=comb, 0=serial (33 cyc)
+    localparam int unsigned FAST_SHIFT     = 1;              // 1=barrel, 0=serial 1-bit/cyc
+    localparam int unsigned BP_EN          = 1;              // 1=BTB+RAS, 0=predict-not-taken
+    localparam int unsigned IRAM_SIZE      = 262144;         // bytes (256 KB)
+    localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
+    localparam int unsigned AXI_DATA_WIDTH = 32;             // 32-bit AXI data bus
+    localparam logic [31:0] BOOT_ADDR      = 32'h8000_0000;  // reset PC
 
     // ========================================================================
     // Opcodes (7-bit)
@@ -160,11 +160,11 @@ package jv32_pkg;
     // Memory access size / sign (matches funct3 for load/store)
     // ========================================================================
     typedef enum logic [2:0] {
-        MEM_BYTE   = 3'b000,   // LB  / SB
-        MEM_HALF   = 3'b001,   // LH  / SH
-        MEM_WORD   = 3'b010,   // LW  / SW
-        MEM_BYTE_U = 3'b100,   // LBU
-        MEM_HALF_U = 3'b101    // LHU
+        MEM_BYTE   = 3'b000,  // LB  / SB
+        MEM_HALF   = 3'b001,  // LH  / SH
+        MEM_WORD   = 3'b010,  // LW  / SW
+        MEM_BYTE_U = 3'b100,  // LBU
+        MEM_HALF_U = 3'b101   // LHU
     } mem_size_e;
 
     // ========================================================================
@@ -188,16 +188,16 @@ package jv32_pkg;
     // Exception / Interrupt Cause codes  (mcause[4:0])
     // ========================================================================
     typedef enum logic [4:0] {
-        EXC_INSTR_ADDR_MISALIGNED  = 5'd0,
-        EXC_INSTR_ACCESS_FAULT     = 5'd1,
-        EXC_ILLEGAL_INSTR          = 5'd2,
-        EXC_BREAKPOINT             = 5'd3,
-        EXC_LOAD_ADDR_MISALIGNED   = 5'd4,
-        EXC_LOAD_ACCESS_FAULT      = 5'd5,
-        EXC_STORE_ADDR_MISALIGNED  = 5'd6,
-        EXC_STORE_ACCESS_FAULT     = 5'd7,
-        EXC_ECALL_UMODE            = 5'd8,
-        EXC_ECALL_MMODE            = 5'd11
+        EXC_INSTR_ADDR_MISALIGNED = 5'd0,
+        EXC_INSTR_ACCESS_FAULT    = 5'd1,
+        EXC_ILLEGAL_INSTR         = 5'd2,
+        EXC_BREAKPOINT            = 5'd3,
+        EXC_LOAD_ADDR_MISALIGNED  = 5'd4,
+        EXC_LOAD_ACCESS_FAULT     = 5'd5,
+        EXC_STORE_ADDR_MISALIGNED = 5'd6,
+        EXC_STORE_ACCESS_FAULT    = 5'd7,
+        EXC_ECALL_UMODE           = 5'd8,
+        EXC_ECALL_MMODE           = 5'd11
     } exc_cause_e;
 
     // ========================================================================
@@ -210,7 +210,7 @@ package jv32_pkg;
         CSR_MISA       = 12'h301,
         CSR_MIE        = 12'h304,
         CSR_MTVEC      = 12'h305,
-        CSR_MSTATUSH   = 12'h310,   // RV32 high bits of mstatus (MBE=0, all others 0)
+        CSR_MSTATUSH   = 12'h310,  // RV32 high bits of mstatus (MBE=0, all others 0)
         // Machine Trap Handling
         CSR_MSCRATCH   = 12'h340,
         CSR_MEPC       = 12'h341,
@@ -218,10 +218,10 @@ package jv32_pkg;
         CSR_MTVAL      = 12'h343,
         CSR_MIP        = 12'h344,
         // CLIC extensions (RVM23)
-        CSR_MTVT       = 12'h307,   // CLIC vector table base
-        CSR_MNXTI      = 12'h345,   // CLIC next-interrupt CSR
-        CSR_MINTSTATUS = 12'hFB1,   // CLIC interrupt status (current level)
-        CSR_MINTTHRESH = 12'h347,   // CLIC interrupt threshold
+        CSR_MTVT       = 12'h307,  // CLIC vector table base
+        CSR_MNXTI      = 12'h345,  // CLIC next-interrupt CSR
+        CSR_MINTSTATUS = 12'hFB1,  // CLIC interrupt status (current level)
+        CSR_MINTTHRESH = 12'h347,  // CLIC interrupt threshold
         // Machine Counters
         CSR_MCYCLE     = 12'hB00,
         CSR_MINSTRET   = 12'hB02,
@@ -258,35 +258,35 @@ package jv32_pkg;
 
     // EX → WB pipeline register
     typedef struct packed {
-        logic        valid;          // slot is valid
-        logic [31:0] pc;             // PC of this instruction (for trace & mepc)
-        logic [31:0] orig_instr;     // original encoding (for trace)
+        logic        valid;       // slot is valid
+        logic [31:0] pc;          // PC of this instruction (for trace & mepc)
+        logic [31:0] orig_instr;  // original encoding (for trace)
         // Writeback
-        logic [4:0]  rd_addr;        // destination register address
-        logic        reg_we;         // register write enable
-        logic [31:0] rd_data;        // result (ALU / LUI / AUIPC / JAL(R) link)
+        logic [4:0]  rd_addr;  // destination register address
+        logic        reg_we;   // register write enable
+        logic [31:0] rd_data;  // result (ALU / LUI / AUIPC / JAL(R) link)
         // Memory
-        logic        mem_read;       // load in flight
-        logic        mem_write;      // store in flight
-        mem_size_e   mem_op;         // access size/sign  (mem_size_e)
-        logic [31:0] mem_addr;       // effective address
-        logic [31:0] store_data;     // data to write (stores)
+        logic        mem_read;    // load in flight
+        logic        mem_write;   // store in flight
+        mem_size_e   mem_op;      // access size/sign  (mem_size_e)
+        logic [31:0] mem_addr;    // effective address
+        logic [31:0] store_data;  // data to write (stores)
         // AMO
-        logic        is_amo;         // AMO in flight
-        amo_op_e     amo_op;         // AMO operation
+        logic        is_amo;  // AMO in flight
+        amo_op_e     amo_op;  // AMO operation
         // CSR
-        logic [2:0]  csr_op;         // CSR operation (3'b0 = no CSR access)
-        logic [11:0] csr_addr;       // CSR address
-        logic [31:0] csr_wdata;      // CSR write value
-        logic [4:0]  csr_zimm;       // CSR immediate (CSRRWI/CSRRSI/CSRRCI)
+        logic [2:0]  csr_op;     // CSR operation (3'b0 = no CSR access)
+        logic [11:0] csr_addr;   // CSR address
+        logic [31:0] csr_wdata;  // CSR write value
+        logic [4:0]  csr_zimm;   // CSR immediate (CSRRWI/CSRRSI/CSRRCI)
         // Control
-        logic        exception;      // synchronous exception in EX
-        exc_cause_e  exc_cause;      // exception cause code
-        logic [31:0] exc_tval;       // trap value (bad PC/addr or instr)
-        logic        mret;           // MRET instruction
+        logic        exception;  // synchronous exception in EX
+        exc_cause_e  exc_cause;  // exception cause code
+        logic [31:0] exc_tval;   // trap value (bad PC/addr or instr)
+        logic        mret;       // MRET instruction
         // Redirect (branches/jumps resolved in EX)
-        logic        redirect;       // EX computed a new PC
-        logic [31:0] redirect_pc;    // target PC for branch/jump
+        logic        redirect;     // EX computed a new PC
+        logic [31:0] redirect_pc;  // target PC for branch/jump
     } ex_wb_t;
 
 endpackage

@@ -23,11 +23,11 @@ module uart_loopback (
         RX_STOP
     } rx_state_t;
 
-    rx_state_t rx_state;
-    logic [7:0] rx_data;
-    logic [2:0] rx_bit_idx;
-    logic [15:0] rx_clk_count;
-    logic rx_valid;
+    rx_state_t        rx_state;
+    logic      [ 7:0] rx_data;
+    logic      [ 2:0] rx_bit_idx;
+    logic      [15:0] rx_clk_count;
+    logic             rx_valid;
 
     // TX state
     typedef enum logic [2:0] {
@@ -37,26 +37,27 @@ module uart_loopback (
         TX_STOP
     } tx_state_t;
 
-    tx_state_t tx_state;
-    logic [7:0] tx_data;
-    logic [2:0] tx_bit_idx;
-    logic [15:0] tx_clk_count;
+    tx_state_t        tx_state;
+    logic      [ 7:0] tx_data;
+    logic      [ 2:0] tx_bit_idx;
+    logic      [15:0] tx_clk_count;
 
     // RX logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rx_state <= RX_IDLE;
-            rx_data <= 8'h0;
-            rx_bit_idx <= 3'h0;
+            rx_state     <= RX_IDLE;
+            rx_data      <= 8'h0;
+            rx_bit_idx   <= 3'h0;
             rx_clk_count <= 16'h0;
-            rx_valid <= 1'b0;
-        end else begin
+            rx_valid     <= 1'b0;
+        end
+        else begin
             rx_valid <= 1'b0;
 
             case (rx_state)
                 RX_IDLE: begin
                     rx_clk_count <= 16'h0;
-                    rx_bit_idx <= 3'h0;
+                    rx_bit_idx   <= 3'h0;
                     if (rx == 1'b0) begin  // Start bit
                         rx_state <= RX_START;
                     end
@@ -65,23 +66,26 @@ module uart_loopback (
                 RX_START: begin
                     if (rx_clk_count < (clks_per_bit - 1) / 2) begin
                         rx_clk_count <= rx_clk_count + 1;
-                    end else begin
+                    end
+                    else begin
                         rx_clk_count <= 16'h0;
-                        rx_state <= RX_DATA;
+                        rx_state     <= RX_DATA;
                     end
                 end
 
                 RX_DATA: begin
                     if (rx_clk_count < (clks_per_bit - 1)) begin
                         rx_clk_count <= rx_clk_count + 1;
-                    end else begin
-                        rx_clk_count <= 16'h0;
+                    end
+                    else begin
+                        rx_clk_count        <= 16'h0;
                         rx_data[rx_bit_idx] <= rx;
                         if (rx_bit_idx < 7) begin
                             rx_bit_idx <= rx_bit_idx + 1;
-                        end else begin
+                        end
+                        else begin
                             rx_bit_idx <= 3'h0;
-                            rx_state <= RX_STOP;
+                            rx_state   <= RX_STOP;
                         end
                     end
                 end
@@ -89,10 +93,11 @@ module uart_loopback (
                 RX_STOP: begin
                     if (rx_clk_count < (clks_per_bit - 1)) begin
                         rx_clk_count <= rx_clk_count + 1;
-                    end else begin
+                    end
+                    else begin
                         rx_clk_count <= 16'h0;
-                        rx_valid <= 1'b1;
-                        rx_state <= RX_IDLE;
+                        rx_valid     <= 1'b1;
+                        rx_state     <= RX_IDLE;
                         // Echo printable characters and newlines
                         if ((rx_data >= 32 && rx_data < 127) || rx_data == 10 || rx_data == 13) begin
                             $write("%c", rx_data);
@@ -109,19 +114,20 @@ module uart_loopback (
     // TX logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            tx_state <= TX_IDLE;
-            tx <= 1'b1;
-            tx_data <= 8'h0;
-            tx_bit_idx <= 3'h0;
+            tx_state     <= TX_IDLE;
+            tx           <= 1'b1;
+            tx_data      <= 8'h0;
+            tx_bit_idx   <= 3'h0;
             tx_clk_count <= 16'h0;
-        end else begin
+        end
+        else begin
             case (tx_state)
                 TX_IDLE: begin
-                    tx <= 1'b1;
+                    tx           <= 1'b1;
                     tx_clk_count <= 16'h0;
-                    tx_bit_idx <= 3'h0;
+                    tx_bit_idx   <= 3'h0;
                     if (rx_valid) begin
-                        tx_data <= rx_data;
+                        tx_data  <= rx_data;
                         tx_state <= TX_START;
                     end
                 end
@@ -130,9 +136,10 @@ module uart_loopback (
                     tx <= 1'b0;  // Start bit
                     if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
-                    end else begin
+                    end
+                    else begin
                         tx_clk_count <= 16'h0;
-                        tx_state <= TX_DATA;
+                        tx_state     <= TX_DATA;
                     end
                 end
 
@@ -140,13 +147,15 @@ module uart_loopback (
                     tx <= tx_data[tx_bit_idx];
                     if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
-                    end else begin
+                    end
+                    else begin
                         tx_clk_count <= 16'h0;
                         if (tx_bit_idx < 7) begin
                             tx_bit_idx <= tx_bit_idx + 1;
-                        end else begin
+                        end
+                        else begin
                             tx_bit_idx <= 3'h0;
-                            tx_state <= TX_STOP;
+                            tx_state   <= TX_STOP;
                         end
                     end
                 end
@@ -155,9 +164,10 @@ module uart_loopback (
                     tx <= 1'b1;  // Stop bit
                     if (tx_clk_count < (clks_per_bit - 1)) begin
                         tx_clk_count <= tx_clk_count + 1;
-                    end else begin
+                    end
+                    else begin
                         tx_clk_count <= 16'h0;
-                        tx_state <= TX_IDLE;
+                        tx_state     <= TX_IDLE;
                     end
                 end
 

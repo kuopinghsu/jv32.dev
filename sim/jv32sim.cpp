@@ -18,19 +18,18 @@
 #include <cassert>
 #include <cerrno>
 #include <chrono>
-#include <cinttypes>
+#include <csignal>
+#include <iostream>
+#include <iomanip>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <iomanip>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
-#include <unordered_map>
 #include <unistd.h>
-#include <vector>
 #include "riscv-dis.h"
 
 // ============================================================================
@@ -38,8 +37,10 @@
 // ============================================================================
 static const uint32_t IRAM_BASE  = 0x80000000U;
 static const uint32_t IRAM_SIZE  = 128*1024;
+static const uint32_t IRAM_ALIAS_BASE = 0x60000000U;
 static const uint32_t DRAM_BASE  = 0xC0000000U;
 static const uint32_t DRAM_SIZE  = 128*1024;
+static const uint32_t DRAM_ALIAS_BASE = 0x70000000U;
 static const uint32_t CLIC_BASE  = 0x02000000U;
 static const uint32_t UART_BASE  = 0x20010000U;
 static const uint32_t MAGIC_BASE = 0x40000000U;
@@ -165,40 +166,31 @@ static bool   trace_on   = false;
 static uint64_t max_insns        = 0;  // 0 = unlimited
 static uint64_t timeout_seconds  = 0;  // 0 = no timeout
 
-// Sync-trace: pre-loaded sync events from an RTL hint stream.
-// Three ordered event kinds are recognised in the RTL hint stream:
-//   ! irq  cause=0x<32> mtime=0x<64> instret=<N>  — async interrupt taken
-//   ! mret mtime=0x<64> instret=<N>                — mret retired (ISR exit)
-//   ! sync mtime=0x<64> instret=<N>                — periodic sync (every 4096 insns)
-// Plus per-instruction timer hints:
-//   ! step mtime=0x<64> instret=<N>
-// At each sync point the SW sim updates mtime and csr_mcycle so it stays
-// aligned with RTL hardware counters even between interrupt boundaries.
-enum SyncEventKind { SYNC_IRQ, SYNC_MRET, SYNC_PERIODIC };
-struct SyncEvent { uint64_t instret; uint64_t mtime; uint32_t cause; SyncEventKind kind; };
-static std::vector<SyncEvent> g_sync_events;
-static std::unordered_map<uint64_t, uint64_t> g_step_hints;
-static size_t                 g_sync_idx  = 0;
-static bool                   g_sync_mode = false;
+// SIGINT handler
+static volatile sig_atomic_t g_sigint = 0;
+static void handle_sigint(int) { g_sigint = 1; }
 
-static inline void apply_sync_mtime(uint64_t mtime_val) {
-    mtime      = mtime_val;
-    csr_mcycle = mtime_val;  // mcycle and mtime both increment per cycle from 0
+static const char* gpr_name(int i) {
+    static const char* names[32] = {
+        "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+        "s0",   "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+        "a6",   "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+        "s8",   "s9", "s10","s11","t3", "t4", "t5", "t6"
+    };
+    return (i >= 0 && i < 32) ? names[i] : "??";
 }
 
-// Timer registers are sometimes read in interrupt and scheduling paths; before
-// returning timer values, apply the pending per-instruction hint so reads
-// observe the same mtime as RTL for the current instruction.
-static inline void apply_step_hint_for_next_instret(void) {
-    if (!g_sync_mode) return;
-    auto it = g_step_hints.find(insn_count + 1);
-    if (it != g_step_hints.end()) {
-        apply_sync_mtime(it->second);
+static void dump_registers() {
+    fprintf(stderr, "\n=== Register Dump (SIGINT) ===\n");
+    fprintf(stderr, "PC  : 0x%08x\n", pc);
+    for (int i = 0; i < 32; i += 4) {
+        fprintf(stderr, "%4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x    %4s: 0x%08x\n",
+                gpr_name(i),   regs[i],
+                gpr_name(i+1), regs[i+1],
+                gpr_name(i+2), regs[i+2],
+                gpr_name(i+3), regs[i+3]);
     }
-}
-
-static inline void sync_before_timer_read(void) {
-    apply_step_hint_for_next_instret();
+    fprintf(stderr, "==============================\n");
 }
 
 // Debug level (0=silent, 1=info, 2=verbose)
@@ -265,10 +257,43 @@ static bool     exc_pending;
 static uint32_t exc_cause;
 static uint32_t exc_tval;
 
+static inline bool in_range(uint32_t addr, uint32_t base, uint32_t span, int size) {
+    uint32_t n = (uint32_t)size;
+    if (n == 0 || n > span) return false;
+    if (addr < base) return false;
+    uint32_t off = addr - base;
+    return off <= (span - n);
+}
+
+static inline bool iram_offset_for_addr(uint32_t addr, int size, uint32_t *off) {
+    if (in_range(addr, IRAM_BASE, IRAM_SIZE, size)) {
+        *off = addr - IRAM_BASE;
+        return true;
+    }
+    if (in_range(addr, IRAM_ALIAS_BASE, IRAM_SIZE, size)) {
+        *off = addr - IRAM_ALIAS_BASE;
+        return true;
+    }
+    return false;
+}
+
+static inline bool dram_offset_for_addr(uint32_t addr, int size, uint32_t *off) {
+    if (in_range(addr, DRAM_BASE, DRAM_SIZE, size)) {
+        *off = addr - DRAM_BASE;
+        return true;
+    }
+    if (in_range(addr, DRAM_ALIAS_BASE, DRAM_SIZE, size)) {
+        *off = addr - DRAM_ALIAS_BASE;
+        return true;
+    }
+    return false;
+}
+
 static uint32_t mem_read(uint32_t addr, int size) {
-    // IRAM
-    if (addr >= IRAM_BASE && addr + (uint32_t)size <= IRAM_BASE + IRAM_SIZE) {
-        uint32_t off = addr - IRAM_BASE;
+    uint32_t off = 0;
+
+    // IRAM (primary + alias)
+    if (iram_offset_for_addr(addr, size, &off)) {
         if (size == 1) return iram[off];
         if (size == 2) {
             uint32_t v;
@@ -279,9 +304,8 @@ static uint32_t mem_read(uint32_t addr, int size) {
         memcpy(&v, &iram[off], 4);
         return v;
     }
-    // DRAM
-    if (addr >= DRAM_BASE && addr + (uint32_t)size <= DRAM_BASE + DRAM_SIZE) {
-        uint32_t off = addr - DRAM_BASE;
+    // DRAM (primary + alias)
+    if (dram_offset_for_addr(addr, size, &off)) {
         if (size == 1) return dram[off];
         if (size == 2) {
             uint32_t v;
@@ -295,13 +319,9 @@ static uint32_t mem_read(uint32_t addr, int size) {
     // CLIC registers
     if (addr >= CLIC_BASE && addr < CLIC_BASE + 0x200000U) {
         uint32_t off = addr - CLIC_BASE;
-        if (off == CLIC_MTIME_LO_OFF || off == CLIC_MTIME_HI_OFF) {
-            sync_before_timer_read();
-        }
-        uint64_t mtime_read = mtime;
         if (off == CLIC_MSIP_OFF)        return msip & 1u;
-        if (off == CLIC_MTIME_LO_OFF)    return (uint32_t)(mtime_read & 0xFFFFFFFFu);
-        if (off == CLIC_MTIME_HI_OFF)    return (uint32_t)(mtime_read >> 32);
+        if (off == CLIC_MTIME_LO_OFF)    return (uint32_t)(mtime & 0xFFFFFFFFu);
+        if (off == CLIC_MTIME_HI_OFF)    return (uint32_t)(mtime >> 32);
         if (off == CLIC_MTIMECMP_LO_OFF) return (uint32_t)(mtimecmp & 0xFFFFFFFFu);
         if (off == CLIC_MTIMECMP_HI_OFF) return (uint32_t)(mtimecmp >> 32);
         return 0;
@@ -322,17 +342,17 @@ static uint32_t mem_read(uint32_t addr, int size) {
 }
 
 static void mem_write(uint32_t addr, uint32_t val, int size) {
-    // DRAM
-    if (addr >= DRAM_BASE && addr + (uint32_t)size <= DRAM_BASE + DRAM_SIZE) {
-        uint32_t off = addr - DRAM_BASE;
+    uint32_t off = 0;
+
+    // DRAM (primary + alias)
+    if (dram_offset_for_addr(addr, size, &off)) {
         if (size == 1) dram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&dram[off], &val, 2);
         else memcpy(&dram[off], &val, 4);
         return;
     }
-    // IRAM (writable if mapped, rare but allowed)
-    if (addr >= IRAM_BASE && addr + (uint32_t)size <= IRAM_BASE + IRAM_SIZE) {
-        uint32_t off = addr - IRAM_BASE;
+    // IRAM (primary + alias, writable if mapped)
+    if (iram_offset_for_addr(addr, size, &off)) {
         if (size == 1) iram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&iram[off], &val, 2);
         else memcpy(&iram[off], &val, 4);
@@ -476,21 +496,22 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
         (unsigned)cause, (unsigned)tval, (unsigned)trap_pc, (unsigned)pc);
 }
 
-static void check_interrupts() {
-    if (!(csr_mstatus & MSTATUS_MIE)) return;
+static bool check_interrupts() {
+    if (!(csr_mstatus & MSTATUS_MIE)) return false;
 
     bool timer_irq = (mtime >= mtimecmp &&
                       mtimecmp != 0xFFFFFFFFFFFFFFFFULL);
     bool soft_irq  = (msip != 0);
     // external CLIC IRQ not simulated here
 
-    if ((csr_mie & MIP_MEIP) && 0) {
-        // Placeholder: external IRQ not simulated
-    } else if ((csr_mie & MIP_MTIP) && timer_irq) {
+    if ((csr_mie & MIP_MTIP) && timer_irq) {
         take_trap(CAUSE_TIMER_INT, 0, pc);
+        return true;
     } else if ((csr_mie & MIP_MSIP) && soft_irq) {
         take_trap(CAUSE_SOFTWARE_INT, 0, pc);
+        return true;
     }
+    return false;
 }
 
 // ============================================================================
@@ -763,7 +784,7 @@ static void step() {
     // ── 1. Advance counters and check interrupts ──────────────────────────
     // mtime and mcycle are incremented on instruction retirement (below), not here
 
-    check_interrupts();
+    if (check_interrupts()) return;
     if (!running) return;
 
     // ── 2. Fetch instruction ───────────────────────────────────────────────
@@ -1011,7 +1032,7 @@ static void step() {
             if      (sys_imm == 0x000) { // ECALL
                 exc_pending = true; exc_cause = CAUSE_ECALL_M; exc_tval = 0;
             } else if (sys_imm == 0x001) { // EBREAK
-                exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = 0;
+                exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
             } else if (sys_imm == 0x302) { // MRET
                 uint32_t mpie = (csr_mstatus >> 7) & 1u;
                 csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
@@ -1107,9 +1128,8 @@ static void step() {
             regs[rd] = result;
         regs[0] = 0;  // x0 always zero
         pc = new_pc;
-        // In sync-trace mode mtime/mcycle are set by RTL sync events; in
-        // standalone mode they increment per retired instruction as an approximation.
-        if (!g_sync_mode) { mtime++; csr_mcycle++; }
+        mtime++;        // increment mtime on retirement to match RTL instret_inc
+        csr_mcycle++;   // increment mcycle on retirement to match RTL instret_inc gating
         csr_minstret++;
         insn_count++;
         emit_trace(instr_pc, raw_instr,
@@ -1182,17 +1202,16 @@ static bool load_elf(const char *path, uint32_t *entry) {
 // Main
 // ============================================================================
 int main(int argc, char **argv) {
-    const char *elf_path        = nullptr;
-    const char *trace_path      = nullptr;
-    const char *sync_trace_path = nullptr;
+    std::signal(SIGINT, handle_sigint);
+
+    const char *elf_path    = nullptr;
+    const char *trace_path  = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
-        } else if (strcmp(argv[i], "--mtime-hints") == 0 && i + 1 < argc) {
-            sync_trace_path = argv[++i];
-        } else if (strcmp(argv[i], "--sync-trace") == 0 && i + 1 < argc) {
-            sync_trace_path = argv[++i];
+        } else if (strncmp(argv[i], "--max-insns=", 12) == 0) {
+            max_insns = (uint64_t)strtoull(argv[i] + 12, nullptr, 10);
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
             max_insns = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
@@ -1210,7 +1229,7 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--sync-trace <hint-file>] [--mtime-hints <hint-file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
         return 1;
     }
 
@@ -1222,41 +1241,6 @@ int main(int argc, char **argv) {
             return 1;
         }
         trace_on = true;
-    }
-
-    // Load sync-trace events from RTL trace (--sync-trace).
-    // Each "! irq" line overrides mtime/mcycle at the matching instret count
-    // so the SW sim fires the interrupt at the exact same retired-instruction
-    // boundary as the RTL, allowing trace comparison.
-    if (sync_trace_path) {
-        FILE *sf = fopen(sync_trace_path, "r");
-        if (!sf) {
-            fprintf(stderr, "[SIM] Cannot open sync-trace: %s\n", sync_trace_path);
-            return 1;
-        }
-        char line[256];
-        while (fgets(line, sizeof(line), sf)) {
-            if (line[0] != '!') continue;
-            uint32_t cause = 0;
-            uint64_t mtime_val = 0, instret_val = 0;
-            if (sscanf(line, "! irq cause=0x%x mtime=0x%" SCNx64 " instret=%" SCNu64,
-                       &cause, &mtime_val, &instret_val) == 3) {
-                g_sync_events.push_back({instret_val, mtime_val, cause, SYNC_IRQ});
-            } else if (sscanf(line, "! mret mtime=0x%" SCNx64 " instret=%" SCNu64,
-                              &mtime_val, &instret_val) == 2) {
-                g_sync_events.push_back({instret_val, mtime_val, 0, SYNC_MRET});
-            } else if (sscanf(line, "! sync mtime=0x%" SCNx64 " instret=%" SCNu64,
-                              &mtime_val, &instret_val) == 2) {
-                g_sync_events.push_back({instret_val, mtime_val, 0, SYNC_PERIODIC});
-            } else if (sscanf(line, "! step mtime=0x%" SCNx64 " instret=%" SCNu64,
-                              &mtime_val, &instret_val) == 2) {
-                g_step_hints[instret_val] = mtime_val;
-            }
-        }
-        fclose(sf);
-        g_sync_mode = true;
-        DBG(1, "sync-trace: loaded %zu sync events, %zu step hints\n",
-            g_sync_events.size(), g_step_hints.size());
     }
 
     // Initialise state
@@ -1287,7 +1271,8 @@ int main(int argc, char **argv) {
 
     // Run
     auto time_begin = std::chrono::steady_clock::now();
-    while (running) {
+    while (running && !g_sigint) {
+        if (g_sigint) break;
         if (max_insns && insn_count >= max_insns) {
             DBG(1, "Reached max-insns limit (%llu)\n",
                     (unsigned long long)max_insns);
@@ -1303,39 +1288,26 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        // Keep software timer state aligned to RTL at instruction granularity.
-        apply_step_hint_for_next_instret();
         step();
-
-        // Apply sync-trace events: when insn_count matches the RTL instret at
-        // which a sync event was recorded, update mtime and csr_mcycle so the
-        // SW sim stays aligned with RTL hardware counters.
-        //   SYNC_IRQ:      mtime set before next step → check_interrupts() fires
-        //   SYNC_MRET:     mtime set after ISR exit → counters resume correctly
-        //   SYNC_PERIODIC: mtime set every 4096 insns → drift stays bounded
-        while (g_sync_idx < g_sync_events.size() &&
-               g_sync_events[g_sync_idx].instret == insn_count) {
-            const SyncEvent &ev = g_sync_events[g_sync_idx++];
-            apply_sync_mtime(ev.mtime);
-            switch (ev.kind) {
-            case SYNC_IRQ:
-                DBG(1, "sync-trace: IRQ cause=0x%08x mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
-                    ev.cause, ev.mtime, ev.instret);
-                break;
-            case SYNC_MRET:
-                DBG(1, "sync-trace: mret mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
-                    ev.mtime, ev.instret);
-                break;
-            case SYNC_PERIODIC:
-                DBG(2, "sync-trace: periodic mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
-                    ev.mtime, ev.instret);
-                break;
-            }
-        }
     }
 
-    DBG(1, "%llu instructions retired\n",
+    if (g_sigint) {
+        fprintf(stderr, "\n*** SIGINT received: dumping registers and exiting ***\n");
+        dump_registers();
+        exit_code = 1;
+    }
+
+        auto   time_end = std::chrono::steady_clock::now();
+        double elapsed_seconds = std::chrono::duration<double>(time_end - time_begin).count();
+        double eff_hz = (elapsed_seconds > 0.0) ? ((double)csr_mcycle / elapsed_seconds) : 0.0;
+        double eff_mhz = eff_hz / 1.0e6;
+
+        DBG(1, "%llu instructions retired\n",
             (unsigned long long)insn_count);
+        fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
+            elapsed_seconds,
+            (unsigned long long)csr_mcycle,
+            eff_mhz);
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);
     return exit_code;

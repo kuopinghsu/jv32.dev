@@ -15,32 +15,40 @@
 
 module axi_xbar #(
     parameter int unsigned N_SLAVES = 5,
-    parameter logic [31:0] SLAVE_BASE [N_SLAVES] = '{32'h8000_0000, 32'hC000_0000,
-                                                      32'h2001_0000, 32'h0200_0000,
-                                                      32'h4000_0000},
-    parameter logic [31:0] SLAVE_MASK [N_SLAVES] = '{32'hFFFF_0000, 32'hFFFF_0000,
-                                                      32'hFFFF_FF00, 32'hFFE0_0000,
-                                                      32'hF000_0000}
-)(
-    input  logic        clk,
-    input  logic        rst_n,
+    parameter bit [31:0] SLAVE_BASE[N_SLAVES] = '{
+        32'h8000_0000,
+        32'hC000_0000,
+        32'h2001_0000,
+        32'h0200_0000,
+        32'h4000_0000
+    },
+    parameter bit [31:0] SLAVE_MASK[N_SLAVES] = '{
+        32'hFFFF_0000,
+        32'hFFFF_0000,
+        32'hFFFF_FF00,
+        32'hFFE0_0000,
+        32'hF000_0000
+    }
+) (
+    input logic clk,
+    input logic rst_n,
 
     // Master port
     input  logic [31:0] m_awaddr,
     input  logic        m_awvalid,
     output logic        m_awready,
     input  logic [31:0] m_wdata,
-    input  logic [3:0]  m_wstrb,
+    input  logic [ 3:0] m_wstrb,
     input  logic        m_wvalid,
     output logic        m_wready,
-    output logic [1:0]  m_bresp,
+    output logic [ 1:0] m_bresp,
     output logic        m_bvalid,
     input  logic        m_bready,
     input  logic [31:0] m_araddr,
     input  logic        m_arvalid,
     output logic        m_arready,
     output logic [31:0] m_rdata,
-    output logic [1:0]  m_rresp,
+    output logic [ 1:0] m_rresp,
     output logic        m_rvalid,
     input  logic        m_rready,
 
@@ -49,17 +57,17 @@ module axi_xbar #(
     output logic [N_SLAVES-1:0]       s_awvalid,
     input  logic [N_SLAVES-1:0]       s_awready,
     output logic [N_SLAVES-1:0][31:0] s_wdata,
-    output logic [N_SLAVES-1:0][3:0]  s_wstrb,
+    output logic [N_SLAVES-1:0][ 3:0] s_wstrb,
     output logic [N_SLAVES-1:0]       s_wvalid,
     input  logic [N_SLAVES-1:0]       s_wready,
-    input  logic [N_SLAVES-1:0][1:0]  s_bresp,
+    input  logic [N_SLAVES-1:0][ 1:0] s_bresp,
     input  logic [N_SLAVES-1:0]       s_bvalid,
     output logic [N_SLAVES-1:0]       s_bready,
     output logic [N_SLAVES-1:0][31:0] s_araddr,
     output logic [N_SLAVES-1:0]       s_arvalid,
     input  logic [N_SLAVES-1:0]       s_arready,
     input  logic [N_SLAVES-1:0][31:0] s_rdata,
-    input  logic [N_SLAVES-1:0][1:0]  s_rresp,
+    input  logic [N_SLAVES-1:0][ 1:0] s_rresp,
     input  logic [N_SLAVES-1:0]       s_rvalid,
     output logic [N_SLAVES-1:0]       s_rready
 );
@@ -69,8 +77,7 @@ module axi_xbar #(
     // =====================================================================
     function automatic int decode_addr(input logic [31:0] addr);
         for (int i = 0; i < N_SLAVES; i++) begin
-            if ((addr & SLAVE_MASK[i]) == (SLAVE_BASE[i] & SLAVE_MASK[i]))
-                return i;
+            if ((addr & SLAVE_MASK[i]) == (SLAVE_BASE[i] & SLAVE_MASK[i])) return i;
         end
         return -1;
     endfunction
@@ -79,21 +86,32 @@ module axi_xbar #(
     // Read channel routing
     // =====================================================================
     logic [$clog2(N_SLAVES)-1:0] rd_sel;
-    logic        rd_active;
-    logic [31:0] rd_addr_r;
-    logic        rd_err;   // DECERR
+    logic                        rd_active;
+    logic [                31:0] rd_addr_r;
+    logic                        rd_err;  // DECERR
 
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin rd_active <= 1'b0; rd_sel <= '0; rd_err <= 1'b0; rd_addr_r <= 32'h0; end
+        if (!rst_n) begin
+            rd_active <= 1'b0;
+            rd_sel    <= '0;
+            rd_err    <= 1'b0;
+            rd_addr_r <= 32'h0;
+        end
         else if (!rd_active) begin
             if (m_arvalid) begin
-                automatic int s = decode_addr(m_araddr);
                 rd_active <= 1'b1;
                 rd_addr_r <= m_araddr;
-                if (s < 0) begin rd_sel <= '0; rd_err <= 1'b1; end
-                else begin rd_sel <= $clog2(N_SLAVES)'(s); rd_err <= 1'b0; end
+                if (decode_addr(m_araddr) < 0) begin
+                    rd_sel <= '0;
+                    rd_err <= 1'b1;
+                end
+                else begin
+                    rd_sel <= $clog2(N_SLAVES)'(decode_addr(m_araddr));
+                    rd_err <= 1'b0;
+                end
             end
-        end else begin
+        end
+        else begin
             if (m_rvalid && m_rready) begin
                 rd_active <= 1'b0;
                 rd_err    <= 1'b0;
@@ -124,23 +142,35 @@ module axi_xbar #(
     // Write channel routing
     // =====================================================================
     logic [$clog2(N_SLAVES)-1:0] wr_sel;
-    logic        wr_active;
-    logic [31:0] wr_addr_r;
-    logic        wr_err;
-    logic        aw_sent;  // AW handshake with slave has completed
+    logic                        wr_active;
+    logic [                31:0] wr_addr_r;
+    logic                        wr_err;
+    logic                        aw_sent;  // AW handshake with slave has completed
 
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin wr_active <= 1'b0; wr_sel <= '0; wr_err <= 1'b0; wr_addr_r <= 32'h0; aw_sent <= 1'b0; end
+        if (!rst_n) begin
+            wr_active <= 1'b0;
+            wr_sel    <= '0;
+            wr_err    <= 1'b0;
+            wr_addr_r <= 32'h0;
+            aw_sent   <= 1'b0;
+        end
         else if (!wr_active) begin
             if (m_awvalid) begin
-                automatic int s = decode_addr(m_awaddr);
                 wr_active <= 1'b1;
                 wr_addr_r <= m_awaddr;
                 aw_sent   <= 1'b0;
-                if (s < 0) begin wr_sel <= '0; wr_err <= 1'b1; end
-                else begin wr_sel <= $clog2(N_SLAVES)'(s); wr_err <= 1'b0; end
+                if (decode_addr(m_awaddr) < 0) begin
+                    wr_sel <= '0;
+                    wr_err <= 1'b1;
+                end
+                else begin
+                    wr_sel <= $clog2(N_SLAVES)'(decode_addr(m_awaddr));
+                    wr_err <= 1'b0;
+                end
             end
-        end else begin
+        end
+        else begin
             // Deassert s_awvalid after slave accepts the AW transaction
             if (!aw_sent && s_awvalid[wr_sel] && s_awready[wr_sel]) aw_sent <= 1'b1;
             if (m_bvalid && m_bready) wr_active <= 1'b0;

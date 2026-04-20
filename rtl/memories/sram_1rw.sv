@@ -39,13 +39,13 @@ module sram_1rw #(
     parameter int DEPTH = 2048,  // number of words
     parameter int WIDTH = 32     // bits per word
 ) (
-    input  logic                       clk,
-    input  logic                       ce,    // chip enable
-    input  logic                       we,    // write enable (any byte active)
-    input  logic [(WIDTH/8)-1:0]       wbe,   // byte write enables (active-high)
-    input  logic [$clog2(DEPTH)-1:0]   addr,
-    input  logic [WIDTH-1:0]           wdata,
-    output logic [WIDTH-1:0]           rdata
+    input  logic                     clk,
+    input  logic                     ce,   // chip enable
+    input  logic                     we,   // write enable (any byte active)
+    input  logic [    (WIDTH/8)-1:0] wbe,  // byte write enables (active-high)
+    input  logic [$clog2(DEPTH)-1:0] addr,
+    input  logic [        WIDTH-1:0] wdata,
+    output logic [        WIDTH-1:0] rdata
 );
 
 `ifdef XILINX_FPGA
@@ -66,7 +66,7 @@ module sram_1rw #(
     // =========================================================================
 
     (* ram_style = "block" *)
-    logic [WIDTH-1:0] mem [0:DEPTH-1];
+    logic [WIDTH-1:0] mem       [0:DEPTH-1];
 
     // Use an internal read-data register and assign it to rdata.
     // This follows the Xilinx UG901 recommended NO_CHANGE BRAM template
@@ -77,9 +77,9 @@ module sram_1rw #(
     always @(posedge clk) begin
         if (ce) begin
             if (we) begin
-                for (int _b = 0; _b < WIDTH/8; _b++)
-                    if (wbe[_b]) mem[addr][_b*8 +: 8] <= wdata[_b*8 +: 8];
-            end else begin
+                for (int _b = 0; _b < WIDTH / 8; _b++) if (wbe[_b]) mem[addr][_b*8+:8] <= wdata[_b*8+:8];
+            end
+            else begin
                 ram_rdata <= mem[addr];  // NO_CHANGE: not updated on writes
             end
         end
@@ -103,27 +103,28 @@ module sram_1rw #(
     // =========================================================================
 
     altsyncram #(
-        .operation_mode              ("SINGLE_PORT"),
-        .width_a                     (WIDTH),
-        .widthad_a                   ($clog2(DEPTH)),
-        .numwords_a                  (DEPTH),
-        .outdata_reg_a               ("CLOCK0"),       // registered output
-        .read_during_write_mode_port_a ("DONT_CARE"),  // best timing
-        .init_file                   ("UNUSED"),
-        .intended_device_family      ("Cyclone V")
+        .operation_mode               ("SINGLE_PORT"),
+        .width_a                      (WIDTH),
+        .widthad_a                    ($clog2(DEPTH)),
+        .numwords_a                   (DEPTH),
+        .outdata_reg_a                ("CLOCK0"),     // registered output
+        .read_during_write_mode_port_a("DONT_CARE"),  // best timing
+        .init_file                    ("UNUSED"),
+        .intended_device_family       ("Cyclone V")
     ) u_altsyncram (
-        .clock0    (clk),
-        .address_a (addr),
-        .wren_a    (ce & we),
-        .data_a    (wdata),
-        .q_a       (rdata),
-        .clocken0  (ce),
+        .clock0        (clk),
+        .address_a     (addr),
+        .wren_a        (ce & we),
+        .data_a        (wdata),
+        .q_a           (rdata),
+        .clocken0      (ce),
         // unused ports
-        .aclr0     (1'b0),  .aclr1   (1'b0),
-        .addressstall_a (1'b0),
-        .byteena_a (wbe),   // byte write enables
-        .clocken1  (1'b1),
-        .rden_a    (~we)     // optional read-enable for power saving
+        .aclr0         (1'b0),
+        .aclr1         (1'b0),
+        .addressstall_a(1'b0),
+        .byteena_a     (wbe),  // byte write enables
+        .clocken1      (1'b1),
+        .rden_a        (~we)   // optional read-enable for power saving
     );
 
 `else
@@ -153,27 +154,27 @@ module sram_1rw #(
     // cache configurations produced by icache.sv.  Un-comment the relevant
     // block and delete the behavioural section.
     //
-// ── TCM SRAM dimensions (jv32_top) ──────────────────────────────────────
-//
-//  Instance | DEPTH | WIDTH | wbe bits
-//  ─────────┼───────┼───────┼──────────────
-//  u_iram   | 2048  |  32   | 4 (byte mask)
-//  u_dram   | 2048  |  32   | 4 (byte mask)
-//
-//  Total memory: 2048 × 32 bits = 8 KB per TCM (IRAM + DRAM = 16 KB)
+    // ── TCM SRAM dimensions (jv32_top) ──────────────────────────────────────
+    //
+    //  Instance | DEPTH | WIDTH | wbe bits
+    //  ─────────┼───────┼───────┼──────────────
+    //  u_iram   | 2048  |  32   | 4 (byte mask)
+    //  u_dram   | 2048  |  32   | 4 (byte mask)
+    //
+    //  Total memory: 2048 × 32 bits = 8 KB per TCM (IRAM + DRAM = 16 KB)
     //
     // =========================================================================
 
     // synthesis translate_off
-    logic [WIDTH-1:0] mem [0:DEPTH-1];
+    logic [WIDTH-1:0] mem[0:DEPTH-1];
 
     always_ff @(posedge clk) begin
         if (ce) begin
             if (we) begin
-                for (int _b = 0; _b < WIDTH/8; _b++)
-                    if (wbe[_b]) mem[addr][_b*8 +: 8] <= wdata[_b*8 +: 8];
+                for (int _b = 0; _b < WIDTH / 8; _b++) if (wbe[_b]) mem[addr][_b*8+:8] <= wdata[_b*8+:8];
                 rdata <= {WIDTH{1'bx}};  // undefined during write (no-change)
-            end else begin
+            end
+            else begin
                 rdata <= mem[addr];
             end
         end

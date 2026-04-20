@@ -9,58 +9,58 @@
 // ============================================================================
 
 module jtag_tap #(
-    parameter bit [31:0]   IDCODE = 32'h1DEAD3FF,  // JTAG ID code
-    parameter int unsigned IR_LEN     = 5,            // Instruction register length
-    parameter int          N_TRIGGERS = 2             // number of hardware triggers
-)(
+    parameter bit          [31:0] IDCODE     = 32'h1DEAD3FF,  // JTAG ID code
+    parameter int unsigned        IR_LEN     = 5,             // Instruction register length
+    parameter int                 N_TRIGGERS = 2              // number of hardware triggers
+) (
     // JTAG interface
-    input  logic        tck_i,         // JTAG clock
-    input  logic        tms_i,         // JTAG mode select
-    input  logic        tdi_i,         // JTAG data in
-    output logic        tdo_o,         // JTAG data out
-    input  logic        ntrst_i,       // JTAG reset (active low)
+    input  logic tck_i,    // JTAG clock
+    input  logic tms_i,    // JTAG mode select
+    input  logic tdi_i,    // JTAG data in
+    output logic tdo_o,    // JTAG data out
+    input  logic ntrst_i,  // JTAG reset (active low)
 
     // System clock and reset (for debug module)
-    input  logic        clk,           // System clock
-    input  logic        rst_n,         // System reset (active low)
+    input logic clk,    // System clock
+    input logic rst_n,  // System reset (active low)
 
     // Debug interface to CPU
-    output logic        halt_req_o,    // Request CPU to halt
-    input  logic        halted_i,      // CPU is halted
-    output logic        resume_req_o,  // Request CPU to resume
-    input  logic        resumeack_i,   // CPU acknowledged resume
+    output logic halt_req_o,    // Request CPU to halt
+    input  logic halted_i,      // CPU is halted
+    output logic resume_req_o,  // Request CPU to resume
+    input  logic resumeack_i,   // CPU acknowledged resume
 
     // Register access
-    output logic [4:0]  dbg_reg_addr_o,    // Register address
-    output logic [31:0] dbg_reg_wdata_o,   // Register write data
-    output logic        dbg_reg_we_o,      // Register write enable
-    input  logic [31:0] dbg_reg_rdata_i,   // Register read data
+    output logic [ 4:0] dbg_reg_addr_o,   // Register address
+    output logic [31:0] dbg_reg_wdata_o,  // Register write data
+    output logic        dbg_reg_we_o,     // Register write enable
+    input  logic [31:0] dbg_reg_rdata_i,  // Register read data
 
     // PC access
-    output logic [31:0] dbg_pc_wdata_o,    // PC write data
-    output logic        dbg_pc_we_o,       // PC write enable
-    input  logic [31:0] dbg_pc_i,          // Current PC
+    output logic [31:0] dbg_pc_wdata_o,  // PC write data
+    output logic        dbg_pc_we_o,     // PC write enable
+    input  logic [31:0] dbg_pc_i,        // Current PC
 
     // Memory access
-    output logic        dbg_mem_req_o,      // Memory request
-    output logic [31:0] dbg_mem_addr_o,    // Memory address
-    output logic [3:0]  dbg_mem_we_o,      // Memory write enable (byte mask)
-    output logic [31:0] dbg_mem_wdata_o,   // Memory write data
-    input  logic        dbg_mem_ready_i,   // Memory ready
-    input  logic        dbg_mem_error_i,   // Memory error (DECERR/SLVERR)
-    input  logic [31:0] dbg_mem_rdata_i,   // Memory read data
+    output logic        dbg_mem_req_o,    // Memory request
+    output logic [31:0] dbg_mem_addr_o,   // Memory address
+    output logic [ 3:0] dbg_mem_we_o,     // Memory write enable (byte mask)
+    output logic [31:0] dbg_mem_wdata_o,  // Memory write data
+    input  logic        dbg_mem_ready_i,  // Memory ready
+    input  logic        dbg_mem_error_i,  // Memory error (DECERR/SLVERR)
+    input  logic [31:0] dbg_mem_rdata_i,  // Memory read data
 
     // System reset outputs
-    output logic        dbg_ndmreset_o,    // Non-debug module reset
-    output logic        dbg_hartreset_o,   // Hart reset
+    output logic                        dbg_ndmreset_o,   // Non-debug module reset
+    output logic                        dbg_hartreset_o,  // Hart reset
     // Debug control signals from dcsr
-    output logic        dbg_singlestep_o,  // dcsr[2]: single-step mode
-    output logic        dbg_ebreakm_o,     // dcsr[15]: ebreak→debug mode
-    output logic [31:0] progbuf0_o,        // Program buffer 0
-    output logic [31:0] progbuf1_o,        // Program buffer 1
+    output logic                        dbg_singlestep_o,  // dcsr[2]: single-step mode
+    output logic                        dbg_ebreakm_o,     // dcsr[15]: ebreak→debug mode
+    output logic [          31:0]       progbuf0_o,        // Program buffer 0
+    output logic [          31:0]       progbuf1_o,        // Program buffer 1
     // Trigger interface
-    input  logic        trigger_halt_i,
-    input  logic [N_TRIGGERS-1:0] trigger_hit_i,    // per-trigger hit bits from CPU
+    input  logic                        trigger_halt_i,
+    input  logic [N_TRIGGERS-1:0]       trigger_hit_i,     // per-trigger hit bits from CPU
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o
 );
@@ -93,19 +93,19 @@ module jtag_tap #(
     // Instruction Register
     // =========================================================================
     typedef enum logic [4:0] {
-        IDCODE_INSTR   = 5'b00001,
-        BYPASS_INSTR   = 5'b11111,
-        DTMCS_INSTR    = 5'b10000,  // RISC-V Debug DTM Control/Status
-        DMI_INSTR      = 5'b10001   // RISC-V Debug Module Interface
+        IDCODE_INSTR = 5'b00001,
+        BYPASS_INSTR = 5'b11111,
+        DTMCS_INSTR  = 5'b10000,  // RISC-V Debug DTM Control/Status
+        DMI_INSTR    = 5'b10001   // RISC-V Debug Module Interface
     } instruction_t;
 
-    logic [IR_LEN-1:0] ir_reg;         // Instruction register
-    logic [IR_LEN-1:0] ir_shift;       // IR shift register
+    logic [IR_LEN-1:0] ir_reg;    // Instruction register
+    logic [IR_LEN-1:0] ir_shift;  // IR shift register
 
     // =========================================================================
     // Data Registers
     // =========================================================================
-    logic        bypass_reg;           // Bypass register (1-bit)
+    logic              bypass_reg;  // Bypass register (1-bit)
 
     // =========================================================================
     // TAP State Machine
@@ -113,10 +113,11 @@ module jtag_tap #(
     always_ff @(posedge tck_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
             state <= TEST_LOGIC_RESET;
-        end else begin
+        end
+        else begin
             state <= state_next;
-            `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: tck_i posedge, tms_i=%b, state=%0d->%0d",
-                   $time, tms_i, state, state_next));
+            `DEBUG2(`DBG_GRP_JTAG,
+                    ("[%0t] TAP: tck_i posedge, tms_i=%b, state=%0d->%0d", $time, tms_i, state, state_next));
         end
     end
 
@@ -127,24 +128,24 @@ module jtag_tap #(
             RUN_TEST_IDLE:    state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
 
             // DR path
-            SELECT_DR_SCAN:   state_next = tms_i ? SELECT_IR_SCAN : CAPTURE_DR;
-            CAPTURE_DR:       state_next = tms_i ? EXIT1_DR : SHIFT_DR;
-            SHIFT_DR:         state_next = tms_i ? EXIT1_DR : SHIFT_DR;
-            EXIT1_DR:         state_next = tms_i ? UPDATE_DR : PAUSE_DR;
-            PAUSE_DR:         state_next = tms_i ? EXIT2_DR : PAUSE_DR;
-            EXIT2_DR:         state_next = tms_i ? UPDATE_DR : SHIFT_DR;
-            UPDATE_DR:        state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
+            SELECT_DR_SCAN: state_next = tms_i ? SELECT_IR_SCAN : CAPTURE_DR;
+            CAPTURE_DR:     state_next = tms_i ? EXIT1_DR : SHIFT_DR;
+            SHIFT_DR:       state_next = tms_i ? EXIT1_DR : SHIFT_DR;
+            EXIT1_DR:       state_next = tms_i ? UPDATE_DR : PAUSE_DR;
+            PAUSE_DR:       state_next = tms_i ? EXIT2_DR : PAUSE_DR;
+            EXIT2_DR:       state_next = tms_i ? UPDATE_DR : SHIFT_DR;
+            UPDATE_DR:      state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
 
             // IR path
-            SELECT_IR_SCAN:   state_next = tms_i ? TEST_LOGIC_RESET : CAPTURE_IR;
-            CAPTURE_IR:       state_next = tms_i ? EXIT1_IR : SHIFT_IR;
-            SHIFT_IR:         state_next = tms_i ? EXIT1_IR : SHIFT_IR;
-            EXIT1_IR:         state_next = tms_i ? UPDATE_IR : PAUSE_IR;
-            PAUSE_IR:         state_next = tms_i ? EXIT2_IR : PAUSE_IR;
-            EXIT2_IR:         state_next = tms_i ? UPDATE_IR : SHIFT_IR;
-            UPDATE_IR:        state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
+            SELECT_IR_SCAN: state_next = tms_i ? TEST_LOGIC_RESET : CAPTURE_IR;
+            CAPTURE_IR:     state_next = tms_i ? EXIT1_IR : SHIFT_IR;
+            SHIFT_IR:       state_next = tms_i ? EXIT1_IR : SHIFT_IR;
+            EXIT1_IR:       state_next = tms_i ? UPDATE_IR : PAUSE_IR;
+            PAUSE_IR:       state_next = tms_i ? EXIT2_IR : PAUSE_IR;
+            EXIT2_IR:       state_next = tms_i ? UPDATE_IR : SHIFT_IR;
+            UPDATE_IR:      state_next = tms_i ? SELECT_DR_SCAN : RUN_TEST_IDLE;
 
-            default:          state_next = TEST_LOGIC_RESET;  // unreachable; keeps case_default satisfied
+            default: state_next = TEST_LOGIC_RESET;  // unreachable; keeps case_default satisfied
         endcase
     end
 
@@ -153,9 +154,10 @@ module jtag_tap #(
     // =========================================================================
     always_ff @(posedge tck_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
-            ir_reg <= IDCODE_INSTR;
+            ir_reg   <= IDCODE_INSTR;
             ir_shift <= '0;
-        end else begin
+        end
+        else begin
             case (state)
                 TEST_LOGIC_RESET: begin
                     ir_reg <= IDCODE_INSTR;
@@ -166,20 +168,22 @@ module jtag_tap #(
                     // for scan integrity checking by the host.  Upper bits carry the
                     // current instruction for readback.
                     ir_shift <= {ir_reg[IR_LEN-1:2], 2'b01};
-                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: CAPTURE_IR, loading {ir_reg[%0d:2],2'b01} = %b (%h)",
-                           $time, IR_LEN-1, {ir_reg[IR_LEN-1:2], 2'b01}, {ir_reg[IR_LEN-1:2], 2'b01}));
+                    `DEBUG2(`DBG_GRP_JTAG,
+                            ("[%0t] TAP: CAPTURE_IR, loading {ir_reg[%0d:2],2'b01} = %b (%h)", $time, IR_LEN - 1, {
+                            ir_reg[IR_LEN-1:2], 2'b01}, {ir_reg[IR_LEN-1:2], 2'b01}));
                 end
 
                 SHIFT_IR: begin
                     ir_shift <= {tdi_i, ir_shift[IR_LEN-1:1]};
-                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: SHIFT_IR, tdi_i=%b, ir_shift=%b -> %b",
-                           $time, tdi_i, ir_shift, {tdi_i, ir_shift[IR_LEN-1:1]}));
+                    `DEBUG2(`DBG_GRP_JTAG,
+                            ("[%0t] TAP: SHIFT_IR, tdi_i=%b, ir_shift=%b -> %b", $time, tdi_i, ir_shift, {
+                            tdi_i, ir_shift[IR_LEN-1:1]}));
                 end
 
                 UPDATE_IR: begin
                     ir_reg <= ir_shift;
-                    `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TAP: UPDATE_IR, ir_reg=%b -> %b (%h)",
-                           $time, ir_reg, ir_shift, ir_shift));
+                    `DEBUG2(`DBG_GRP_JTAG,
+                            ("[%0t] TAP: UPDATE_IR, ir_reg=%b -> %b (%h)", $time, ir_reg, ir_shift, ir_shift));
                 end
 
                 default: begin
@@ -201,76 +205,77 @@ module jtag_tap #(
 
     // Generate control pulses for DTM
     assign capture_dr_pulse = (state == CAPTURE_DR);
-    assign shift_dr_pulse = (state == SHIFT_DR);
-    assign update_dr_pulse = (state == UPDATE_DR);
+    assign shift_dr_pulse   = (state == SHIFT_DR);
+    assign update_dr_pulse  = (state == UPDATE_DR);
 
     // Instantiate RISC-V Debug Transport Module
     jv32_dtm #(
-        .IDCODE           (IDCODE),
-        .N_TRIGGERS       (N_TRIGGERS)
+        .IDCODE    (IDCODE),
+        .N_TRIGGERS(N_TRIGGERS)
     ) u_dtm (
         // JTAG interface
-        .tck_i            (tck_i),
-        .tdi_i            (tdi_i),
-        .tdo_o            (dtm_tdo),
-        .capture_dr_i     (capture_dr_pulse),
-        .shift_dr_i       (shift_dr_pulse),
-        .update_dr_i      (update_dr_pulse),
-        .ir_i             (ir_reg),
-        .ntrst_i          (ntrst_i),
+        .tck_i       (tck_i),
+        .tdi_i       (tdi_i),
+        .tdo_o       (dtm_tdo),
+        .capture_dr_i(capture_dr_pulse),
+        .shift_dr_i  (shift_dr_pulse),
+        .update_dr_i (update_dr_pulse),
+        .ir_i        (ir_reg),
+        .ntrst_i     (ntrst_i),
 
         // System clock and reset
-        .clk              (clk),
-        .rst_n            (rst_n),
+        .clk  (clk),
+        .rst_n(rst_n),
 
         // Debug interface to CPU
-        .dbg_halt_req_o   (halt_req_o),
-        .dbg_halted_i     (halted_i),
-        .dbg_resume_req_o (resume_req_o),
-        .dbg_resumeack_i  (resumeack_i),
+        .dbg_halt_req_o  (halt_req_o),
+        .dbg_halted_i    (halted_i),
+        .dbg_resume_req_o(resume_req_o),
+        .dbg_resumeack_i (resumeack_i),
 
         // Register access
-        .dbg_reg_addr_o   (dbg_reg_addr_o),
-        .dbg_reg_wdata_o  (dbg_reg_wdata_o),
-        .dbg_reg_we_o     (dbg_reg_we_o),
-        .dbg_reg_rdata_i  (dbg_reg_rdata_i),
+        .dbg_reg_addr_o (dbg_reg_addr_o),
+        .dbg_reg_wdata_o(dbg_reg_wdata_o),
+        .dbg_reg_we_o   (dbg_reg_we_o),
+        .dbg_reg_rdata_i(dbg_reg_rdata_i),
 
         // PC access
-        .dbg_pc_wdata_o   (dbg_pc_wdata_o),
-        .dbg_pc_we_o      (dbg_pc_we_o),
-        .dbg_pc_i         (dbg_pc_i),
+        .dbg_pc_wdata_o(dbg_pc_wdata_o),
+        .dbg_pc_we_o   (dbg_pc_we_o),
+        .dbg_pc_i      (dbg_pc_i),
 
         // Memory access
-        .dbg_mem_req_o    (dbg_mem_req_o),
-        .dbg_mem_addr_o   (dbg_mem_addr_o),
-        .dbg_mem_we_o     (dbg_mem_we_o),
-        .dbg_mem_wdata_o  (dbg_mem_wdata_o),
-        .dbg_mem_ready_i  (dbg_mem_ready_i),
-        .dbg_mem_error_i  (dbg_mem_error_i),
-        .dbg_mem_rdata_i  (dbg_mem_rdata_i),
+        .dbg_mem_req_o  (dbg_mem_req_o),
+        .dbg_mem_addr_o (dbg_mem_addr_o),
+        .dbg_mem_we_o   (dbg_mem_we_o),
+        .dbg_mem_wdata_o(dbg_mem_wdata_o),
+        .dbg_mem_ready_i(dbg_mem_ready_i),
+        .dbg_mem_error_i(dbg_mem_error_i),
+        .dbg_mem_rdata_i(dbg_mem_rdata_i),
 
         // System reset outputs
-        .dbg_ndmreset_o   (dbg_ndmreset_o),
-        .dbg_hartreset_o  (dbg_hartreset_o),
+        .dbg_ndmreset_o (dbg_ndmreset_o),
+        .dbg_hartreset_o(dbg_hartreset_o),
 
         // Debug control signals
-        .dbg_singlestep_o (dbg_singlestep_o),
-        .dbg_ebreakm_o    (dbg_ebreakm_o),
-        .progbuf0_o       (progbuf0_o),
-        .progbuf1_o       (progbuf1_o),
+        .dbg_singlestep_o(dbg_singlestep_o),
+        .dbg_ebreakm_o   (dbg_ebreakm_o),
+        .progbuf0_o      (progbuf0_o),
+        .progbuf1_o      (progbuf1_o),
 
         // Trigger interface
-        .trigger_halt_i   (trigger_halt_i),
-        .trigger_hit_i    (trigger_hit_i),
-        .tdata1_o         (tdata1_o),
-        .tdata2_o         (tdata2_o)
+        .trigger_halt_i(trigger_halt_i),
+        .trigger_hit_i (trigger_hit_i),
+        .tdata1_o      (tdata1_o),
+        .tdata2_o      (tdata2_o)
     );
 
     // Bypass register for non-DTM operations
     always_ff @(posedge tck_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
             bypass_reg <= 1'b0;
-        end else begin
+        end
+        else begin
             case (state)
                 CAPTURE_DR: begin
                     if (ir_reg == BYPASS_INSTR) bypass_reg <= 1'b0;
@@ -314,16 +319,14 @@ module jtag_tap #(
     // LSB is available combinatorially.  Latching it on negedge ensures the
     // debugger sees a glitch-free, stable TDO during the next TCK high period.
     always_ff @(negedge tck_i or negedge ntrst_i) begin
-        if (!ntrst_i)
-            tdo_o <= 1'b0;
-        else
-            tdo_o <= tdo_comb;
+        if (!ntrst_i) tdo_o <= 1'b0;
+        else tdo_o <= tdo_comb;
     end
 
     // =========================================================================
     // Debug Info (for simulation)
     // =========================================================================
-    `ifndef SYNTHESIS
+`ifndef SYNTHESIS
     /* verilator lint_off UNUSED */
     string state_name;
     /* verilator lint_on UNUSED */
@@ -348,7 +351,7 @@ module jtag_tap #(
             default:          state_name = "UNKNOWN";  // unreachable; keeps case_default satisfied
         endcase
     end
-    `endif // SYNTHESIS
+`endif  // SYNTHESIS
 
 endmodule
 

@@ -18,9 +18,14 @@ endif
 # Load environment configuration (tool paths)
 -include env.config
 
+# Load hardware/simulation configuration (can override on command line)
+-include Makefile.cfg
+
 # Export so sub-makes (sw/Makefile) inherit
 export RISCV_PREFIX
 export VERILATOR
+export VERIBLE
+export VERIBLE_FORMAT
 
 # Append additional tool paths if specified
 ifdef PATH_APPEND
@@ -55,6 +60,8 @@ OBJDUMP = $(RISCV_PREFIX)objdump
 # ============================================================================
 VERILATOR      ?= verilator
 VERILATOR_JOBS ?= 0
+VERIBLE        ?= None
+VERIBLE_FORMAT ?= None
 SVLINT         ?= None
 
 VERILATOR_FLAGS  = -Wall -Wno-UNSIGNED --trace --trace-fst --cc --exe --build -j $(VERILATOR_JOBS)
@@ -108,8 +115,19 @@ endif
 ifdef DRAM_SIZE
   VERILATOR_FLAGS += -pvalue+DRAM_SIZE=$(DRAM_SIZE)
 endif
-
-# Debug output
+ifdef BOOT_ADDR
+  VERILATOR_FLAGS += -pvalue+BOOT_ADDR=$(BOOT_ADDR)
+endif
+ifdef IRAM_BASE
+  VERILATOR_FLAGS += -pvalue+IRAM_BASE=$(IRAM_BASE)
+endif
+ifdef DRAM_BASE
+  VERILATOR_FLAGS += -pvalue+DRAM_BASE=$(DRAM_BASE)
+endif
+ifdef CLK_FREQ
+  VERILATOR_FLAGS += -pvalue+CLK_FREQ=$(CLK_FREQ)
+  VERILATOR_FLAGS += -CFLAGS "-DCLK_FREQ_HZ=$(CLK_FREQ)ULL"
+endif
 #   DEBUG=1  — enable level-1 messages (DEBUG1 macro)
 #   DEBUG=2  — enable level-1 + level-2 per-group messages (DEBUG1 + DEBUG2)
 #   DEBUG_GROUP=0x<hex>  — bitmask of groups to show (default: all)
@@ -142,8 +160,7 @@ RTL_SOURCES = \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
     $(wildcard $(MEM_DIR)/*.sv) \
-    $(TB_DIR)/uart_loopback.sv \
-    $(TB_DIR)/tb_jv32_soc.sv
+	$(wildcard $(TB_DIR)/*.sv)
 
 TB_SOURCES = \
     $(TB_DIR)/tb_jv32_soc.cpp \
@@ -168,21 +185,23 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
 # ============================================================================
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
-        lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
+	lint-verible lint-svlint format-verible sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
-        openocd
+        submodule-init
 
 # Default: build RTL simulator
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all openocd arch-test-run
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
+	@make -f Makefile FAST_MUL=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
+	@make -f Makefile FAST_DIV=1 rtl-all sim-all compare-all
 
 # ============================================================================
 # Build RTL simulator
@@ -284,9 +303,9 @@ $(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(VPI_SOURCES)
 # Lint
 # ============================================================================
 
-# Lint umbrella: runs all four lint passes in sequence.
+# Lint umbrella: runs all lint passes in sequence.
 # Stops on the first failing pass.
-lint: lint-full lint-modules lint-decl lint-ffreset lint-svlint
+lint: lint-full lint-modules lint-decl lint-ffreset lint-verible lint-svlint
 
 # Full-design Verilator lint (all RTL + testbench compiled together)
 lint-full:
@@ -362,6 +381,35 @@ lint-ffreset:
 # svlint structural/intent lint of RTL source files.
 # Skipped automatically when SVLINT is 'None' or the binary does not exist.
 # Rules are read from .svlint.toml.
+lint-verible:
+	@echo "=========================================="
+	@echo "Verible RTL check"
+	@echo "=========================================="
+	@if [ "$(VERIBLE)" = "None" ] || [ -z "$(VERIBLE)" ]; then \
+	    echo "VERIBLE is set to None or unset - skipping Verible."; \
+	else \
+	    if [[ "$(VERIBLE)" == */* ]]; then \
+	        if ! [ -x "$(VERIBLE)" ]; then \
+	            echo "Verible binary not executable at: $(VERIBLE) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VCBIN="$(VERIBLE)"; \
+	    else \
+	        if ! command -v "$(VERIBLE)" >/dev/null 2>&1; then \
+	            echo "Verible binary not found in PATH: $(VERIBLE) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VCBIN="$(VERIBLE)"; \
+	    fi; \
+	    echo "verible: $$VCBIN"; \
+	    echo "config: .rules.verible_lint"; \
+	    $$VCBIN --rules_config .rules.verible_lint $(RTL_ONLY_SRCS) && \
+	    echo "" && \
+	    echo "==========================================" && \
+	    echo "Verible passed!" && \
+	    echo "=========================================="; \
+	fi
+
 lint-svlint:
 	@echo "=========================================="
 	@echo "svlint RTL check"
@@ -429,6 +477,10 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
 	fi
 
+# Build FreeRTOS ELF via rtos/freertos/Makefile
+$(BUILD_DIR)/freertos-%.elf:
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
 # Build ELF via sw/Makefile dispatcher (handles tests/, coremark/, dhry/)
 $(BUILD_DIR)/%.elf:
 	@$(MAKE) -C $(SW_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
@@ -452,21 +504,28 @@ rtl-all: build-rtl
 	@echo "Running all software tests with RTL simulator"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[rtl-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory rtl-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory rtl-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "rtl-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "rtl-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "RTL Test Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Run all software tests with the software simulator
 sim-all: sim-build
@@ -474,21 +533,28 @@ sim-all: sim-build
 	@echo "Running all software tests with software simulator"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[sim-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory sim-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory sim-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "sim-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "sim-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "Simulator Test Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Compare software-vs-RTL traces for all software tests
 compare-all: $(JV32SIM) build-rtl
@@ -496,21 +562,28 @@ compare-all: $(JV32SIM) build-rtl
 	@echo "Comparing traces for all software tests"
 	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
 	@echo "=========================================="
-	@failed=0; idx=0; \
+	@passed=0; failed=0; failed_tests=""; idx=0; \
 	for test in $(SW_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
 		echo "[compare-all $$idx/$(SW_TEST_COUNT)] $$test"; \
-		if ! $(MAKE) --no-print-directory compare-$$test; then \
-			failed=1; \
+		if $(MAKE) --no-print-directory compare-$$test; then \
+			passed=$$((passed + 1)); \
+		else \
+			failed=$$((failed + 1)); \
+			failed_tests="$$failed_tests $$test"; \
 		fi; \
 	done; \
 	echo ""; \
-	if [ $$failed -ne 0 ]; then \
-		echo "compare-all: one or more tests failed."; \
-		exit 1; \
-	fi; \
-	echo "compare-all: all $(SW_TEST_COUNT) tests passed."
+	echo "=========================================="; \
+	echo "Comparison Summary"; \
+	echo "=========================================="; \
+	echo "Total:  $$((passed + failed))"; \
+	echo "Passed: $$passed"; \
+	echo "Failed: $$failed"; \
+	if [ $$failed -gt 0 ]; then echo "Failed tests:$$failed_tests"; fi; \
+	echo "=========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi
 
 # Build a specific software test: make sw-hello, make sw-coremark, make sw-dhry
 sw-%:
@@ -563,17 +636,14 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo " JV32 Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running RTL simulator (generates rtl_trace + mtime_hints)..."
+	@echo "[1/3] Running software simulator..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running RTL simulator..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
-	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
 	    $(BUILD_DIR)/$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running software simulator (sync via --mtime-hints)..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
-	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
-	    $(BUILD_DIR)/$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces (sim=RTL-format vs rtl=Spike-format)..."
 	@python3 scripts/trace_compare.py \
@@ -593,21 +663,31 @@ $(BUILD_DIR)/freertos-%.elf: FORCE
 freertos-list-tests:
 	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory list-tests
 
-# Run a FreeRTOS test with the RTL simulator
-rtl-freertos-%: build-rtl $(BUILD_DIR)/freertos-%.elf
+# Internal helper used by rtl-freertos-% and rtl-freertos-all
+.PHONY: __rtl-freertos-run
+__rtl-freertos-run: build-rtl
+	@if [ -z "$(TEST)" ]; then \
+		echo "ERROR: TEST is required (e.g. make __rtl-freertos-run TEST=perf)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(FREERTOS_DIR) --no-print-directory build TEST=$(TEST) BUILD_DIR=$(BUILD_DIR_ABS)
 	@echo "=========================================="
-	@echo "Running FreeRTOS test '$*' with RTL simulator"
+	@echo "Running FreeRTOS test '$(TEST)' with RTL simulator"
 	@echo "=========================================="
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
 	    $(TIMEOUT_ARG) \
-	    freertos-$*.elf
+	    freertos-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
 	fi
+
+# Run a FreeRTOS test with the RTL simulator
+rtl-freertos-%:
+	@$(MAKE) --no-print-directory __rtl-freertos-run TEST=$*
 
 # Run all FreeRTOS tests with the RTL simulator
 rtl-freertos-all: build-rtl
@@ -618,7 +698,7 @@ rtl-freertos-all: build-rtl
 	for t in $$($(MAKE) -s -C $(FREERTOS_DIR) list-tests 2>/dev/null); do \
 		echo ""; \
 		echo "[rtl-freertos-all] $$t"; \
-		if ! $(MAKE) --no-print-directory rtl-freertos-$$t; then failed=1; fi; \
+		if ! $(MAKE) --no-print-directory __rtl-freertos-run TEST=$$t; then failed=1; fi; \
 	done; \
 	echo ""; \
 	if [ $$failed -ne 0 ]; then \
@@ -659,17 +739,14 @@ compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
 	@echo " JV32 FreeRTOS Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running RTL simulator (generates rtl_trace + mtime_hints)..."
+	@echo "[1/3] Running software simulator..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/freertos-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running RTL simulator..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
-	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
 	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running software simulator (sync via --mtime-hints)..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
-	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
-	    $(BUILD_DIR)/freertos-$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces..."
 	@python3 scripts/trace_compare.py \
@@ -695,10 +772,18 @@ compare-freertos-all:
 	echo "compare-freertos-all: all tests passed."
 
 # ============================================================================
-# OpenOCD tests
+# Submodule initialization (avoids pulling large nested submodules like llvm-project)
 # ============================================================================
-openocd:
-	@make -C openocd
+# DO NOT use `git clone --recurse-submodules` — it will recursively clone
+# riscv-arch-test → riscv-unified-db → llvm-project (~4 GB).
+# Use `make submodule-init` instead after a plain `git clone`.
+# ============================================================================
+submodule-init:
+	@echo "[submodule] Initializing verif/riscv-arch-test..."
+	@git submodule update --init verif/riscv-arch-test
+	@echo "[submodule] Initializing riscv-arch-test nested submodules (excluding llvm-project)..."
+	@git -C verif/riscv-arch-test submodule update --init external/riscv-unified-db docs/docs-resources
+	@echo "[submodule] Done. llvm-project was intentionally skipped (not needed for arch tests)."
 
 # ============================================================================
 # Arch-test (ACT4) — delegated to verif/Makefile
@@ -735,6 +820,47 @@ cleanup-all:
 	@bash scripts/cleanup -all
 
 # ============================================================================
+# SystemVerilog formatting with Verible
+# Usage:
+#   make format-verible
+#   make format-verible FILES="rtl/jv32/core/jv32_rvc.sv rtl/axi/axi_clic.sv"
+# ============================================================================
+format-verible:
+	@echo "=========================================="
+	@echo "Verible SystemVerilog format"
+	@echo "=========================================="
+	@if [ "$(VERIBLE_FORMAT)" = "None" ] || [ -z "$(VERIBLE_FORMAT)" ]; then \
+	    echo "VERIBLE_FORMAT is set to None or unset - skipping format."; \
+	else \
+	    if [[ "$(VERIBLE_FORMAT)" == */* ]]; then \
+	        if ! [ -x "$(VERIBLE_FORMAT)" ]; then \
+	            echo "Verible formatter not executable at: $(VERIBLE_FORMAT) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VFBIN="$(VERIBLE_FORMAT)"; \
+	    else \
+	        if ! command -v "$(VERIBLE_FORMAT)" >/dev/null 2>&1; then \
+	            echo "Verible formatter not found in PATH: $(VERIBLE_FORMAT) - skipping."; \
+	            exit 0; \
+	        fi; \
+	        VFBIN="$(VERIBLE_FORMAT)"; \
+	    fi; \
+	    echo "verible-format: $$VFBIN"; \
+	    echo "flagfile: .rules.verible_format"; \
+	    $$VFBIN \
+	        --inplace \
+	        --flagfile=.rules.verible_format \
+	        $(if $(FILES),$(FILES),$(RTL_SOURCES)) \
+	        >/dev/null && \
+	    python3 scripts/align_localparams.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
+	    python3 scripts/align_trailing_comments.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
+	    echo "" && \
+	    echo "==========================================" && \
+	    echo "Format complete!" && \
+	    echo "=========================================="; \
+	fi
+
+# ============================================================================
 # Info / Help
 # ============================================================================
 info:
@@ -756,17 +882,18 @@ help:
 	@echo "  rtl-<test>           Build & run <test>.elf with RTL simulator"
 	@echo "  rtl-all              Build & run all tests under sw/ with RTL simulator"
 	@echo "  compare-<test>       Build & compare traces: software vs RTL simulator"
-	@echo "  compare-all          Build & compare traces for all tests under sw/"
-	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
+	@echo "  compare-all          Build & compare traces for all tests under sw/"  @echo "  submodule-init       Init submodules safely (skips llvm-project; use instead of --recurse-submodules)"	@echo "  arch-test-setup      Clone riscv-arch-test (act4) & install Python venv via uv"
 	@echo "  arch-test-run        Generate self-checking ELFs and run on JV32 RTL sim"
 	@echo "  arch-test-<tgt>      Forward <tgt> to verif/Makefile (see make -C verif help)"
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"
-	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-svlint)"
+	@echo "  format-verible       Format SystemVerilog files with Verible (all RTL or FILES=...)"
+	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-verible + lint-svlint)"
 	@echo "  lint-full            Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules         Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
 	@echo "  lint-decl            Check signal declaration order (use-before-declare)"
+	@echo "  lint-verible         Verible lint check (skipped if VERIBLE=None or binary absent)"
 	@echo "  lint-svlint          svlint structural/intent check (skipped if SVLINT=None or binary absent)"
 	@echo "  clean                Remove all build artifacts"
 	@echo "  info                 Print tool and path configuration"
@@ -780,6 +907,8 @@ help:
 	@echo ""
 	@echo "Toolchain variables (set in env.config or command line):"
 	@echo "  VERILATOR=<path>     Verilator binary"
+	@echo "  VERIBLE=<path>       Verible lint binary"
+	@echo "  VERIBLE_FORMAT=<p>   Verible formatter binary"
 	@echo "  RISCV_PREFIX=<pfx>   RISC-V toolchain prefix"
 	@echo ""
 	@echo "RTL parameters (override on command line):"

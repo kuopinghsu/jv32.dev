@@ -62,11 +62,11 @@ VPI_PORT ?= 5555
 # JTAG: common functionality; no cJTAG-specific activation test
 JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
-			   sba havereset abstractauto
+			   sba havereset abstractauto debug_ext_alias
 # cJTAG: cJTAG activation check first, then the same common tests
 CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
-			   sba havereset abstractauto
+			   sba havereset abstractauto debug_ext_alias
 
 # ── Test counts (computed from the lists above) ──────────────────────────────
 N_JTAG  := $(words $(JTAG_TESTS))

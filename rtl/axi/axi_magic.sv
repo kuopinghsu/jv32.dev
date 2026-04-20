@@ -33,8 +33,8 @@ import "DPI-C" function void sim_request_exit(input int exit_code);
 `endif
 
 module axi_magic (
-    input  logic        clk,
-    input  logic        rst_n,
+    input logic clk,
+    input logic rst_n,
 
     // AXI4-Lite Slave Interface
     input  logic [31:0] axi_awaddr,
@@ -42,34 +42,34 @@ module axi_magic (
     output logic        axi_awready,
 
     input  logic [31:0] axi_wdata,
-    input  logic [3:0]  axi_wstrb,
+    input  logic [ 3:0] axi_wstrb,
     input  logic        axi_wvalid,
     output logic        axi_wready,
 
-    output logic [1:0]  axi_bresp,
-    output logic        axi_bvalid,
-    input  logic        axi_bready,
+    output logic [1:0] axi_bresp,
+    output logic       axi_bvalid,
+    input  logic       axi_bready,
 
     input  logic [31:0] axi_araddr,
     input  logic        axi_arvalid,
     output logic        axi_arready,
 
     output logic [31:0] axi_rdata,
-    output logic [1:0]  axi_rresp,
+    output logic [ 1:0] axi_rresp,
     output logic        axi_rvalid,
     input  logic        axi_rready
 );
 
 `ifdef SYNTHESIS
-    assign axi_awready      = 1'b1;
-    assign axi_wready       = 1'b1;
-    assign axi_bresp[1:0]   = 2'b00;  // RESP_OKAY
-    assign axi_bvalid       = 1'b1;
-    assign axi_arready      = 1'b1;
-    assign axi_rdata[31:0]  = 32'b0;
-    assign axi_rresp[1:0]   = 2'b00;  // RESP_OKAY
-    assign axi_rvalid       = 1'b1;
-`else // SYNTHESIS
+    assign axi_awready     = 1'b1;
+    assign axi_wready      = 1'b1;
+    assign axi_bresp[1:0]  = 2'b00;  // RESP_OKAY
+    assign axi_bvalid      = 1'b1;
+    assign axi_arready     = 1'b1;
+    assign axi_rdata[31:0] = 32'b0;
+    assign axi_rresp[1:0]  = 2'b00;  // RESP_OKAY
+    assign axi_rvalid      = 1'b1;
+`else  // SYNTHESIS
     // Magic addresses
     localparam CONSOLE_MAGIC_ADDR = 32'h40000000;
     localparam EXIT_MAGIC_ADDR    = 32'h40000004;
@@ -80,7 +80,7 @@ module axi_magic (
     localparam NCM_BASE_ADDR = 32'h40001000;
 
     // 128×32-bit instruction RAM (simulation/testbench only – not synthesised)
-    logic [31:0] ncm [0:127];
+    logic [31:0] ncm[0:127];
 
     // State machine for write transactions
     typedef enum logic [1:0] {
@@ -89,8 +89,8 @@ module axi_magic (
         WRITE_RESP
     } write_state_t;
 
-    write_state_t write_state;
-    logic [31:0] write_addr_reg;
+    write_state_t        write_state;
+    logic         [31:0] write_addr_reg;
 
     // State machine for read transactions
     typedef enum logic [1:0] {
@@ -98,11 +98,11 @@ module axi_magic (
         READ_RESP
     } read_state_t;
 
-    read_state_t read_state;
+    read_state_t       read_state;
 
     // Write data extraction variables
-    logic is_byte_write;
-    logic [7:0] write_byte;
+    logic              is_byte_write;
+    logic        [7:0] write_byte;
 
     // Combinational logic to extract write byte based on strobe
     always_comb begin
@@ -122,7 +122,8 @@ module axi_magic (
                 4'b1000: write_byte = axi_wdata[31:24];
                 default: write_byte = axi_wdata[7:0];
             endcase
-        end else begin
+        end
+        else begin
             // Word write: always use lower byte for char operations
             write_byte = axi_wdata[7:0];
         end
@@ -131,24 +132,25 @@ module axi_magic (
     // Write channel handling
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            write_state <= IDLE;
+            write_state    <= IDLE;
             write_addr_reg <= 32'h0;
-            axi_awready <= 1'b0;
-            axi_wready <= 1'b0;
-            axi_bresp <= 2'b00;
-            axi_bvalid <= 1'b0;
+            axi_awready    <= 1'b0;
+            axi_wready     <= 1'b0;
+            axi_bresp      <= 2'b00;
+            axi_bvalid     <= 1'b0;
             for (int i = 0; i < 128; i++) ncm[i] <= 32'h0;
-        end else begin
+        end
+        else begin
             case (write_state)
                 IDLE: begin
                     axi_awready <= 1'b1;
-                    axi_wready <= 1'b0;
-                    axi_bvalid <= 1'b0;
+                    axi_wready  <= 1'b0;
+                    axi_bvalid  <= 1'b0;
 
                     if (axi_awvalid && axi_awready) begin
                         write_addr_reg <= axi_awaddr;
-                        axi_awready <= 1'b0;
-                        write_state <= WRITE_DATA;
+                        axi_awready    <= 1'b0;
+                        write_state    <= WRITE_DATA;
                     end
                 end
 
@@ -168,7 +170,8 @@ module axi_magic (
                                     `DEBUG1(("[MAGIC] Exit simulation with code %0d", write_byte >> 1));
                                     sim_request_exit(32'(write_byte) >> 1);
                                 end
-                            end else begin
+                            end
+                            else begin
                                 // Exit simulation only on non-zero to match kv32sim
                                 // semantics for tohost/exit writes.
                                 if (axi_wdata != 32'h00000000) begin
@@ -177,16 +180,19 @@ module axi_magic (
                                     sim_request_exit(axi_wdata >> 1);
                                 end
                             end
-                        end else if ((write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR) begin
+                        end
+                        else if ((write_addr_reg & ~32'h3) == CONSOLE_MAGIC_ADDR) begin
                             // Output character to console, disable output on debug mode
-                            `ifndef DEBUG
+`ifndef DEBUG
                             $write("%c", write_byte);
                             $fflush();
-                            `endif
-                        end else if (write_addr_reg[31:9] == NCM_BASE_ADDR[31:9]) begin
+`endif
+                        end
+                        else if (write_addr_reg[31:9] == NCM_BASE_ADDR[31:9]) begin
                             // NCM write: store word into non-cacheable instruction memory
                             ncm[write_addr_reg[8:2]] <= axi_wdata;
-                            `DEBUG2(`DBG_GRP_ICACHE, ("[MAGIC] NCM write word[%0d] @ 0x%h = 0x%h",
+                            `DEBUG2(`DBG_GRP_ICACHE,
+                                    ("[MAGIC] NCM write word[%0d] @ 0x%h = 0x%h",
                                 write_addr_reg[8:2], write_addr_reg, axi_wdata));
                         end
                         // else: Ignore other addresses
@@ -203,7 +209,7 @@ module axi_magic (
 
                 WRITE_RESP: begin
                     if (axi_bvalid && axi_bready) begin
-                        axi_bvalid <= 1'b0;
+                        axi_bvalid  <= 1'b0;
                         write_state <= IDLE;
                     end
                 end
@@ -216,26 +222,29 @@ module axi_magic (
     // Read channel handling (return 0 for reads, or NCM word for NCM addresses)
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            read_state <= READ_IDLE;
+            read_state  <= READ_IDLE;
             axi_arready <= 1'b0;
-            axi_rdata <= 32'h0;
-            axi_rresp <= 2'b00;
-            axi_rvalid <= 1'b0;
-        end else begin
+            axi_rdata   <= 32'h0;
+            axi_rresp   <= 2'b00;
+            axi_rvalid  <= 1'b0;
+        end
+        else begin
             case (read_state)
                 READ_IDLE: begin
                     axi_arready <= 1'b1;
-                    axi_rvalid <= 1'b0;
+                    axi_rvalid  <= 1'b0;
 
                     if (axi_arvalid && axi_arready) begin
                         axi_arready <= 1'b0;
                         // NCM read: return the stored instruction word
                         if (axi_araddr[31:9] == NCM_BASE_ADDR[31:9]) begin
                             axi_rdata <= ncm[axi_araddr[8:2]];
-                            `DEBUG2(`DBG_GRP_ICACHE, ("[MAGIC] NCM read word[%0d] @ 0x%h = 0x%h (fetch)",
+                            `DEBUG2(`DBG_GRP_ICACHE,
+                                    ("[MAGIC] NCM read word[%0d] @ 0x%h = 0x%h (fetch)",
                                 axi_araddr[8:2], axi_araddr, ncm[axi_araddr[8:2]]));
-                        end else begin
-                            axi_rdata  <= 32'h0;
+                        end
+                        else begin
+                            axi_rdata <= 32'h0;
                         end
                         // Respond OKAY for recognised addresses; SLVERR otherwise
                         axi_rresp  <= ((axi_araddr & ~32'h3) == EXIT_MAGIC_ADDR ||
@@ -265,150 +274,165 @@ module axi_magic (
     // Define ASSERTION by default (can be disabled with +define+NO_ASSERTION)
 `ifndef NO_ASSERTION
 `ifndef ASSERTION
-`define ASSERTION
+    `define ASSERTION
 `endif
-`endif // NO_ASSERTION
+`endif  // NO_ASSERTION
 
 `ifdef ASSERTION
 
     // AXI4-Lite Write Address Channel Assertions
     property p_awvalid_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_awvalid && !axi_awready) |=> $stable(axi_awvalid);
+        @(posedge clk) disable iff (!rst_n) (axi_awvalid && !axi_awready) |=> $stable(
+            axi_awvalid
+        );
     endproperty
     assert property (p_awvalid_stable)
-        else $error("[AXI_MAGIC] AWVALID must remain stable until AWREADY");
+    else $error("[AXI_MAGIC] AWVALID must remain stable until AWREADY");
 
     property p_awaddr_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_awvalid && !axi_awready) |=> $stable(axi_awaddr);
+        @(posedge clk) disable iff (!rst_n) (axi_awvalid && !axi_awready) |=> $stable(
+            axi_awaddr
+        );
     endproperty
     assert property (p_awaddr_stable)
-        else $error("[AXI_MAGIC] AWADDR must remain stable while AWVALID is high");
+    else $error("[AXI_MAGIC] AWADDR must remain stable while AWVALID is high");
 
     // AXI4-Lite Write Data Channel Assertions
     property p_wvalid_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_wvalid && !axi_wready) |=> $stable(axi_wvalid);
+        @(posedge clk) disable iff (!rst_n) (axi_wvalid && !axi_wready) |=> $stable(
+            axi_wvalid
+        );
     endproperty
     assert property (p_wvalid_stable)
-        else $error("[AXI_MAGIC] WVALID must remain stable until WREADY");
+    else $error("[AXI_MAGIC] WVALID must remain stable until WREADY");
 
     property p_wdata_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_wvalid && !axi_wready) |=> $stable(axi_wdata);
+        @(posedge clk) disable iff (!rst_n) (axi_wvalid && !axi_wready) |=> $stable(
+            axi_wdata
+        );
     endproperty
     assert property (p_wdata_stable)
-        else $error("[AXI_MAGIC] WDATA must remain stable while WVALID is high");
+    else $error("[AXI_MAGIC] WDATA must remain stable while WVALID is high");
 
     property p_wstrb_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_wvalid && !axi_wready) |=> $stable(axi_wstrb);
+        @(posedge clk) disable iff (!rst_n) (axi_wvalid && !axi_wready) |=> $stable(
+            axi_wstrb
+        );
     endproperty
     assert property (p_wstrb_stable)
-        else $error("[AXI_MAGIC] WSTRB must remain stable while WVALID is high");
+    else $error("[AXI_MAGIC] WSTRB must remain stable while WVALID is high");
 
     // AXI4-Lite Write Response Channel Assertions
     property p_bvalid_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_bvalid && !axi_bready) |=> $stable(axi_bvalid);
+        @(posedge clk) disable iff (!rst_n) (axi_bvalid && !axi_bready) |=> $stable(
+            axi_bvalid
+        );
     endproperty
     assert property (p_bvalid_stable)
-        else $error("[AXI_MAGIC] BVALID must remain stable until BREADY");
+    else $error("[AXI_MAGIC] BVALID must remain stable until BREADY");
 
     property p_bresp_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_bvalid && !axi_bready) |=> $stable(axi_bresp);
+        @(posedge clk) disable iff (!rst_n) (axi_bvalid && !axi_bready) |=> $stable(
+            axi_bresp
+        );
     endproperty
     assert property (p_bresp_stable)
-        else $error("[AXI_MAGIC] BRESP must remain stable while BVALID is high");
+    else $error("[AXI_MAGIC] BRESP must remain stable while BVALID is high");
 
     property p_bvalid_after_write;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_awvalid && axi_awready && axi_wvalid && axi_wready) |=> axi_bvalid;
+        @(posedge clk) disable iff (!rst_n) (axi_awvalid && axi_awready && axi_wvalid && axi_wready) |=> axi_bvalid;
     endproperty
     assert property (p_bvalid_after_write)
-        else $error("[AXI_MAGIC] BVALID must be asserted 1 cycle after write data handshake");
+    else $error("[AXI_MAGIC] BVALID must be asserted 1 cycle after write data handshake");
 
     // AXI4-Lite Read Address Channel Assertions
     property p_arvalid_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_arvalid && !axi_arready) |=> $stable(axi_arvalid);
+        @(posedge clk) disable iff (!rst_n) (axi_arvalid && !axi_arready) |=> $stable(
+            axi_arvalid
+        );
     endproperty
     assert property (p_arvalid_stable)
-        else $error("[AXI_MAGIC] ARVALID must remain stable until ARREADY");
+    else $error("[AXI_MAGIC] ARVALID must remain stable until ARREADY");
 
     property p_araddr_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_arvalid && !axi_arready) |=> $stable(axi_araddr);
+        @(posedge clk) disable iff (!rst_n) (axi_arvalid && !axi_arready) |=> $stable(
+            axi_araddr
+        );
     endproperty
     assert property (p_araddr_stable)
-        else $error("[AXI_MAGIC] ARADDR must remain stable while ARVALID is high");
+    else $error("[AXI_MAGIC] ARADDR must remain stable while ARVALID is high");
 
     // AXI4-Lite Read Data Channel Assertions
     property p_rvalid_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_rvalid && !axi_rready) |=> $stable(axi_rvalid);
+        @(posedge clk) disable iff (!rst_n) (axi_rvalid && !axi_rready) |=> $stable(
+            axi_rvalid
+        );
     endproperty
     assert property (p_rvalid_stable)
-        else $error("[AXI_MAGIC] RVALID must remain stable until RREADY");
+    else $error("[AXI_MAGIC] RVALID must remain stable until RREADY");
 
     property p_rdata_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_rvalid && !axi_rready) |=> $stable(axi_rdata);
+        @(posedge clk) disable iff (!rst_n) (axi_rvalid && !axi_rready) |=> $stable(
+            axi_rdata
+        );
     endproperty
     assert property (p_rdata_stable)
-        else $error("[AXI_MAGIC] RDATA must remain stable while RVALID is high");
+    else $error("[AXI_MAGIC] RDATA must remain stable while RVALID is high");
 
     property p_rresp_stable;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_rvalid && !axi_rready) |=> $stable(axi_rresp);
+        @(posedge clk) disable iff (!rst_n) (axi_rvalid && !axi_rready) |=> $stable(
+            axi_rresp
+        );
     endproperty
     assert property (p_rresp_stable)
-        else $error("[AXI_MAGIC] RRESP must remain stable while RVALID is high");
+    else $error("[AXI_MAGIC] RRESP must remain stable while RVALID is high");
 
     property p_rvalid_after_read;
-        @(posedge clk) disable iff (!rst_n)
-        (axi_arvalid && axi_arready) |=> axi_rvalid;
+        @(posedge clk) disable iff (!rst_n) (axi_arvalid && axi_arready) |=> axi_rvalid;
     endproperty
     assert property (p_rvalid_after_read)
-        else $error("[AXI_MAGIC] RVALID must be asserted 1 cycle after read address handshake");
+    else $error("[AXI_MAGIC] RVALID must be asserted 1 cycle after read address handshake");
 
     // X/Z Detection on Critical Signals (synthesis checks)
     property p_no_x_awvalid;
-        @(posedge clk) disable iff (!rst_n)
-        !$isunknown(axi_awvalid);
+        @(posedge clk) disable iff (!rst_n) !$isunknown(
+            axi_awvalid
+        );
     endproperty
     assert property (p_no_x_awvalid)
-        else $error("[AXI_MAGIC] X/Z detected on axi_awvalid");
+    else $error("[AXI_MAGIC] X/Z detected on axi_awvalid");
 
     property p_no_x_wvalid;
-        @(posedge clk) disable iff (!rst_n)
-        !$isunknown(axi_wvalid);
+        @(posedge clk) disable iff (!rst_n) !$isunknown(
+            axi_wvalid
+        );
     endproperty
     assert property (p_no_x_wvalid)
-        else $error("[AXI_MAGIC] X/Z detected on axi_wvalid");
+    else $error("[AXI_MAGIC] X/Z detected on axi_wvalid");
 
     property p_no_x_arvalid;
-        @(posedge clk) disable iff (!rst_n)
-        !$isunknown(axi_arvalid);
+        @(posedge clk) disable iff (!rst_n) !$isunknown(
+            axi_arvalid
+        );
     endproperty
     assert property (p_no_x_arvalid)
-        else $error("[AXI_MAGIC] X/Z detected on axi_arvalid");
+    else $error("[AXI_MAGIC] X/Z detected on axi_arvalid");
 
     property p_no_x_bready;
-        @(posedge clk) disable iff (!rst_n)
-        !$isunknown(axi_bready);
+        @(posedge clk) disable iff (!rst_n) !$isunknown(
+            axi_bready
+        );
     endproperty
     assert property (p_no_x_bready)
-        else $error("[AXI_MAGIC] X/Z detected on axi_bready");
+    else $error("[AXI_MAGIC] X/Z detected on axi_bready");
 
     property p_no_x_rready;
-        @(posedge clk) disable iff (!rst_n)
-        !$isunknown(axi_rready);
+        @(posedge clk) disable iff (!rst_n) !$isunknown(
+            axi_rready
+        );
     endproperty
     assert property (p_no_x_rready)
-        else $error("[AXI_MAGIC] X/Z detected on axi_rready");
+    else $error("[AXI_MAGIC] X/Z detected on axi_rready");
 
     // Response value checks
     property p_bresp_valid;
@@ -416,17 +440,17 @@ module axi_magic (
         axi_bvalid |-> (axi_bresp == 2'b00 || axi_bresp == 2'b10 || axi_bresp == 2'b11);
     endproperty
     assert property (p_bresp_valid)
-        else $error("[AXI_MAGIC] Invalid BRESP value: %b", axi_bresp);
+    else $error("[AXI_MAGIC] Invalid BRESP value: %b", axi_bresp);
 
     property p_rresp_valid;
         @(posedge clk) disable iff (!rst_n)
         axi_rvalid |-> (axi_rresp == 2'b00 || axi_rresp == 2'b10 || axi_rresp == 2'b11);
     endproperty
     assert property (p_rresp_valid)
-        else $error("[AXI_MAGIC] Invalid RRESP value: %b", axi_rresp);
+    else $error("[AXI_MAGIC] Invalid RRESP value: %b", axi_rresp);
 
-`endif // ASSERTION
-`endif // SYNTHESIS
+`endif  // ASSERTION
+`endif  // SYNTHESIS
 
 endmodule
 
