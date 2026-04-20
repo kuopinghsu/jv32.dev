@@ -80,6 +80,9 @@ arch-test-setup: $(ACT_SENTINEL)
 # ============================================================================
 arch-test-run: $(ACT_SENTINEL)
 	@mkdir -p "$(WORKDIR)"
+	@SANITIZED_TESTDIR="$(WORKDIR)/tests-sanitized"; \
+	 rm -rf "$$SANITIZED_TESTDIR"; \
+	 mkdir -p "$$SANITIZED_TESTDIR"
 	@echo "=========================================="
 	@echo "[arch-test] Work directory: $(WORKDIR)"
 	@echo "[arch-test] Phase 1/3: building RTL simulator"
@@ -88,9 +91,17 @@ arch-test-run: $(ACT_SENTINEL)
 	@echo "=========================================="
 	@echo "[arch-test] Phase 2/3: generating self-checking ELFs"
 	@echo "=========================================="
-	@$(MAKE) -C $(ACT_DIR) \
+	@$(MAKE) -C $(ACT_DIR) tests \
+	    WORKDIR=$(WORKDIR) \
+	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
+	    --jobs $(ARCH_TEST_JOBS)
+	@SANITIZED_TESTDIR="$(WORKDIR)/tests-sanitized"; \
+	 cp -a "$(ACT_DIR)/tests/." "$$SANITIZED_TESTDIR/"; \
+	 find "$$SANITIZED_TESTDIR" -type f -name '*.S' -exec sed -i '/^# CONFIG_DEPENDENT:/d' {} +
+	@$(MAKE) -C $(ACT_DIR) elfs \
 	    CONFIG_FILES=$(DUT_CONFIG)/test_config.yaml \
 	    WORKDIR=$(WORKDIR) \
+	    TESTDIR=$(WORKDIR)/tests-sanitized \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS)
 	@elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \

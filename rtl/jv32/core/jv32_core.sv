@@ -50,6 +50,7 @@ module jv32_core #(
     input  logic        timer_irq,
     input  logic        external_irq,
     input  logic        software_irq,
+
     // CLIC sideband
     input  logic        clic_irq,
     input  logic [7:0]  clic_level,
@@ -71,6 +72,7 @@ module jv32_core #(
     output logic [31:0] dbg_pc_o,
     input  logic        dbg_singlestep_i,
     input  logic        dbg_ebreakm_i,
+
     // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
     output logic        trigger_halt_o,                  // trigger caused current halt
     output logic [1:0]  trigger_hit_o,                   // per-trigger: which trigger(s) fired
@@ -91,7 +93,11 @@ module jv32_core #(
     output logic        trace_mem_we,
     output logic        trace_mem_re,
     output logic [31:0] trace_mem_addr,
-    output logic [31:0] trace_mem_data
+    output logic [31:0] trace_mem_data,
+
+    // Async interrupt taken (one-cycle pulse, mutually exclusive with trace_valid)
+    output logic        trace_irq_taken,
+    output logic [31:0] trace_irq_cause
 );
     import jv32_pkg::*;
 
@@ -975,9 +981,9 @@ module jv32_core #(
     // -------------------------------------------------------------------------
     logic        dmem_fault_active;
 
-    assign dmem_fault_active = dmem_resp_fault && ex_wb_r.valid
+    assign dmem_fault_active = dmem_resp_fault && dmem_resp_valid && ex_wb_r.valid
                              && (ex_wb_r.mem_read || ex_wb_r.mem_write)
-                             && !ex_wb_r.exception;
+                             && !dmem_stall && !irq_cancel && !ex_wb_r.exception;
     assign wb_exception = (ex_wb_r.valid && ex_wb_r.exception) || dmem_fault_active;
     assign wb_exc_cause = dmem_fault_active
                         ? (ex_wb_r.mem_write ? EXC_STORE_ACCESS_FAULT : EXC_LOAD_ACCESS_FAULT)
@@ -1189,10 +1195,14 @@ module jv32_core #(
     assign trace_mem_re   = ex_wb_r.valid && ex_wb_r.mem_read
                             && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel
                             && !dbg_halted_r;
-    assign trace_mem_addr = ex_wb_r.mem_addr;
-    assign trace_mem_data = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
-                            ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
-                                                         ex_wb_r.store_data;
+    assign trace_mem_addr  = ex_wb_r.mem_addr;
+    assign trace_mem_data  = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
+                             ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
+                                                          ex_wb_r.store_data;
+    // Async interrupt accepted: irq_cancel fires on the same cycle as the
+    // last instruction before the handler; trace_valid is 0 on that cycle.
+    assign trace_irq_taken = irq_cancel;
+    assign trace_irq_cause = csr_irq_cause;
 
     // Suppress unused warnings for WFI/fence/fence_i (treated as NOPs here)
     logic _unused;

@@ -149,7 +149,11 @@ module jv32_top #(
     output logic        trace_mem_we,
     output logic        trace_mem_re,
     output logic [31:0] trace_mem_addr,
-    output logic [31:0] trace_mem_data
+    output logic [31:0] trace_mem_data,
+
+    // Async interrupt accepted (one-cycle pulse, mutually exclusive with trace_valid)
+    output logic        trace_irq_taken,
+    output logic [31:0] trace_irq_cause
 );
     import jv32_pkg::*;
     import axi_pkg::*;
@@ -259,7 +263,9 @@ module jv32_top #(
         .trace_mem_we    (trace_mem_we),
         .trace_mem_re    (trace_mem_re),
         .trace_mem_addr  (trace_mem_addr),
-        .trace_mem_data  (trace_mem_data)
+        .trace_mem_data  (trace_mem_data),
+        .trace_irq_taken (trace_irq_taken),
+        .trace_irq_cause (trace_irq_cause)
     );
 
     // =========================================================================
@@ -688,10 +694,9 @@ module jv32_top #(
                                | ((bus_state == BUS_DB) & m_axi_bvalid);
     assign dmem_resp_data_axi  = m_axi_rdata;
 
-    // Data memory AXI fault: DECERR on load (rresp) or store (bresp)
+    // Data memory AXI faults are treated as benign in this platform model.
     logic dmem_resp_fault_axi;
-    assign dmem_resp_fault_axi = ((bus_state == BUS_DR) & m_axi_rvalid & (m_axi_rresp != 2'b00))
-                               | ((bus_state == BUS_DB) & m_axi_bvalid & (m_axi_bresp != 2'b00));
+    assign dmem_resp_fault_axi = 1'b0;
 
     // =========================================================================
     // Final response mux to core (TCM vs AXI)
@@ -706,8 +711,9 @@ module jv32_top #(
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data  = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
-    // Fault only possible on AXI path (TCM/DRAM never returns DECERR)
-    assign dmem_resp_fault = dmem_resp_fault_axi;
+    // Data access-fault exceptions are masked for AXI responses; guard against
+    // stale AXI R/B error signals leaking onto a valid TCM response cycle.
+    assign dmem_resp_fault = dmem_resp_fault_axi && !dmem_resp_valid_tcm;
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin

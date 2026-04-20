@@ -92,7 +92,12 @@ module jv32_soc #(
     output logic        trace_mem_we,
     output logic        trace_mem_re,
     output logic [31:0] trace_mem_addr,
-    output logic [31:0] trace_mem_data
+    output logic [31:0] trace_mem_data,
+
+    // Async interrupt trace helpers
+    output logic        trace_irq_taken,
+    output logic [31:0] trace_irq_cause,
+    output logic [63:0] trace_mtime
 );
     import jv32_pkg::*;
 
@@ -393,7 +398,9 @@ module jv32_soc #(
         .trace_mem_we     (trace_mem_we),
         .trace_mem_re     (trace_mem_re),
         .trace_mem_addr   (trace_mem_addr),
-        .trace_mem_data   (trace_mem_data)
+        .trace_mem_data   (trace_mem_data),
+        .trace_irq_taken  (trace_irq_taken),
+        .trace_irq_cause  (trace_irq_cause)
     );
 
     // =====================================================================
@@ -470,7 +477,8 @@ module jv32_soc #(
         .clic_irq_o       (clic_irq),
         .clic_level_o     (clic_level),
         .clic_prio_o      (clic_prio),
-        .clic_id_o        (clic_id)
+        .clic_id_o        (clic_id),
+        .mtime_o          (trace_mtime)
     );
     assign external_irq = clic_irq;
 

@@ -3,7 +3,7 @@
 // Project: JV32 RISC-V Processor
 // Description: Verilator C++ Testbench Driver
 //
-// Usage: ./sim.exe <elf> [--trace <file.fst>] [--max-cycles <N>] [--timeout=<sec>]
+// Usage: ./sim.exe <elf> [--trace <file.fst>] [--rtl-trace <file>] [--mtime-hints <file>] [--max-cycles <N>] [--timeout=<sec>]
 // ============================================================================
 
 #include <verilated.h>
@@ -116,6 +116,7 @@ int main(int argc, char** argv) {
     const char* elf_path        = nullptr;
     const char* trace_file      = nullptr;
     const char* rtl_trace_file  = nullptr;
+    const char* mtime_hints_file = nullptr;
     uint64_t    max_cycles      = 0;   // 0 = unlimited
     uint64_t    timeout_seconds = 0;   // 0 = no timeout
 
@@ -124,6 +125,8 @@ int main(int argc, char** argv) {
             trace_file = argv[++i];
         } else if (strcmp(argv[i], "--rtl-trace") == 0 && i+1 < argc) {
             rtl_trace_file = argv[++i];
+        } else if (strcmp(argv[i], "--mtime-hints") == 0 && i+1 < argc) {
+            mtime_hints_file = argv[++i];
         } else if (strcmp(argv[i], "--max-cycles") == 0 && i+1 < argc) {
             max_cycles = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
@@ -137,7 +140,7 @@ int main(int argc, char** argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--max-cycles <N>] [--timeout=<sec>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--mtime-hints <file>] [--max-cycles <N>] [--timeout=<sec>]\n", argv[0]);
         return 1;
     }
 
@@ -205,6 +208,28 @@ int main(int argc, char** argv) {
     }
 
     // -------------------------------------------------------------------------
+    // Open optional mtime-hints file (dedicated helper stream for SW sync)
+    // -------------------------------------------------------------------------
+    FILE* mtime_hints_tfp = nullptr;
+    bool  mtime_hints_is_stdout = false;
+    if (mtime_hints_file) {
+        if (strcmp(mtime_hints_file, "-") == 0) {
+            mtime_hints_tfp = stdout;
+            mtime_hints_is_stdout = true;
+        } else {
+            mtime_hints_tfp = fopen(mtime_hints_file, "w");
+            if (!mtime_hints_tfp) {
+                fprintf(stderr, "Cannot open mtime-hints file: %s\n", mtime_hints_file);
+                return 1;
+            }
+        }
+    }
+
+    // Helper events are written to the dedicated hint file when provided.
+    // For backward compatibility, fall back to rtl-trace stream.
+    FILE* helper_tfp = mtime_hints_tfp ? mtime_hints_tfp : rtl_tfp;
+
+    // -------------------------------------------------------------------------
     // Simulation loop
     // -------------------------------------------------------------------------
     uint64_t cycle = 0;
@@ -240,6 +265,37 @@ int main(int argc, char** argv) {
                                dut->trace_mem_addr,
                                dut->trace_mem_data);
             }
+            if (mtime_hints_tfp) {
+                // Per-instruction timer hint for tight SW/RTL timer alignment.
+                // Format: ! step mtime=0x<64-bit> instret=<N>
+                fprintf(mtime_hints_tfp, "! step mtime=0x%016" PRIx64 " instret=%" PRIu64 "\n",
+                        (uint64_t)dut->trace_mtime, instret);
+            }
+            if (helper_tfp) {
+                // mret (0x30200073): sync mtime/mcycle after ISR return so the
+                // SW sim knows exactly how many cycles elapsed inside the handler.
+                // Format: ! mret mtime=0x<64-bit> instret=<N>
+                if (dut->trace_instr == 0x30200073U) {
+                    fprintf(helper_tfp, "! mret mtime=0x%016" PRIx64 " instret=%" PRIu64 "\n",
+                            (uint64_t)dut->trace_mtime, instret);
+                }
+                // Periodic sync every 64 retired instructions: keeps the SW sim's
+                // mtime/mcycle current between IRQ and mret events.
+                // Format: ! sync mtime=0x<64-bit> instret=<N>
+                if ((instret & 63ULL) == 0) {
+                    fprintf(helper_tfp, "! sync mtime=0x%016" PRIx64 " instret=%" PRIu64 "\n",
+                            (uint64_t)dut->trace_mtime, instret);
+                }
+            }
+        }
+        // Async interrupt taken: emit a helper comment so the SW simulator can
+        // synchronize mtime and mcycle at the exact interrupt point.
+        // Format: ! irq cause=0x<32-bit> mtime=0x<64-bit> instret=<N>
+        if (dut->trace_irq_taken && helper_tfp) {
+            fprintf(helper_tfp, "! irq cause=0x%08" PRIx32 " mtime=0x%016" PRIx64 " instret=%" PRIu64 "\n",
+                    (uint32_t)dut->trace_irq_cause,
+                    (uint64_t)dut->trace_mtime,
+                    instret);
         }
     }
 
@@ -265,6 +321,8 @@ int main(int argc, char** argv) {
     if (tfp) { tfp->flush(); tfp->close(); }
     if (rtl_tfp && !rtl_tfp_is_stdout) { fflush(rtl_tfp); fclose(rtl_tfp); }
     else if (rtl_tfp) { fflush(rtl_tfp); }
+    if (mtime_hints_tfp && !mtime_hints_is_stdout) { fflush(mtime_hints_tfp); fclose(mtime_hints_tfp); }
+    else if (mtime_hints_tfp) { fflush(mtime_hints_tfp); }
 
     fprintf(stderr, "[SIM] %llu cycles, %llu instructions retired\n",
            (unsigned long long)cycle, (unsigned long long)instret);

@@ -35,6 +35,11 @@ module tb_jv32_soc #(
     output logic [31:0] trace_mem_addr,
     output logic [31:0] trace_mem_data,
 
+    // Async interrupt trace helpers
+    output logic        trace_irq_taken,
+    output logic [31:0] trace_irq_cause,
+    output logic [63:0] trace_mtime,
+
     // DPI-C memory init
     input  logic        uart_rx_i,
     output logic        uart_tx_o_monitor,  // UART TX line for exit-drain detection
@@ -136,22 +141,39 @@ module tb_jv32_soc #(
         .jtag_pin3_tdo_o    (jtag_pin3_tdo_o),
         .jtag_pin3_tdo_oe   (jtag_pin3_tdo_oe),
         .ext_irq_i          (16'h0),
+
         // TCM slave: tied off (ELF loading uses DPI mem_write_byte)
-        .s_tcm_araddr   (32'h0), .s_tcm_arvalid (1'b0), .s_tcm_arready (),
-        .s_tcm_rdata    (),      .s_tcm_rresp   (),     .s_tcm_rvalid  (), .s_tcm_rready(1'b1),
-        .s_tcm_awaddr   (32'h0), .s_tcm_awvalid (1'b0), .s_tcm_awready (),
-        .s_tcm_wdata    (32'h0), .s_tcm_wstrb   (4'h0), .s_tcm_wvalid  (1'b0), .s_tcm_wready(),
-        .s_tcm_bresp    (),      .s_tcm_bvalid  (),     .s_tcm_bready  (1'b1),
-        .trace_valid    (trace_valid),
-        .trace_reg_we   (trace_reg_we),
-        .trace_pc       (trace_pc),
-        .trace_rd       (trace_rd),
-        .trace_rd_data  (trace_rd_data),
-        .trace_instr    (trace_instr),
-        .trace_mem_we   (trace_mem_we),
-        .trace_mem_re   (trace_mem_re),
-        .trace_mem_addr (trace_mem_addr),
-        .trace_mem_data (trace_mem_data)
+        .s_tcm_araddr       (32'h0),
+        .s_tcm_arvalid      (1'b0),
+        .s_tcm_arready      (),
+        .s_tcm_rdata        (),
+        .s_tcm_rresp        (),
+        .s_tcm_rvalid       (),
+        .s_tcm_rready       (1'b1),
+        .s_tcm_awaddr       (32'h0),
+        .s_tcm_awvalid      (1'b0),
+        .s_tcm_awready      (),
+        .s_tcm_wdata        (32'h0),
+        .s_tcm_wstrb        (4'h0),
+        .s_tcm_wvalid       (1'b0),
+        .s_tcm_wready       (),
+        .s_tcm_bresp        (),
+        .s_tcm_bvalid       (),
+        .s_tcm_bready       (1'b1),
+
+        .trace_valid        (trace_valid),
+        .trace_reg_we       (trace_reg_we),
+        .trace_pc           (trace_pc),
+        .trace_rd           (trace_rd),
+        .trace_rd_data      (trace_rd_data),
+        .trace_instr        (trace_instr),
+        .trace_mem_we       (trace_mem_we),
+        .trace_mem_re       (trace_mem_re),
+        .trace_mem_addr     (trace_mem_addr),
+        .trace_mem_data     (trace_mem_data),
+        .trace_irq_taken    (trace_irq_taken),
+        .trace_irq_cause    (trace_irq_cause),
+        .trace_mtime        (trace_mtime)
     );
 
 endmodule

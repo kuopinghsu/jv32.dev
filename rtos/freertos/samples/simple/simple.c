@@ -198,7 +198,7 @@ void main(void)
     if (xTaskCreate(vSwitchTask, "SwTask", configMINIMAL_STACK_SIZE * 2U, NULL, 3, NULL) != pdPASS) {
         fail_and_exit("create switch task failed");
     }
-    if (xTaskCreate(vSemaphoreTask, "SemTask", configMINIMAL_STACK_SIZE * 2U, NULL, 2, NULL) != pdPASS) {
+    if (xTaskCreate(vSemaphoreTask, "SemTask", configMINIMAL_STACK_SIZE * 2U, NULL, 4, NULL) != pdPASS) {
         fail_and_exit("create semaphore task failed");
     }
     if (xTaskCreate(vMutexTask, "MutTask", configMINIMAL_STACK_SIZE * 2U, NULL, 2, NULL) != pdPASS) {

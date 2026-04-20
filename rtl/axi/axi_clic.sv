@@ -61,7 +61,10 @@ module axi_clic #(
     output logic        clic_irq_o,
     output logic [7:0]  clic_level_o,
     output logic [7:0]  clic_prio_o,
-    output logic [4:0]  clic_id_o         // winning IRQ index (for mtvt vector lookup)
+    output logic [4:0]  clic_id_o,        // winning IRQ index (for mtvt vector lookup)
+
+    // Expose current mtime for trace helpers
+    output logic [63:0] mtime_o
 );
 
     // =====================================================================
@@ -77,6 +80,7 @@ module axi_clic #(
 
     assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
     assign software_irq_o = msip;
+    assign mtime_o        = mtime;
 
     // =====================================================================
     // CLIC interrupt arbiter

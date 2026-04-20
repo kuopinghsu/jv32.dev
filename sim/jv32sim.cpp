@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -27,7 +28,9 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unordered_map>
 #include <unistd.h>
+#include <vector>
 #include "riscv-dis.h"
 
 // ============================================================================
@@ -162,6 +165,42 @@ static bool   trace_on   = false;
 static uint64_t max_insns        = 0;  // 0 = unlimited
 static uint64_t timeout_seconds  = 0;  // 0 = no timeout
 
+// Sync-trace: pre-loaded sync events from an RTL hint stream.
+// Three ordered event kinds are recognised in the RTL hint stream:
+//   ! irq  cause=0x<32> mtime=0x<64> instret=<N>  — async interrupt taken
+//   ! mret mtime=0x<64> instret=<N>                — mret retired (ISR exit)
+//   ! sync mtime=0x<64> instret=<N>                — periodic sync (every 4096 insns)
+// Plus per-instruction timer hints:
+//   ! step mtime=0x<64> instret=<N>
+// At each sync point the SW sim updates mtime and csr_mcycle so it stays
+// aligned with RTL hardware counters even between interrupt boundaries.
+enum SyncEventKind { SYNC_IRQ, SYNC_MRET, SYNC_PERIODIC };
+struct SyncEvent { uint64_t instret; uint64_t mtime; uint32_t cause; SyncEventKind kind; };
+static std::vector<SyncEvent> g_sync_events;
+static std::unordered_map<uint64_t, uint64_t> g_step_hints;
+static size_t                 g_sync_idx  = 0;
+static bool                   g_sync_mode = false;
+
+static inline void apply_sync_mtime(uint64_t mtime_val) {
+    mtime      = mtime_val;
+    csr_mcycle = mtime_val;  // mcycle and mtime both increment per cycle from 0
+}
+
+// Timer registers are sometimes read in interrupt and scheduling paths; before
+// returning timer values, apply the pending per-instruction hint so reads
+// observe the same mtime as RTL for the current instruction.
+static inline void apply_step_hint_for_next_instret(void) {
+    if (!g_sync_mode) return;
+    auto it = g_step_hints.find(insn_count + 1);
+    if (it != g_step_hints.end()) {
+        apply_sync_mtime(it->second);
+    }
+}
+
+static inline void sync_before_timer_read(void) {
+    apply_step_hint_for_next_instret();
+}
+
 // Debug level (0=silent, 1=info, 2=verbose)
 static int debug_level = 0;
 
@@ -256,9 +295,13 @@ static uint32_t mem_read(uint32_t addr, int size) {
     // CLIC registers
     if (addr >= CLIC_BASE && addr < CLIC_BASE + 0x200000U) {
         uint32_t off = addr - CLIC_BASE;
+        if (off == CLIC_MTIME_LO_OFF || off == CLIC_MTIME_HI_OFF) {
+            sync_before_timer_read();
+        }
+        uint64_t mtime_read = mtime;
         if (off == CLIC_MSIP_OFF)        return msip & 1u;
-        if (off == CLIC_MTIME_LO_OFF)    return (uint32_t)(mtime & 0xFFFFFFFFu);
-        if (off == CLIC_MTIME_HI_OFF)    return (uint32_t)(mtime >> 32);
+        if (off == CLIC_MTIME_LO_OFF)    return (uint32_t)(mtime_read & 0xFFFFFFFFu);
+        if (off == CLIC_MTIME_HI_OFF)    return (uint32_t)(mtime_read >> 32);
         if (off == CLIC_MTIMECMP_LO_OFF) return (uint32_t)(mtimecmp & 0xFFFFFFFFu);
         if (off == CLIC_MTIMECMP_HI_OFF) return (uint32_t)(mtimecmp >> 32);
         return 0;
@@ -1064,8 +1107,9 @@ static void step() {
             regs[rd] = result;
         regs[0] = 0;  // x0 always zero
         pc = new_pc;
-        mtime++;        // increment mtime on retirement to match RTL instret_inc
-        csr_mcycle++;   // increment mcycle on retirement to match RTL instret_inc gating
+        // In sync-trace mode mtime/mcycle are set by RTL sync events; in
+        // standalone mode they increment per retired instruction as an approximation.
+        if (!g_sync_mode) { mtime++; csr_mcycle++; }
         csr_minstret++;
         insn_count++;
         emit_trace(instr_pc, raw_instr,
@@ -1138,12 +1182,17 @@ static bool load_elf(const char *path, uint32_t *entry) {
 // Main
 // ============================================================================
 int main(int argc, char **argv) {
-    const char *elf_path    = nullptr;
-    const char *trace_path  = nullptr;
+    const char *elf_path        = nullptr;
+    const char *trace_path      = nullptr;
+    const char *sync_trace_path = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
+        } else if (strcmp(argv[i], "--mtime-hints") == 0 && i + 1 < argc) {
+            sync_trace_path = argv[++i];
+        } else if (strcmp(argv[i], "--sync-trace") == 0 && i + 1 < argc) {
+            sync_trace_path = argv[++i];
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
             max_insns = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
@@ -1161,7 +1210,7 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--sync-trace <hint-file>] [--mtime-hints <hint-file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
         return 1;
     }
 
@@ -1173,6 +1222,41 @@ int main(int argc, char **argv) {
             return 1;
         }
         trace_on = true;
+    }
+
+    // Load sync-trace events from RTL trace (--sync-trace).
+    // Each "! irq" line overrides mtime/mcycle at the matching instret count
+    // so the SW sim fires the interrupt at the exact same retired-instruction
+    // boundary as the RTL, allowing trace comparison.
+    if (sync_trace_path) {
+        FILE *sf = fopen(sync_trace_path, "r");
+        if (!sf) {
+            fprintf(stderr, "[SIM] Cannot open sync-trace: %s\n", sync_trace_path);
+            return 1;
+        }
+        char line[256];
+        while (fgets(line, sizeof(line), sf)) {
+            if (line[0] != '!') continue;
+            uint32_t cause = 0;
+            uint64_t mtime_val = 0, instret_val = 0;
+            if (sscanf(line, "! irq cause=0x%x mtime=0x%" SCNx64 " instret=%" SCNu64,
+                       &cause, &mtime_val, &instret_val) == 3) {
+                g_sync_events.push_back({instret_val, mtime_val, cause, SYNC_IRQ});
+            } else if (sscanf(line, "! mret mtime=0x%" SCNx64 " instret=%" SCNu64,
+                              &mtime_val, &instret_val) == 2) {
+                g_sync_events.push_back({instret_val, mtime_val, 0, SYNC_MRET});
+            } else if (sscanf(line, "! sync mtime=0x%" SCNx64 " instret=%" SCNu64,
+                              &mtime_val, &instret_val) == 2) {
+                g_sync_events.push_back({instret_val, mtime_val, 0, SYNC_PERIODIC});
+            } else if (sscanf(line, "! step mtime=0x%" SCNx64 " instret=%" SCNu64,
+                              &mtime_val, &instret_val) == 2) {
+                g_step_hints[instret_val] = mtime_val;
+            }
+        }
+        fclose(sf);
+        g_sync_mode = true;
+        DBG(1, "sync-trace: loaded %zu sync events, %zu step hints\n",
+            g_sync_events.size(), g_step_hints.size());
     }
 
     // Initialise state
@@ -1219,7 +1303,35 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        // Keep software timer state aligned to RTL at instruction granularity.
+        apply_step_hint_for_next_instret();
         step();
+
+        // Apply sync-trace events: when insn_count matches the RTL instret at
+        // which a sync event was recorded, update mtime and csr_mcycle so the
+        // SW sim stays aligned with RTL hardware counters.
+        //   SYNC_IRQ:      mtime set before next step → check_interrupts() fires
+        //   SYNC_MRET:     mtime set after ISR exit → counters resume correctly
+        //   SYNC_PERIODIC: mtime set every 4096 insns → drift stays bounded
+        while (g_sync_idx < g_sync_events.size() &&
+               g_sync_events[g_sync_idx].instret == insn_count) {
+            const SyncEvent &ev = g_sync_events[g_sync_idx++];
+            apply_sync_mtime(ev.mtime);
+            switch (ev.kind) {
+            case SYNC_IRQ:
+                DBG(1, "sync-trace: IRQ cause=0x%08x mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
+                    ev.cause, ev.mtime, ev.instret);
+                break;
+            case SYNC_MRET:
+                DBG(1, "sync-trace: mret mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
+                    ev.mtime, ev.instret);
+                break;
+            case SYNC_PERIODIC:
+                DBG(2, "sync-trace: periodic mtime=0x%" PRIx64 " at instret=%" PRIu64 "\n",
+                    ev.mtime, ev.instret);
+                break;
+            }
+        }
     }
 
     DBG(1, "%llu instructions retired\n",

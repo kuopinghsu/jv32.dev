@@ -16,9 +16,10 @@
 //   - 0x04-0x0f: data0-data11 (Abstract data registers)
 //   - 0x10: dmcontrol (Debug Module Control)
 //   - 0x11: dmstatus (Debug Module Status)
-//   - 0x16: hartinfo (Hart Information)
-//   - 0x17: abstracts (Abstract Control and Status)
-//   - 0x18: command (Abstract Command)
+//   - 0x12: hartinfo (Hart Information)
+//   - 0x16: abstractcs (Abstract Control and Status)
+//   - 0x17: command (Abstract Command)
+//   - 0x18: abstractauto (Abstract Auto-Execute)
 //   - 0x20-0x2f: progbuf0-progbuf15 (Program Buffer)
 //   - 0x40: haltsum0 (Halt Summary)
 //
@@ -269,6 +270,7 @@ module jv32_dtm #(
     logic        sb_err_clr_tog_r;      // Edge-detect for toggle (CLK domain)
 
     // sb_access synced to CLK domain so FSM can check access width at SBA trigger
+    logic [2:0]  sb_access_clk_s0; // First sync stage for sb_access CDC (TCK→CLK)
     logic [2:0]  sb_access_clk;    // CLK-domain copy of sb_access (2-stage sync)
     logic [31:0] sbaddress0;           // SBA address (TCK domain — written by TCK/DMI only)
     logic [31:0] sbdata0;              // SBA data (TCK domain — written by TCK/DMI only)
@@ -583,15 +585,18 @@ module jv32_dtm #(
     logic [2:0]  cmderr_sync [2:0];
     logic [31:0] data0_result_sync [2:0];
     logic        data0_result_valid_sync [2:0];
-    logic        data0_result_valid_sync_r;    // One-cycle delayed [2] for rising-edge detect
+    logic        data0_result_valid_sync_r;    // One-cycle delayed [2] — kept for lint suppressor
+    logic        data0_result_captured;        // TCK domain: 1 once data0 shadow updated for current result
 
     // CLK→TCK sync chains for SBA results (mirrors data0_result_sync mechanism)
     logic [31:0] sbdata0_result_sync [2:0];
     logic        sbdata0_result_valid_sync [2:0];
     logic        sbdata0_result_valid_sync_r;   // One-cycle delayed [2]
+    logic        sbdata0_result_captured;       // TCK domain: same as data0_result_captured for sbdata0
     logic [31:0] sbaddress0_result_sync [2:0];
     logic        sbaddress0_result_valid_sync [2:0];
     logic        sbaddress0_result_valid_sync_r; // One-cycle delayed [2]
+    logic        sbaddress0_result_captured;    // TCK domain: same as data0_result_captured for sbaddress0
 
     // ========================================================================
     // Next-value logic for signals assigned in both capture_dr_i and
@@ -701,6 +706,9 @@ module jv32_dtm #(
             sbdata0           <= 32'b0;
             sba_wr_toggle_tck <= 1'b0;
             havereset_r       <= 1'b0;
+            data0_result_captured     <= 1'b0;
+            sbdata0_result_captured   <= 1'b0;
+            sbaddress0_result_captured <= 1'b0;
         end else if (capture_dr_i) begin
             case (ir_i)
                 IR_IDCODE: begin
@@ -810,11 +818,16 @@ module jv32_dtm #(
             `DEBUG2(`DBG_GRP_DTM, ("DMI UPDATE: op=%0d addr=0x%02h data=0x%08h", dmi_shift[1:0], dmi_shift[40:34], dmi_shift[33:2]));
 
             // Sync results from system domain even when not writing.
-            // Update whenever valid_sync[2] is high: by the time UPDATE-DR fires after
-            // a command completes, the sync chain has stabilized and data0_result holds
-            // the correct result. OpenOCD always reads DATA0 after seeing abstractcs.busy=0.
-            if (data0_result_valid_sync[2] && !data0_result_valid_sync_r) begin
+            // Use a TCK-domain "captured" flag rather than an edge detector:
+            // - Clear when valid expires (new command will produce a fresh result).
+            // - Capture result into shadow on the FIRST UPDATE_DR where valid is high.
+            // This avoids the 1-TCK-wide edge window of the old valid_sync_r approach.
+            // Any later DATA0 WRITE in this same always_ff overrides via last-NBA-wins.
+            if (!data0_result_valid_sync[2]) begin
+                data0_result_captured <= 1'b0;
+            end else if (!data0_result_captured) begin
                 data0 <= data0_result_sync[2];
+                data0_result_captured <= 1'b1;
                 `DEBUG2(`DBG_GRP_DTM, ("Sync DATA0 result = 0x%h", data0_result_sync[2]));
             end
             if (cmderr_sync[2] != cmderr) begin
@@ -822,12 +835,18 @@ module jv32_dtm #(
                 `DEBUG2(`DBG_GRP_DTM, ("Sync ABSTRACTCS cmderr = %0d", cmderr_sync[2]));
             end
             // Sync SBA results back from CLK domain
-            if (sbdata0_result_valid_sync[2] && !sbdata0_result_valid_sync_r) begin
+            if (!sbdata0_result_valid_sync[2]) begin
+                sbdata0_result_captured <= 1'b0;
+            end else if (!sbdata0_result_captured) begin
                 sbdata0 <= sbdata0_result_sync[2];
+                sbdata0_result_captured <= 1'b1;
                 `DEBUG2(`DBG_GRP_DTM, ("Sync SBDATA0 result = 0x%h", sbdata0_result_sync[2]));
             end
-            if (sbaddress0_result_valid_sync[2] && !sbaddress0_result_valid_sync_r) begin
+            if (!sbaddress0_result_valid_sync[2]) begin
+                sbaddress0_result_captured <= 1'b0;
+            end else if (!sbaddress0_result_captured) begin
                 sbaddress0 <= sbaddress0_result_sync[2];
+                sbaddress0_result_captured <= 1'b1;
                 `DEBUG2(`DBG_GRP_DTM, ("Sync SBADDRESS0 after autoincrement = 0x%h", sbaddress0_result_sync[2]));
             end
 
@@ -902,10 +921,10 @@ module jv32_dtm #(
                     DMI_SBCS: begin
                         // [24] W1C sbbusyerror (handled by always_comb); [22] readonaddr
                         // [21:19] sbaccess; [18] autoincrement; [17] readondata; [16:14] W1C error
-                        sb_readonaddr    <= dmi_shift[22];   // bit[20]
-                        sb_access      <= dmi_shift[21:19];// bits[19:17]
-                        sb_autoincr <= dmi_shift[18];   // bit[16]
-                        sb_readondata    <= dmi_shift[17];   // bit[15]
+                        sb_readonaddr    <= dmi_shift[22];   // SBCS bit[20] (dmi_shift = SBCS bit + 2)
+                        sb_access      <= dmi_shift[21:19];// SBCS bits[19:17]
+                        sb_autoincr <= dmi_shift[18];   // SBCS bit[16]
+                        sb_readondata    <= dmi_shift[17];   // SBCS bit[15]
                         // W1C sb_err: request CLK domain to clear via toggle-sync
                         if (dmi_shift[16:14] != 3'b0) begin
                             sb_err_clr_tck        <= dmi_shift[16:14];
@@ -1018,6 +1037,7 @@ module jv32_dtm #(
     // Memory access command fields (cmdtype == 2)
     logic [31:0] mem_addr;
     logic [31:0] mem_post_addr;  // Holds incremented address for postincrement
+    logic        mem_postincr_active;  // Set when mem_post_addr is valid (avoids addr==0 false negative)
     wire mem_write_cmd = command_reg_sys[16];
     wire mem_aarpostincrement = command_reg_sys[19];  // Auto-increment address after access
     logic mem_aarpostincrement_r;  // Registry for postincrement flag during current operation
@@ -1048,6 +1068,7 @@ module jv32_dtm #(
             cmderr_clr_tog_r        <= 1'b0;
             sb_err_clr_tog_sync     <= 3'b0;
             sb_err_clr_tog_r        <= 1'b0;
+            sb_access_clk_s0        <= SBA_ACCESS32;
             sb_access_clk           <= SBA_ACCESS32;
 
             // CLK-domain SBA registers
@@ -1078,6 +1099,7 @@ module jv32_dtm #(
             mem_wait_cnt            <= 4'b0;
             mem_aarpostincrement_r  <= 1'b0;
             mem_post_addr           <= 32'b0;
+            mem_postincr_active     <= 1'b0;
 
             // Synthetic CSRs — CLK domain only
             dcsr_reg                <= 32'h40000003; // xdebugver=4 [31:28], prv=3 [1:0]
@@ -1132,8 +1154,9 @@ module jv32_dtm #(
             data1_tck_sync[1] <= data1_tck_sync[0];
             data1_tck_sync[2] <= data1_tck_sync[1];
 
-            // Sync sb_access to CLK (stable before any SBA trigger toggle fires)
-            sb_access_clk    <= sb_access;
+            // 2-stage CDC synchronizer for sb_access (TCK→CLK)
+            sb_access_clk_s0 <= sb_access;
+            sb_access_clk    <= sb_access_clk_s0;
 
             // abstractcs.cmderr W1C clear from TCK domain
             cmderr_clr_tog_sync <= {cmderr_clr_tog_sync[1:0], cmderr_clr_tog_tck};
@@ -1195,8 +1218,9 @@ module jv32_dtm #(
             // The latch is cleared by CMD_CSR_WRITE to 0x7A1 with bit20=0,
             // OR by the next resume (clearing via dbg_halted_i falling edge).
             if (trigger_halt_pulse) begin
-                if (trigger_hit_i[0]) trigger_hit_latch[0] <= 1'b1;
-                if (trigger_hit_i[1]) trigger_hit_latch[1] <= 1'b1;
+                for (int ti = 0; ti < N_TRIGGERS; ti++) begin
+                    if (trigger_hit_i[ti]) trigger_hit_latch[ti] <= 1'b1;
+                end
             end
 
             // Clear latch on resume (falling edge of dbg_halted_i)
@@ -1310,7 +1334,7 @@ module jv32_dtm #(
                             // First access: mem_post_addr = 0 (or use data1).
                             // Use: if (mem_aarpostincrement_r && mem_post_addr != 0) then use pre-incremented,
                             // else load fresh from data1.
-                            if (mem_aarpostincrement_r && mem_post_addr != 0) begin
+                            if (mem_aarpostincrement && mem_postincr_active) begin
                                 // Continuing postincrement sequence
                                 mem_addr <= mem_post_addr;
                             end else begin
@@ -1320,10 +1344,10 @@ module jv32_dtm #(
                             mem_aarpostincrement_r <= mem_aarpostincrement;  // Capture postincrement flag for current op
                             if (mem_write_cmd) begin
                                 cmd_state <= CMD_MEM_WRITE;
-                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Write memory[0x%h] = 0x%h", (mem_aarpostincrement_r && mem_post_addr != 0) ? mem_post_addr : data1, data0_sys));
+                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Write memory[0x%h] = 0x%h", (mem_aarpostincrement && mem_postincr_active) ? mem_post_addr : data1, data0_sys));
                             end else begin
                                 cmd_state <= CMD_MEM_READ;
-                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Read memory[0x%h]", (mem_aarpostincrement_r && mem_post_addr != 0) ? mem_post_addr : data1));
+                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Read memory[0x%h]", (mem_aarpostincrement && mem_postincr_active) ? mem_post_addr : data1));
                             end
                         end else begin
                             cmderr_sys <= CMDERR_NOTSUP;
@@ -1611,17 +1635,20 @@ module jv32_dtm #(
                     end else if (dbg_mem_ready_i) begin
                         // Memory read complete — check for AXI error (DECERR/SLVERR)
                         if (dbg_mem_error_i) begin
-                            cmderr_sys <= CMDERR_EXCEPTION;  // Bus error → abstractcs.cmderr
+                            cmderr_sys          <= CMDERR_EXCEPTION;  // Bus error → abstractcs.cmderr
+                            mem_postincr_active <= 1'b0;
                             `DEBUG2(`DBG_GRP_DTM, ("Memory read error at 0x%h (DECERR/SLVERR)", mem_addr));
                         end else begin
                             data0_result <= dbg_mem_rdata_i;
                             data0_result_valid <= 1'b1;
                             // Implement aarpostincrement: auto-increment addr1 by 4 (for aarsize=2)
                             if (mem_aarpostincrement_r) begin
-                                mem_post_addr <= mem_addr + 32'd4;
+                                mem_post_addr       <= mem_addr + 32'd4;
+                                mem_postincr_active <= 1'b1;
                                 `DEBUG2(`DBG_GRP_DTM, ("Memory read complete: 0x%h; postincrement: addr1 += 4 (next=0x%h)", dbg_mem_rdata_i, mem_addr + 32'd4));
                             end else begin
-                                mem_post_addr <= 32'b0;  // Clear for next sequence
+                                mem_post_addr       <= 32'b0;
+                                mem_postincr_active <= 1'b0;
                                 `DEBUG2(`DBG_GRP_DTM, ("Memory read complete: 0x%h", dbg_mem_rdata_i));
                             end
                         end
@@ -1633,10 +1660,12 @@ module jv32_dtm #(
                         mem_wait_cnt <= mem_wait_cnt + 1;
                         if (mem_wait_cnt == 4'b1111) begin
                             // Timeout (16 cycles)
-                            cmderr_sys <= CMDERR_BUS;
-                            dbg_mem_req_o <= 1'b0;
-                            mem_req_pending <= 1'b0;
-                            cmd_state <= CMD_DONE;
+                            cmderr_sys          <= CMDERR_BUS;
+                            mem_post_addr       <= 32'b0;
+                            mem_postincr_active <= 1'b0;
+                            dbg_mem_req_o       <= 1'b0;
+                            mem_req_pending     <= 1'b0;
+                            cmd_state           <= CMD_DONE;
                             `DEBUG2(`DBG_GRP_DTM, ("Memory read timeout"));
                         end
                     end
@@ -1656,15 +1685,18 @@ module jv32_dtm #(
                         dbg_mem_req_o <= 1'b0;
                         mem_req_pending <= 1'b0;
                         if (dbg_mem_error_i) begin
-                            cmderr_sys <= CMDERR_EXCEPTION;
+                            cmderr_sys          <= CMDERR_EXCEPTION;
+                            mem_postincr_active <= 1'b0;
                             `DEBUG2(`DBG_GRP_DTM, ("Memory write error at 0x%h (DECERR/SLVERR)", mem_addr));
                         end else begin
                             // Implement aarpostincrement: auto-increment addr1 by 4 (for aarsize=2)
                             if (mem_aarpostincrement_r) begin
-                                mem_post_addr <= mem_addr + 32'd4;
+                                mem_post_addr       <= mem_addr + 32'd4;
+                                mem_postincr_active <= 1'b1;
                                 `DEBUG2(`DBG_GRP_DTM, ("Memory write complete; postincrement: addr1 += 4 (next=0x%h)", mem_addr + 32'd4));
                             end else begin
-                                mem_post_addr <= 32'b0;  // Clear for next sequence
+                                mem_post_addr       <= 32'b0;
+                                mem_postincr_active <= 1'b0;
                                 `DEBUG2(`DBG_GRP_DTM, ("Memory write complete"));
                             end
                         end
@@ -1674,10 +1706,12 @@ module jv32_dtm #(
                         mem_wait_cnt <= mem_wait_cnt + 1;
                         if (mem_wait_cnt == 4'b1111) begin
                             // Timeout (16 cycles)
-                            cmderr_sys <= CMDERR_BUS;
-                            dbg_mem_req_o <= 1'b0;
-                            mem_req_pending <= 1'b0;
-                            cmd_state <= CMD_DONE;
+                            cmderr_sys          <= CMDERR_BUS;
+                            mem_post_addr       <= 32'b0;
+                            mem_postincr_active <= 1'b0;
+                            dbg_mem_req_o       <= 1'b0;
+                            mem_req_pending     <= 1'b0;
+                            cmd_state           <= CMD_DONE;
                             `DEBUG2(`DBG_GRP_DTM, ("Memory write timeout"));
                         end
                     end
@@ -1698,21 +1732,26 @@ module jv32_dtm #(
                             sba_wait_cnt    <= 4'b0;
                         end
                     end else if (dbg_mem_ready_i) begin
-                        // Store result in CLK-domain register and signal TCK to sync
-                        sbdata0_clk          <= dbg_mem_rdata_i;
-                        sbdata0_result_valid <= 1'b1;
                         dbg_mem_req_o   <= 1'b0;
                         mem_req_pending <= 1'b0;
-                        if (sb_autoincr) begin
-                            sbaddress0_clk           <= sbaddress0_clk + 4;
-                            sbaddress0_result_valid  <= 1'b1;
+                        if (dbg_mem_error_i) begin
+                            sb_err <= 3'd2;  // sberror=2: bad address (DECERR/SLVERR)
+                            `DEBUG2(`DBG_GRP_DTM, ("SBA Read error at 0x%h (DECERR/SLVERR)", sbaddress0_clk));
+                        end else begin
+                            // Store result in CLK-domain register and signal TCK to sync
+                            sbdata0_clk          <= dbg_mem_rdata_i;
+                            sbdata0_result_valid <= 1'b1;
+                            if (sb_autoincr) begin
+                                sbaddress0_clk           <= sbaddress0_clk + 4;
+                                sbaddress0_result_valid  <= 1'b1;
+                            end
+                            `DEBUG2(`DBG_GRP_DTM, ("SBA Read [0x%h] = 0x%h", sbaddress0_clk, dbg_mem_rdata_i));
                         end
                         cmd_state <= CMD_IDLE;
-                        `DEBUG2(`DBG_GRP_DTM, ("SBA Read [0x%h] = 0x%h", sbaddress0_clk, dbg_mem_rdata_i));
                     end else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err      <= 3'd2;  // error=2: timeout
+                            sb_err      <= 3'd1;  // sberror=1: timeout
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
                             cmd_state <= CMD_IDLE;
@@ -1739,16 +1778,21 @@ module jv32_dtm #(
                     end else if (dbg_mem_ready_i) begin
                         dbg_mem_req_o   <= 1'b0;
                         mem_req_pending <= 1'b0;
-                        if (sb_autoincr) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 4;
-                            sbaddress0_result_valid <= 1'b1;
+                        if (dbg_mem_error_i) begin
+                            sb_err <= 3'd2;  // sberror=2: bad address (DECERR/SLVERR)
+                            `DEBUG2(`DBG_GRP_DTM, ("SBA Write error at 0x%h (DECERR/SLVERR)", sbaddress0_clk));
+                        end else begin
+                            if (sb_autoincr) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 4;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            `DEBUG2(`DBG_GRP_DTM, ("SBA Write [0x%h] = 0x%h", sbaddress0_clk, sbdata0_clk));
                         end
                         cmd_state <= CMD_IDLE;
-                        `DEBUG2(`DBG_GRP_DTM, ("SBA Write [0x%h] = 0x%h", sbaddress0_clk, sbdata0_clk));
                     end else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err      <= 3'd2;  // error=2: timeout
+                            sb_err      <= 3'd1;  // sberror=1: timeout
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
                             cmd_state <= CMD_IDLE;
@@ -1788,6 +1832,9 @@ module jv32_dtm #(
 
                         if (dbg_halted_i && exec_seen_running) begin
                             // CPU has re-halted after executing progbuf.
+                            // Note: exception faults during progbuf execution are handled by the
+                            // timeout path (EXEC_TIMEOUT_CYCLES → cmderr=exception), since this
+                            // implementation does not receive a per-halt cause signal from the CPU.
                             exec_waiting_halt <= 1'b0;
                             cmd_state         <= CMD_DONE;
                             `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU re-halted, progbuf done"));

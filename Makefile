@@ -178,10 +178,11 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_S
         lint-svlint sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
-        compare-freertos-% compare-freertos-all freertos-list-tests
+        compare-freertos-% compare-freertos-all freertos-list-tests \
+        openocd
 
 # Default: build RTL simulator
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all arch-test-run
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all openocd arch-test-run
 
 # ============================================================================
 # Build RTL simulator
@@ -562,14 +563,17 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo " JV32 Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running software simulator..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running RTL simulator..."
+	@echo "[1/3] Running RTL simulator (generates rtl_trace + mtime_hints)..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
 	    $(BUILD_DIR)/$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (sync via --mtime-hints)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
+	    $(BUILD_DIR)/$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces (sim=RTL-format vs rtl=Spike-format)..."
 	@python3 scripts/trace_compare.py \
@@ -655,14 +659,17 @@ compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
 	@echo " JV32 FreeRTOS Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running software simulator..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/freertos-$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running RTL simulator..."
+	@echo "[1/3] Running RTL simulator (generates rtl_trace + mtime_hints)..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
 	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (sync via --mtime-hints)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --mtime-hints $(BUILD_DIR)/mtime_hints.txt \
+	    $(BUILD_DIR)/freertos-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces..."
 	@python3 scripts/trace_compare.py \
@@ -686,6 +693,12 @@ compare-freertos-all:
 		echo "compare-freertos-all: one or more tests failed."; exit 1; \
 	fi; \
 	echo "compare-freertos-all: all tests passed."
+
+# ============================================================================
+# OpenOCD tests
+# ============================================================================
+openocd:
+	@make -C openocd
 
 # ============================================================================
 # Arch-test (ACT4) — delegated to verif/Makefile

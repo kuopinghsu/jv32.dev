@@ -124,7 +124,9 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	    done; \
 	    ( cd "$(OPENOCD_DIR)" && \
 	      $(OPENOCD) -d0 \
+	          -c "gdb_port disabled" \
 	          -f jv32.cfg \
+	          -c "jtag_vpi set_port $(VPI_PORT)" \
 	          -c init \
 	          -c "source test_$$t.tcl" \
 	          -c shutdown \
@@ -175,7 +177,9 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	    done; \
 	    ( cd "$(OPENOCD_DIR)" && \
 	      $(OPENOCD) -d0 \
+	          -c "gdb_port disabled" \
 	          -f jv32_cjtag.cfg \
+	          -c "jtag_vpi set_port $(VPI_PORT)" \
 	          -c init \
 	          -c "source test_$$t.tcl" \
 	          -c shutdown \
@@ -217,7 +221,9 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
+	      -c "gdb_port disabled" \
 	      -f jv32.cfg \
+	      -c "jtag_vpi set_port $(VPI_PORT)" \
 	      -c init \
 	      -c "source test_$$t.tcl" \
 	      -c shutdown \
@@ -251,7 +257,9 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
+	      -c "gdb_port disabled" \
 	      -f jv32_cjtag.cfg \
+	      -c "jtag_vpi set_port $(VPI_PORT)" \
 	      -c init \
 	      -c "source test_$$t.tcl" \
 	      -c shutdown \
