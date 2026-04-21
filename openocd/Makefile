@@ -110,6 +110,7 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	@echo "Tests: $(JTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
+	@pkill -9 jv32vpi_jtag 2>/dev/null; pkill -9 jv32vpi_cjtag 2>/dev/null; sleep 0.2; true
 	@PASS=0; SKIP=0; FAIL=0; N=0; \
 	run_one() { \
 	    N=$$((N+1)); \
@@ -133,6 +134,10 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	    ) >"$$LOG.ocd.log" 2>&1; \
 	    OCD_RC=$$?; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	    for _j in $$(seq 1 30); do \
+	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || break; \
+	        sleep 0.1; \
+	    done; \
 	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	            echo "SKIP"; SKIP=$$((SKIP+1)); \
@@ -163,6 +168,7 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	@echo "Tests: $(CJTAG_TESTS)"
 	@echo "=========================================="
 	@mkdir -p $(LOG_DIR)
+	@pkill -9 jv32vpi_jtag 2>/dev/null; pkill -9 jv32vpi_cjtag 2>/dev/null; sleep 0.2; true
 	@PASS=0; SKIP=0; FAIL=0; N=0; \
 	run_one() { \
 	    N=$$((N+1)); \
@@ -186,6 +192,10 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	    ) >"$$LOG.ocd.log" 2>&1; \
 	    OCD_RC=$$?; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	    for _j in $$(seq 1 30); do \
+	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || break; \
+	        sleep 0.1; \
+	    done; \
 	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	            echo "SKIP"; SKIP=$$((SKIP+1)); \

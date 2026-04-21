@@ -10,7 +10,7 @@
 # Environment variables consumed
 # --------------------------------
 #   PROJ_NAME        project name            (default: jv32_ku5p)
-#   PROJ_DIR         project directory       (default: fpga/vivado/build)
+#   PROJ_DIR         project directory       (default: fpga/build)
 #                    relative to repo root
 #   TOP_MODULE       HDL top module          (default: jv32_fpga_top)
 #   FPGA_PART        Xilinx part number      (default: xcku5pffvb676-2)
@@ -39,6 +39,8 @@ set fpga_part  [getenv FPGA_PART  "xcku5p-ffvb676-2-i"]
 set clk_hz     [getenv JV32_CLK_HZ "50000000"]
 set run_synth  [getenv RUN_SYNTH  "0"]
 set run_impl   [getenv RUN_IMPL   "0"]
+set flash_part [getenv FLASH_PART "mt25ql256-spi-x1_x2_x4"]
+set flash_part [getenv FLASH_PART "mt25ql256-spi-x1_x2_x4"]
 
 # Derive absolute paths from the script location so the project can be
 # created from any working directory.
@@ -56,6 +58,7 @@ puts "   Top module: ${top_module}"
 puts "   CLK Hz    : ${clk_hz}"
 puts "   run_synth : ${run_synth}"
 puts "   run_impl  : ${run_impl}"
+puts "   flash_part: ${flash_part}"
 puts "============================================================"
 
 # ---------------------------------------------------------------------------
@@ -66,12 +69,23 @@ create_project -force ${proj_name} ${proj_path} -part ${fpga_part}
 set_property target_language    Verilog [current_project]
 set_property default_lib        work    [current_project]
 
+# XILINX_URAM selects the UltraRAM inference path in sram_1rw.sv (XCKU5P)
+set_property verilog_define {XILINX_URAM} [current_fileset]
+
 # ---------------------------------------------------------------------------
 # Add RTL source files
 # ---------------------------------------------------------------------------
 
+# jv32_macros.svh is marked as a global include so its `define macros are
+# visible to every compilation unit regardless of compile order.
+set macros_hdr ${rtl_dir}/jv32/core/jv32_macros.svh
+add_files -norecurse $macros_hdr
+set_property file_type {SystemVerilog Header} [get_files $macros_hdr]
+set_property is_global_include true           [get_files $macros_hdr]
+
 # Collect all .sv files from the RTL tree
-set rtl_files [concat \
+set rtl_files [list ${rtl_dir}/jv32/core/jv32_pkg.sv]
+set rtl_files [concat $rtl_files \
     [glob -nocomplain ${rtl_dir}/*.sv          ] \
     [glob -nocomplain ${rtl_dir}/axi/*.sv      ] \
     [glob -nocomplain ${rtl_dir}/jv32/*.sv     ] \
@@ -167,6 +181,23 @@ if {$run_impl == "1"} {
     set bit_file "${proj_path}/${proj_name}.runs/impl_1/${top_module}.bit"
     if {[file exists $bit_file]} {
         puts ">>> Bitstream: ${bit_file}"
+
+        # Copy .bit to project root (fpga/build/)
+        set bit_dest "${proj_path}/${top_module}.bit"
+        file copy -force $bit_file $bit_dest
+        puts ">>> Copied bitstream to: ${bit_dest}"
+
+        # Generate .mcs configuration memory file
+        set mcs_file "${proj_path}/${top_module}.mcs"
+        write_cfgmem \
+            -format mcs \
+            -part $flash_part \
+            -interface SPIx4 \
+            -size 256 \
+            -loadbit "up 0x0 ${bit_file}" \
+            -file $mcs_file \
+            -force
+        puts ">>> MCS file: ${mcs_file}"
     }
 }
 

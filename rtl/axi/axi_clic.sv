@@ -75,7 +75,7 @@ module axi_clic #(
     logic [NUM_IRQ-1:0] clicint_ie;
     logic [        7:0] clicint_ctl[NUM_IRQ];  // priority/level
 
-    assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
+    assign timer_irq_o    = ((mtime + {63'd0, instret_inc}) >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
     assign software_irq_o = msip;
 
     // =====================================================================

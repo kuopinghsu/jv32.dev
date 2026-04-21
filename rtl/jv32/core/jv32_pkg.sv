@@ -7,63 +7,10 @@
 // used by the JV32 3-stage (IF→EX→WB) RV32IMAC processor core.
 // ============================================================================
 
-// ============================================================================
-// Debug display macros
-//   DEBUG1(msg)             — print always when DEBUG=1 or DEBUG=2
-//   DEBUG2(grp, msg)        — print per-group when DEBUG=2; filter with DEBUG_GROUP=0x...
-// Use double parentheses for msg: DEBUG1(("val=%0d", x))
-//
-// Debug group bit indices (pass to DEBUG2 as first argument):
-//   DBG_GRP_FETCH   0   — Instruction fetch, PC tracking
-//   DBG_GRP_PIPE    1   — Pipeline stalls and flushes
-//   DBG_GRP_EX      2   — Execute stage (ALU, branch, forward)
-//   DBG_GRP_MEM     3   — Memory stage (load/store)
-//   DBG_GRP_CSR     4   — CSR read/write
-//   DBG_GRP_IRQ     5   — Interrupts and exceptions
-//   DBG_GRP_UART    6   — UART peripheral
-//   DBG_GRP_CLIC    7   — CLIC interrupt controller
-//   DBG_GRP_MAGIC   8   — Magic simulation device (exit, NCM)
-//   DBG_GRP_JTAG    9   — JTAG / cJTAG transport and TAP activity
-//   DBG_GRP_DTM    10   — RISC-V debug transport / debug-module activity
-//   DBG_GRP_ICACHE 13   — NCM / magic-device icache-bypass (legacy)
-// ============================================================================
-
-// Debug group bit indices
-`define DBG_GRP_FETCH 0
-`define DBG_GRP_PIPE 1
-`define DBG_GRP_EX 2
-`define DBG_GRP_MEM 3
-`define DBG_GRP_CSR 4
-`define DBG_GRP_IRQ 5
-`define DBG_GRP_UART 6
-`define DBG_GRP_CLIC 7
-`define DBG_GRP_MAGIC 8
-`define DBG_GRP_JTAG 9
-`define DBG_GRP_DTM 10
-`define DBG_GRP_ICACHE 13   // legacy alias used by axi_magic.sv
-
-// Default: all groups enabled. Override with +define+DEBUG_GROUP=<decimal>
-`ifndef DEBUG_GROUP
-`define DEBUG_GROUP 32'hFFFF_FFFF
-`endif
-
-`ifdef SYNTHESIS
-`define DEBUG1(msg)
-`define DEBUG2(grp, msg)
-`else
-`ifdef DEBUG_LEVEL_1
-`define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
-`else
-`define DEBUG1(msg)
-`endif
-`ifdef DEBUG_LEVEL_2
-`define DEBUG2(grp, msg) \
-        if (|((`DEBUG_GROUP >> (grp)) & 32'h1)) \
-            $display("[%s] %s", jv32_pkg::dbg_grp_name(grp), $sformatf msg)
-`else
-`define DEBUG2(grp, msg)
-`endif
-`endif
+// Macros are defined in jv32_macros.svh (Vivado global include).
+// The `include here ensures simulation tools that compile jv32_pkg.sv
+// directly also have the macros available.
+`include "jv32_macros.svh"
 
 package jv32_pkg;
 

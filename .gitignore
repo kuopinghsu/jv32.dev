@@ -62,13 +62,16 @@ __pycache__/
 # Doxygen generated output
 docs/doxygen/
 
+# FPGA
+/fpga/build
+/fpga/vivado*.log
+/fpga/vivado*.jou
+
 # Temporary files
 *.tmp
 .*.swp
 
 .Xil
-fpga/vivado*
-fpga/build_oss
 
 env.config
 rtos/zephyr/build.*

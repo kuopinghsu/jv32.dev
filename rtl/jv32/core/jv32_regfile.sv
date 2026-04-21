@@ -31,16 +31,21 @@ module jv32_regfile (
 
     logic [31:0] regs[31:1];  // x0 is hardwired to 0
 
-    // Asynchronous read with write-through forwarding
-    assign rs1_data = (rs1_addr == 5'd0)                          ? 32'd0     :
-                      (dbg_we && (rs1_addr == dbg_addr))          ? dbg_wdata :
-                      (we && (rs1_addr == rd_addr))               ? rd_data   :
-                      regs[rs1_addr];
-
-    assign rs2_data = (rs2_addr == 5'd0)                          ? 32'd0     :
-                      (dbg_we && (rs2_addr == dbg_addr))          ? dbg_wdata :
-                      (we && (rs2_addr == rd_addr))               ? rd_data   :
-                      regs[rs2_addr];
+    // Pipeline read ports: pure registered reads, no write-through.
+    //
+    // WB→EX forwarding for non-load results is handled entirely by the
+    // fwd_rs1/fwd_rs2 mux in jv32_core.sv, which uses only FF outputs
+    // (ex_wb_r.*) and therefore carries no combinatorial dependency on
+    // dbg_halted_r.  Providing a duplicate write-through mux here would
+    // route dbg_halted_r (via rf_we → wb_retire → ex_stall) into
+    // operand_a/operand_b, creating the large combinatorial loop that
+    // Vivado flags as LUTLP-1.
+    //
+    // For load results, the load-use stall guarantees that regs[] is
+    // updated one full cycle before the dependent instruction enters EX,
+    // so a registered read is always correct.
+    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : regs[rs1_addr];
+    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
 
     assign dbg_rdata = (dbg_addr == 5'd0)                         ? 32'd0     :
                        (dbg_we)                                   ? dbg_wdata :

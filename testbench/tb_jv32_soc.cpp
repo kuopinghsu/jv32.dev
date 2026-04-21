@@ -32,11 +32,11 @@ static const char* const RTL_REG_ABI[32] = {
 };
 static RiscvDisassembler rtl_disasm;
 
-static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
+static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint32_t instr,
                            uint32_t rd, uint32_t rddata,
                            bool mem_we, bool mem_re, uint32_t mem_addr, uint32_t mem_data) {
     std::ostringstream oss;
-    oss << std::dec << n << " "
+    oss << std::dec << n << ":" << cyc << " "
         << "0x" << std::hex << std::setfill('0') << std::setw(8) << pc << " "
         << "(0x" << std::setw(8) << instr << ")";
     if (rd != 0) {
@@ -56,6 +56,30 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint32_t pc, uint32_t instr,
     int pad = 72 - (int)base.size();
     if (pad < 2) pad = 2;
     fprintf(fp, "%s%*s; %s\n", base.c_str(), pad, "", disasm.c_str());
+
+    // Emit '! hint' comment for cycle-counter CSR reads so jv32sim can sync.
+    // Detect: opcode=0x73 (SYSTEM), funct3 != 0, csr_addr in cycle-CSR set.
+    uint32_t opcode = instr & 0x7fu;
+    uint32_t funct3 = (instr >> 12) & 0x7u;
+    if (rd != 0 && opcode == 0x73u && funct3 != 0) {
+        uint32_t csr_addr = instr >> 20;
+        const char* csr_name = nullptr;
+        switch (csr_addr) {
+        case 0xB00: csr_name = "mcycle";    break;
+        case 0xB80: csr_name = "mcycleh";   break;
+        case 0xB02: csr_name = "minstret";  break;
+        case 0xB82: csr_name = "minstreth"; break;
+        case 0xC00: csr_name = "cycle";     break;
+        case 0xC80: csr_name = "cycleh";    break;
+        case 0xC01: csr_name = "time";      break;
+        case 0xC81: csr_name = "timeh";     break;
+        case 0xC02: csr_name = "instret";   break;
+        case 0xC82: csr_name = "instreth";  break;
+        default:    break;
+        }
+        if (csr_name)
+            fprintf(fp, "! csr_hint %s 0x%08x\n", csr_name, rddata);
+    }
 }
 
 #ifndef CLK_FREQ_HZ
@@ -264,7 +288,7 @@ int main(int argc, char** argv) {
         if (dut->trace_valid) {
             instret++;
             if ((dut->trace_reg_we || dut->trace_mem_we || dut->trace_mem_re) && rtl_tfp) {
-                emit_rtl_trace(rtl_tfp, instret,
+                emit_rtl_trace(rtl_tfp, instret, cycle,
                                dut->trace_pc, dut->trace_instr,
                                dut->trace_reg_we ? dut->trace_rd : 0,
                                dut->trace_rd_data,
@@ -273,6 +297,13 @@ int main(int argc, char** argv) {
                                dut->trace_mem_addr,
                                dut->trace_mem_data);
             }
+        }
+        // Emit IRQ-taken hint line (one cycle after interrupt is accepted)
+        if (dut->trace_irq_taken && rtl_tfp) {
+            fprintf(rtl_tfp, "! irq cause=0x%08x epc=0x%08x cycle=%" PRIu64 "\n",
+                    (uint32_t)dut->trace_irq_cause,
+                    (uint32_t)dut->trace_irq_epc,
+                    cycle);
         }
     }
 

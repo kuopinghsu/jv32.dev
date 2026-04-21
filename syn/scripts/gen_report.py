@@ -8,9 +8,12 @@ Usage:
                           [--fast-shift N] [--bp-en N]
                           [--iram-kb N] [--dram-kb N]
                           [--clock-mhz F]
+                          [--nangate-lib PATH]
 
 All --* flags are optional and used only for the "Configuration" section;
 they default to "unknown" if not provided.
+--nangate-lib: path to the Nangate liberty file; enables NAND2-equivalent
+              reporting in the Cell Count section.
 """
 
 import argparse
@@ -36,6 +39,25 @@ def read(path, default=""):
 def grep_val(text, pattern, group=1, default="N/A"):
     m = re.search(pattern, text, re.MULTILINE)
     return m.group(group).strip() if m else default
+
+def read_nand2_area(lib_path: str) -> float:
+    """Return the area of NAND2_X1 in µm² from a liberty file, or 0.0."""
+    if not lib_path or not os.path.isfile(lib_path):
+        return 0.0
+    in_cell = False
+    try:
+        with open(lib_path) as f:
+            for line in f:
+                line = line.strip()
+                if re.match(r'cell\s*\(\s*NAND2_X1\s*\)', line):
+                    in_cell = True
+                if in_cell:
+                    m = re.match(r'area\s*:\s*([0-9.eE+\-]+)\s*;', line)
+                    if m:
+                        return float(m.group(1))
+    except OSError:
+        pass
+    return 0.0
 
 def find_latest_step(run_dir, glob_pat):
     """Return the highest-numbered directory matching glob_pat."""
@@ -197,7 +219,7 @@ def section_area(metrics_path):
     ]
     return "\n".join(lines) + "\n"
 
-def section_cells(metrics_path):
+def section_cells(metrics_path, nand2_area: float = 0.0):
     if not metrics_path or not os.path.isfile(metrics_path):
         return "_Metrics not found._\n"
     try:
@@ -208,6 +230,14 @@ def section_cells(metrics_path):
     def iv(k):
         v = d.get(k)
         return str(int(v)) if v is not None else "N/A"
+
+    # NAND2-equivalent gate count from post-P&R standard-cell area.
+    nand2_row = ""
+    if nand2_area > 0:
+        area_val = d.get("design__instance__area__stdcell")
+        if area_val is not None:
+            nand2_eq = float(area_val) / nand2_area
+            nand2_row = f"| **NAND2 equivalents (post-P&R)** | **{nand2_eq:,.0f}** |"
 
     lines = [
         "| Category | Count |",
@@ -222,6 +252,8 @@ def section_cells(metrics_path):
         f"| Tap cells | {iv('design__instance__count__class:tap_cell')} |",
         f"| I/O ports | {iv('design__io')} |",
     ]
+    if nand2_row:
+        lines.append(nand2_row)
     return "\n".join(lines) + "\n"
 
 def section_wirelength(wl_csv):
@@ -281,19 +313,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir", help="Path to openlane_run directory")
     ap.add_argument("output",  help="Output REPORT.md path")
-    ap.add_argument("--fast-mul",   default="?")
-    ap.add_argument("--fast-div",   default="?")
-    ap.add_argument("--fast-shift", default="?")
-    ap.add_argument("--bp-en",      default="?")
-    ap.add_argument("--iram-kb",    default="?")
-    ap.add_argument("--dram-kb",    default="?")
-    ap.add_argument("--clock-mhz",  default="?")
+    ap.add_argument("--fast-mul",    default="?")
+    ap.add_argument("--fast-div",    default="?")
+    ap.add_argument("--fast-shift",  default="?")
+    ap.add_argument("--bp-en",       default="?")
+    ap.add_argument("--iram-kb",     default="?")
+    ap.add_argument("--dram-kb",     default="?")
+    ap.add_argument("--clock-mhz",   default="?")
+    ap.add_argument("--nangate-lib", default=None,
+                    help="Nangate liberty file path; enables NAND2-equivalent reporting")
     args = ap.parse_args()
 
     run_dir = os.path.abspath(args.run_dir)
     if not os.path.isdir(run_dir):
         print(f"ERROR: run_dir not found: {run_dir}", file=sys.stderr)
         sys.exit(1)
+
+    nand2_area = read_nand2_area(args.nangate_lib) if args.nangate_lib else 0.0
 
     # locate key directories
     sta_dir   = find_latest_step(run_dir, "*-openroad-stapostpnr")
@@ -336,7 +372,7 @@ def main():
 
 ## 3. Cell Count
 
-{section_cells(metrics)}
+{section_cells(metrics, nand2_area)}
 ---
 
 ## 4. Timing (Post-PnR STA)

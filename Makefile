@@ -162,8 +162,10 @@ RTL_SOURCES = \
     $(wildcard $(CORE_DIR)/jtag/*.sv) \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
-    $(wildcard $(MEM_DIR)/*.sv) \
-	$(wildcard $(TB_DIR)/*.sv)
+    $(wildcard $(MEM_DIR)/*.sv)
+
+TB_SV_SOURCES = \
+    $(wildcard $(TB_DIR)/*.sv)
 
 TB_SOURCES = \
     $(TB_DIR)/tb_jv32_soc.cpp \
@@ -222,7 +224,7 @@ $(RTL_PARAMS_STAMP): FORCE
 	@mkdir -p $(BUILD_DIR)
 	@printf '%s' "$(RTL_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(RTL_BUILD_PARAMS)" > $@
 
-$(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
+$(BUILD_TARGET): $(RTL_SOURCES) $(TB_SV_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	@echo "=========================================="
 	@echo "Building JV32 SoC with Verilator"
 	@echo "=========================================="
@@ -241,6 +243,7 @@ $(BUILD_TARGET): $(RTL_SOURCES) $(TB_SOURCES) $(RTL_PARAMS_STAMP)
 	    -I$(MEM_DIR) \
 	    -I$(RTL_DIR) \
 	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES) \
 	    $(TB_SOURCES)
 	@echo ""
 	@echo "=========================================="
@@ -261,7 +264,7 @@ FORCE:
 # a JTAG VPI TCP server (default port 3333) for OpenOCD to connect to.
 # ============================================================================
 build-vpi-jtag: $(VPI_TARGET_JTAG)
-$(VPI_TARGET_JTAG): $(RTL_SOURCES) $(VPI_SOURCES)
+$(VPI_TARGET_JTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
 	@echo "=========================================="
 	@echo "Building JV32 VPI testbench (JTAG, USE_CJTAG=0)"
 	@echo "=========================================="
@@ -277,6 +280,7 @@ $(VPI_TARGET_JTAG): $(RTL_SOURCES) $(VPI_SOURCES)
 	    -I$(MEM_DIR) \
 	    -I$(RTL_DIR) \
 	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES) \
 	    $(VPI_SOURCES)
 	@echo ""
 	@echo "=========================================="
@@ -284,7 +288,7 @@ $(VPI_TARGET_JTAG): $(RTL_SOURCES) $(VPI_SOURCES)
 	@echo "=========================================="
 
 build-vpi-cjtag: $(VPI_TARGET_CJTAG)
-$(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(VPI_SOURCES)
+$(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
 	@echo "=========================================="
 	@echo "Building JV32 VPI testbench (cJTAG, USE_CJTAG=1)"
 	@echo "=========================================="
@@ -300,6 +304,7 @@ $(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(VPI_SOURCES)
 	    -I$(MEM_DIR) \
 	    -I$(RTL_DIR) \
 	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES) \
 	    $(VPI_SOURCES)
 	@echo ""
 	@echo "=========================================="
@@ -428,7 +433,7 @@ lint-svlint:
 	else \
 	    echo "svlint: $(SVLINT)"; \
 	    echo "config: .svlint.toml"; \
-	    $(SVLINT) $(RTL_ONLY_SRCS) && \
+	    $(SVLINT) -I rtl/jv32/core $(RTL_ONLY_SRCS) && \
 	    echo "" && \
 	    echo "==========================================" && \
 	    echo "svlint passed!" && \
@@ -643,14 +648,16 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo " JV32 Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running software simulator..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running RTL simulator..."
+	@echo "[1/3] Running RTL simulator (generates cycle-CSR hints)..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
 	    $(BUILD_DIR)/$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (using RTL hints to sync cycle counters)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --rtl-hints $(BUILD_DIR)/rtl_trace.txt \
+	    $(BUILD_DIR)/$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces (sim=RTL-format vs rtl=Spike-format)..."
 	@python3 scripts/trace_compare.py \
@@ -857,10 +864,10 @@ format-verible:
 	    $$VFBIN \
 	        --inplace \
 	        --flagfile=.rules.verible_format \
-	        $(if $(FILES),$(FILES),$(RTL_SOURCES)) \
+	        $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) \
 	        >/dev/null && \
-	    python3 scripts/align_localparams.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
-	    python3 scripts/align_trailing_comments.py $(if $(FILES),$(FILES),$(RTL_SOURCES)) && \
+	    python3 scripts/align_localparams.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
+	    python3 scripts/align_trailing_comments.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
 	    echo "" && \
 	    echo "==========================================" && \
 	    echo "Format complete!" && \

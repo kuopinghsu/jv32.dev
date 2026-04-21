@@ -1,0 +1,13 @@
+# Gate count analysis overlay — used by 'make gate-count' only.
+#
+# Overrides SYNTH_HIERARCHY_MODE to "keep" so that Yosys preserves module
+# boundaries throughout synthesis.  The resulting stat.json contains per-
+# module gate counts and areas which gen_gate_count.py converts into NAND2-
+# equivalent units with a full hierarchy breakdown.
+#
+# This file is passed as the LAST config argument to OpenLane2 so it takes
+# precedence over config.yaml for the keys it defines.
+#
+# NOTE: The netlist produced by this analysis run is NOT used for P&R; its
+#       sole purpose is gate count reporting.
+SYNTH_HIERARCHY_MODE: keep

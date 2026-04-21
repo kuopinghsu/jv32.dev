@@ -7,7 +7,7 @@
 // filtered trace format (only retired instructions that write rd != x0).
 //
 // Usage:
-//   ./jv32sim [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>
+//   ./jv32sim [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>
 //
 // Debug levels (--debug=N):
 //   0  silent — no informational messages (default)
@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "riscv-dis.h"
@@ -165,6 +166,57 @@ static FILE  *trace_fp   = nullptr;
 static bool   trace_on   = false;
 static uint64_t max_insns        = 0;  // 0 = unlimited
 static uint64_t timeout_seconds  = 0;  // 0 = no timeout
+
+// ============================================================================
+// RTL hint file: list of cycle-counter CSR values from the RTL simulation.
+// When --rtl-hints <file> is provided the software sim uses the RTL's exact
+// values when executing cycle-counter CSR reads, eliminating off-by-one drift.
+// ============================================================================
+struct CsrHint {
+    uint32_t csr_addr;   // 0xB00=mcycle, 0xB80=mcycleh, etc.
+    uint32_t value;      // exact value the RTL returned
+};
+
+static std::vector<CsrHint> g_csr_hints;
+static size_t                g_hint_idx = 0;
+
+// Map CSR name string → address
+static uint32_t hint_csr_addr(const char* name) {
+    if (!strcmp(name, "mcycle"))    return 0xB00;
+    if (!strcmp(name, "mcycleh"))   return 0xB80;
+    if (!strcmp(name, "minstret"))  return 0xB02;
+    if (!strcmp(name, "minstreth")) return 0xB82;
+    if (!strcmp(name, "cycle"))     return 0xC00;
+    if (!strcmp(name, "cycleh"))    return 0xC80;
+    if (!strcmp(name, "time"))      return 0xC01;
+    if (!strcmp(name, "timeh"))     return 0xC81;
+    if (!strcmp(name, "instret"))   return 0xC02;
+    if (!strcmp(name, "instreth"))  return 0xC82;
+    return 0xFFFFFFFFu;
+}
+
+static bool load_rtl_hints(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "[SIM] Cannot open rtl-hints file: %s\n", path);
+        return false;
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        // Match lines of the form: ! csr_hint <name> 0x<value>
+        if (line[0] != '!') continue;
+        char keyword[32], csr_name[32], val_str[32];
+        if (sscanf(line, "! %31s %31s %31s", keyword, csr_name, val_str) == 3 &&
+                strcmp(keyword, "csr_hint") == 0) {
+            uint32_t addr = hint_csr_addr(csr_name);
+            if (addr == 0xFFFFFFFFu) continue;
+            uint32_t val = (uint32_t)strtoul(val_str, nullptr, 16);
+            g_csr_hints.push_back({addr, val});
+        }
+    }
+    fclose(f);
+    return true;
+}
 
 // SIGINT handler
 static volatile sig_atomic_t g_sigint = 0;
@@ -407,6 +459,17 @@ static bool check_align(uint32_t addr, int size, bool is_load) {
 // ============================================================================
 // CSR access
 // ============================================================================
+
+// Try to consume the next RTL hint for csr_addr; return the hinted value
+// if found, or fall back to fallback_val.
+static uint32_t consume_hint(uint32_t csr_addr, uint32_t fallback_val) {
+    if (g_hint_idx < g_csr_hints.size() &&
+            g_csr_hints[g_hint_idx].csr_addr == csr_addr) {
+        return g_csr_hints[g_hint_idx++].value;
+    }
+    return fallback_val;
+}
+
 static uint32_t read_csr(uint32_t csr) {
     switch (csr) {
     case CSR_MSTATUS:   return csr_mstatus | MSTATUS_MPP;  // MPP always M-mode
@@ -426,16 +489,16 @@ static uint32_t read_csr(uint32_t csr) {
             mtimecmp != 0xFFFFFFFFFFFFFFFFULL) mip |= MIP_MTIP;
         return mip;
     }
-    case CSR_MCYCLE:    return (uint32_t)(csr_mcycle & 0xFFFFFFFFu);
-    case CSR_MCYCLEH:   return (uint32_t)(csr_mcycle >> 32);
-    case CSR_MINSTRET:  return (uint32_t)(csr_minstret & 0xFFFFFFFFu);
-    case CSR_MINSTRETH: return (uint32_t)(csr_minstret >> 32);
-    case CSR_CYCLE:
-    case CSR_TIME:      return (uint32_t)(csr_mcycle & 0xFFFFFFFFu);
-    case CSR_CYCLEH:
-    case CSR_TIMEH:     return (uint32_t)(csr_mcycle >> 32);
-    case CSR_INSTRET:   return (uint32_t)(csr_minstret & 0xFFFFFFFFu);
-    case CSR_INSTRETH:  return (uint32_t)(csr_minstret >> 32);
+    case CSR_MCYCLE:    return consume_hint(0xB00, (uint32_t)(csr_mcycle & 0xFFFFFFFFu));
+    case CSR_MCYCLEH:   return consume_hint(0xB80, (uint32_t)(csr_mcycle >> 32));
+    case CSR_MINSTRET:  return consume_hint(0xB02, (uint32_t)(csr_minstret & 0xFFFFFFFFu));
+    case CSR_MINSTRETH: return consume_hint(0xB82, (uint32_t)(csr_minstret >> 32));
+    case CSR_CYCLE:     return consume_hint(0xC00, (uint32_t)(csr_mcycle & 0xFFFFFFFFu));
+    case CSR_TIME:      return consume_hint(0xC01, (uint32_t)(csr_mcycle & 0xFFFFFFFFu));
+    case CSR_CYCLEH:    return consume_hint(0xC80, (uint32_t)(csr_mcycle >> 32));
+    case CSR_TIMEH:     return consume_hint(0xC81, (uint32_t)(csr_mcycle >> 32));
+    case CSR_INSTRET:   return consume_hint(0xC02, (uint32_t)(csr_minstret & 0xFFFFFFFFu));
+    case CSR_INSTRETH:  return consume_hint(0xC82, (uint32_t)(csr_minstret >> 32));
     case CSR_MVENDORID: return 0x0u;
     case CSR_MARCHID:   return 0x0u;
     case CSR_MIMPID:    return 0x1u;
@@ -1207,10 +1270,13 @@ int main(int argc, char **argv) {
 
     const char *elf_path    = nullptr;
     const char *trace_path  = nullptr;
+    const char *hints_path  = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
+        } else if (strcmp(argv[i], "--rtl-hints") == 0 && i + 1 < argc) {
+            hints_path = argv[++i];
         } else if (strncmp(argv[i], "--max-insns=", 12) == 0) {
             max_insns = (uint64_t)strtoull(argv[i] + 12, nullptr, 10);
         } else if (strcmp(argv[i], "--max-insns") == 0 && i + 1 < argc) {
@@ -1230,7 +1296,7 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
         return 1;
     }
 
@@ -1242,6 +1308,13 @@ int main(int argc, char **argv) {
             return 1;
         }
         trace_on = true;
+    }
+
+    // Load RTL hints (optional — used to sync cycle-counter CSR values)
+    if (hints_path) {
+        if (!load_rtl_hints(hints_path)) return 1;
+        DBG(1, "Loaded %zu cycle-CSR hints from %s\n",
+            g_csr_hints.size(), hints_path);
     }
 
     // Initialise state

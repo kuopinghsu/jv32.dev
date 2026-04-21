@@ -100,7 +100,11 @@ export OPENRAM
 export OPENLANE
 export NIX_SHELL
 
-.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report clean cleanall help
+# Nangate typical liberty file — used by gate-count and NAND2-equivalent
+# reporting in gen_report.py.
+NANGATE_LIB ?= $(NANGATE_HOME)/lib/NangateOpenCellLibrary_typical.lib
+
+.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report gate-count clean cleanall help
 
 all: synth
 
@@ -327,7 +331,8 @@ synth: check $(BUILD_DIR)
 	    --bp-en      $(BP_EN)      \
 	    --iram-kb    $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) \
 	    --dram-kb    $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) \
-	    --clock-mhz  80
+	    --clock-mhz  80 \
+	    $(if $(NANGATE_LIB),--nangate-lib $(NANGATE_LIB),)
 	@echo " Summary : $(SYN_DIR)/REPORT.md"
 	@echo " Generating layout diagram..."
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_diag.py \
@@ -341,6 +346,67 @@ synth: check $(BUILD_DIR)
 
 synth-resume: RESUME=1
 synth-resume: synth
+
+# ── Gate count analysis (hierarchical, NAND2 equivalents) ───────────────────
+# Runs a separate OpenLane2 synthesis pass that preserves module hierarchy
+# (SYNTH_HIERARCHY_MODE: keep) so Yosys produces per-module gate counts.
+# Converts the results to NAND2-equivalent units and writes a report.
+#
+# Output: build/gate_count.rpt
+#
+# Run independently (does not require a prior 'make synth'):
+#   make gate-count
+#
+GATE_COUNT_RUN_DIR := $(BUILD_DIR)/gate_count_run
+GATE_COUNT_RPT     := $(BUILD_DIR)/gate_count.rpt
+
+gate-count: check $(BUILD_DIR)
+	@echo "========================================"
+	@echo " Gate Count Analysis (NAND2 equivalents)"
+	@echo "  Design : $(DESIGN)"
+	@echo "  Config : config.yaml + config_gate_count.yaml"
+	@echo "  Output : $(GATE_COUNT_RPT)"
+	@echo "========================================"
+	@if [ ! -f "$(SRAM_LEF)" ]; then \
+	    echo "ERROR: SRAM macro LEF not found: $(SRAM_LEF)"; \
+	    echo "       Run 'make gen-mem' before 'make gate-count'."; \
+	    exit 1; \
+	fi
+	@if [ -z "$(NANGATE_HOME)" ]; then \
+	    echo "ERROR: NANGATE_HOME is not set. Set it in env.config."; \
+	    exit 1; \
+	fi
+	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
+	@cp $(OPENLANE_DIR)/jv32_soc_pnr.sdc  $(BUILD_DIR)/jv32_soc_pnr.sdc
+	@cp $(OPENLANE_DIR)/macro_placement.cfg $(BUILD_DIR)/macro_placement.cfg
+	@rm -rf $(GATE_COUNT_RUN_DIR)
+	@mkdir -p $(GATE_COUNT_RUN_DIR)
+	@( \
+	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
+	    export NANGATE_HOME="$(NANGATE_HOME)"; \
+	    cd $(OPENLANE_DIR) && \
+	    $(OPENLANE_CMD) \
+	        --pdk-root $(PDK_ROOT) \
+	        --pdk $(PDK) \
+	        --manual-pdk \
+	        --force-run-dir $(GATE_COUNT_RUN_DIR) \
+	        -T Yosys.Synthesis \
+	        config.yaml \
+	        $(TCM_PARAMS_YAML) \
+	        config_gate_count.yaml; \
+	)
+	@echo " Generating gate count report..."
+	@$(PYTHON3) $(SYN_DIR)/scripts/gen_gate_count.py \
+	    $$(find $(GATE_COUNT_RUN_DIR) -name "stat.json" | sort | tail -1) \
+	    $(NANGATE_LIB) \
+	    --output $(GATE_COUNT_RPT)
+	@echo ""
+	@cat $(GATE_COUNT_RPT)
+	@echo ""
+	@echo "========================================"
+	@echo " Gate count report: $(GATE_COUNT_RPT)"
+	@echo "========================================"
 
 # ── Standalone OpenROAD P&R ──────────────────────────────────────────────────
 # Inputs expected:
@@ -494,6 +560,7 @@ help:
 	@echo "  make gen-mem                  # compile OpenRAM SRAM macros (freepdk45)"
 	@echo "  make synth                    # run OpenLane2 (synth + PnR)"
 	@echo "  make synth-resume             # resume last OpenLane2 run from failed step"
+	@echo "  make gate-count               # hierarchical gate count (NAND2 eq, with hierarchy)"
 	@echo "  make pnr                      # standalone OpenROAD P&R (after synth)"
 	@echo "  make timing-report            # post-route STA (after pnr)"
 	@echo "  make check                    # verify tool paths"

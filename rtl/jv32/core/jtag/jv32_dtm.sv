@@ -1196,7 +1196,7 @@ module jv32_dtm #(
                 // because that halt comes from the debug ROM ebreak.
                 if (!exec_waiting_halt) dpc_reg <= dbg_pc_i;
 
-                if (dcsr_reg[2] && !halt_req_sync_chain[2]) dcsr_cause_r <= 3'd4;
+                if (dcsr_reg[2]) dcsr_cause_r <= 3'd4;  // step (prio 4) > haltreq (prio 3)
                 else if (trigger_halt_i) dcsr_cause_r <= 3'd2;
                 else dcsr_cause_r <= 3'd3;
             end

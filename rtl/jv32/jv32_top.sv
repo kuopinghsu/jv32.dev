@@ -174,7 +174,10 @@ module jv32_top #(
     output logic        trace_mem_we,
     output logic        trace_mem_re,
     output logic [31:0] trace_mem_addr,
-    output logic [31:0] trace_mem_data
+    output logic [31:0] trace_mem_data,
+    output logic        trace_irq_taken,
+    output logic [31:0] trace_irq_cause,
+    output logic [31:0] trace_irq_epc
 );
     import jv32_pkg::*;
     import axi_pkg::*;
@@ -286,7 +289,10 @@ module jv32_top #(
         .trace_mem_we      (trace_mem_we),
         .trace_mem_re      (trace_mem_re),
         .trace_mem_addr    (trace_mem_addr),
-        .trace_mem_data    (trace_mem_data)
+        .trace_mem_data    (trace_mem_data),
+        .trace_irq_taken   (trace_irq_taken),
+        .trace_irq_cause   (trace_irq_cause),
+        .trace_irq_epc     (trace_irq_epc)
     );
 
     // =========================================================================

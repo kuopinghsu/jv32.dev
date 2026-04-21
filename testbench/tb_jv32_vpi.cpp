@@ -347,6 +347,7 @@ int main(int argc, char **argv) {
     g_dut->rst_n           = 0;
     g_dut->clk             = 0;
     g_dut->uart_rx_i       = 1;  // UART idle high
+    g_dut->trace_en        = 1;  // enable trace / single-step retire detection
     g_dut->jtag_ntrst_i    = 0;  // hold TAP in reset
     g_dut->jtag_pin0_tck_i = 0;
     g_dut->jtag_pin1_tms_i = 1;  // TMS=1 forces TAP reset state

@@ -35,11 +35,14 @@ _CSR_RW_FUNCT3 = frozenset({1, 2, 3, 5, 6, 7})
 
 # ── Pre-compiled regex patterns ──────────────────────────────────────────────
 # RTL trace line — captured groups:
-#   1=cycle  2=pc  3=instr
-#   4=regname (opt)  5=regval (opt)
-#   6=memaddr (opt)  7=memval (opt)
+# RTL trace line — captured groups:
+#   1=instret  2=cycle (optional, present when format is instret:cycle)
+#   3=pc  4=instr
+#   5=regname (opt)  6=regval (opt)
+#   7=memaddr (opt)  8=memval (opt)
+# Supports both old format (<instret> 0x...) and new format (<instret>:<cycle> 0x...)
 _RTL_LINE_RE = re.compile(
-    r'^(\d+)'
+    r'^(\d+)(?::(\d+))?'
     r'\s+0x([0-9a-fA-F]+)'
     r'\s+\(0x([0-9a-fA-F]+)\)'
     r'(?:\s+(?!mem\b|store\b)([a-zA-Z]\w*)\s+0x([0-9a-fA-F]+))?'
@@ -60,7 +63,7 @@ _SPIKE_LINE_RE = re.compile(
 )
 
 # Format detection
-_DETECT_RTL_RE   = re.compile(r'^\d+\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)')
+_DETECT_RTL_RE   = re.compile(r'^\d+(?::\d+)?\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)')
 _DETECT_SPIKE_RE = re.compile(r'^core\s+\d+:')
 
 # CSR field pattern (rare — only searched when 'csr' appears in the line)
@@ -163,14 +166,20 @@ def is_cycle_counter_csr(instr_val):
     return csr_addr in cycle_csrs
 
 def parse_rtl_trace(filename):
-    """Parse RTL trace file (format: CYCLES PC (INSTR) ...)"""
+    """Parse RTL trace file.
+    Supports both old format (<instret> 0x<pc> ...) and new format (<instret>:<cycle> 0x<pc> ...).
+    Lines starting with '!' are hint/event annotations and are skipped.
+    """
     traces = []
     with open(filename, 'r', buffering=1 << 20) as f:
         for line in f:
+            # Skip hint/event annotation lines
+            if line.startswith('!'):
+                continue
             m = _RTL_LINE_RE.match(line)
             if not m:
                 continue
-            cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
+            instret_s, cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
 
             instr_val = int(instr_s, 16)
             opcode    = instr_val & 0x7f
@@ -211,8 +220,11 @@ def parse_rtl_trace(filename):
                 if cm:
                     csr_access = (cm.group(1), int(cm.group(2), 16), 'access')
 
+            # Use cycle field when present, otherwise fall back to instret
+            cycle_val = int(cycle_s) if cycle_s is not None else int(instret_s)
+
             traces.append({
-                'cycle':        int(cycle_s),
+                'cycle':        cycle_val,
                 'pc':           int(pc_s, 16),
                 'instr':        instr_val,
                 'opcode':       opcode,
@@ -307,7 +319,7 @@ def detect_trace_type(filename):
     """Detect if this is an RTL trace or Spike/kv32sim trace."""
     with open(filename, 'r', buffering=1 << 20) as f:
         for line in f:
-            if not line or line[0] == '#':
+            if not line or line[0] == '#' or line[0] == '!':
                 continue
             # RTL format: leading digit(s) then ' 0x...'
             if _DETECT_RTL_RE.match(line):
@@ -338,7 +350,7 @@ def _parse_rtl_entry(line):
     m = _RTL_LINE_RE.match(line)
     if not m:
         return None
-    cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
+    instret_s, cycle_s, pc_s, instr_s, reg_name, reg_val_s, mem_addr_s, mem_val_s = m.groups()
     instr_val = int(instr_s, 16)
     opcode    = instr_val & 0x7f
     is_load  = opcode == 0x03
@@ -367,8 +379,9 @@ def _parse_rtl_entry(line):
         cm = _CSR_FIELD_RE.search(line)
         if cm:
             csr_access = (cm.group(1), int(cm.group(2), 16), 'access')
+    cycle_val = int(cycle_s) if cycle_s is not None else int(instret_s)
     return {
-        'cycle':        int(cycle_s),
+        'cycle':        cycle_val,
         'pc':           int(pc_s, 16),
         'instr':        instr_val,
         'opcode':       opcode,
@@ -408,6 +421,9 @@ def compare_rtl_rtl_streaming(fname1, fname2):
         with open(filename, 'r', buffering=4 << 20) as f:
             for line in f:
                 fc = line[0] if line else ''
+                # Skip hint/event annotation lines (start with '!')
+                if fc == '!':
+                    continue
                 if fc < '0' or fc > '9':
                     continue
                 sp   = line.index(' ')

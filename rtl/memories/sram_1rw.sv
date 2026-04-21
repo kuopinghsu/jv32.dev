@@ -21,6 +21,10 @@
 // Target selection (define exactly one before including this file,
 // or pass it on the command line):
 //
+//   `define XILINX_URAM   – Xilinx UltraScale+ (e.g. XCKU5P / XCZU*)
+//                           Infers UltraRAM (URAM288) via ram_style="ultra".
+//                           Best choice for large memories on KU5P.
+//
 //   `define XILINX_FPGA   – Xilinx 7-series / UltraScale / UltraScale+
 //                           Infers Block RAM (RAMB36/RAMB18) in NO_CHANGE mode.
 //                           (* ram_style = "block" *) forces BRAM (not LUTRAM).
@@ -48,7 +52,44 @@ module sram_1rw #(
     output logic [        WIDTH-1:0] rdata
 );
 
-`ifdef XILINX_FPGA
+`ifdef XILINX_URAM
+
+    // =========================================================================
+    // Xilinx UltraScale+ – UltraRAM inference
+    //
+    // (* ram_style = "ultra" *) targets the UltraRAM (URAM288) hard macros
+    // available on UltraScale+ devices (e.g. XCKU5P).  Each URAM288 provides
+    // 288 Kb (4096 × 72-bit) organised as 8-bit bytes, read-first behaviour.
+    //
+    // UltraRAM requirements:
+    //   - Output must be registered (one-cycle read latency, same as BRAM).
+    //   - Both read and write use the same clock edge.
+    //   - Byte write enables (wbe) are supported natively.
+    //
+    // NO_CHANGE semantics: rdata holds its value on write cycles (same as
+    // the BRAM path) by gating the read enable.
+    // =========================================================================
+
+    (* ram_style = "ultra" *)
+    logic [WIDTH-1:0] mem        [0:DEPTH-1];
+
+    logic [WIDTH-1:0] uram_rdata;
+
+    always @(posedge clk) begin
+        if (ce) begin
+            if (we) begin
+                for (int _b = 0; _b < WIDTH / 8; _b++) if (wbe[_b]) mem[addr][_b*8+:8] <= wdata[_b*8+:8];
+                // NO_CHANGE: do not update rdata on write cycles
+            end
+            else begin
+                uram_rdata <= mem[addr];
+            end
+        end
+    end
+
+    assign rdata = uram_rdata;
+
+`elsif XILINX_FPGA
 
     // =========================================================================
     // Xilinx FPGA – Block RAM inference
