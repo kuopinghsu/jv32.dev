@@ -1,0 +1,4 @@
+# Python dependencies for syn/scripts helpers
+# Install with: python3 -m pip install -r requirements.txt
+
+matplotlib>=3.9,<4
