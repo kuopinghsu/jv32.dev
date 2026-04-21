@@ -322,7 +322,6 @@ synth: check $(BUILD_DIR)
 	    $(OPENLANE_RUN_DIR) \
 	    $(SYN_DIR)/REPORT.md \
 	    --fast-mul   $(FAST_MUL)   \
-	    --mul-mc     $(MUL_MC)     \
 	    --fast-div   $(FAST_DIV)   \
 	    --fast-shift $(FAST_SHIFT) \
 	    --bp-en      $(BP_EN)      \
