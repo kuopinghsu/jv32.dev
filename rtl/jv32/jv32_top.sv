@@ -48,6 +48,8 @@ module jv32_top #(
     parameter bit                 FAST_DIV   = 1'b0,
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
+    parameter bit                 AMO_EN     = 1'b1,
+    parameter int                 N_TRIGGERS = 2,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
     parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
@@ -156,10 +158,10 @@ module jv32_top #(
     input  logic [31:0] progbuf1_i,
 
     // Trigger interface (Debug Spec 0.13 §5.2)
-    output logic             dbg_trigger_halt_o,
-    output logic [1:0]       dbg_trigger_hit_o,   // per-trigger hit bits (set by HW, cleared on resume)
-    input  logic [1:0][31:0] dbg_tdata1_i,
-    input  logic [1:0][31:0] dbg_tdata2_i,
+    output logic                        dbg_trigger_halt_o,
+    output logic [N_TRIGGERS-1:0]       dbg_trigger_hit_o,   // per-trigger hit bits (set by HW, cleared on resume)
+    input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata1_i,
+    input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata2_i,
 
     // =========================================================================
     // Trace
@@ -177,7 +179,13 @@ module jv32_top #(
     output logic [31:0] trace_mem_data,
     output logic        trace_irq_taken,
     output logic [31:0] trace_irq_cause,
-    output logic [31:0] trace_irq_epc
+    output logic [31:0] trace_irq_epc,
+    output logic        trace_irq_store_we,
+    output logic [31:0] trace_irq_store_addr,
+    output logic [31:0] trace_irq_store_data,
+
+    // mtime from platform timer (for time/timeh CSR)
+    input logic [63:0] mtime_i
 );
     import jv32_pkg::*;
     import axi_pkg::*;
@@ -194,9 +202,11 @@ module jv32_top #(
     function automatic logic in_iram(input logic [31:0] addr);
         return (addr & ~(32'(IRAM_SIZE) - 32'h1)) == (IRAM_BASE & ~(32'(IRAM_SIZE) - 32'h1));
     endfunction
+
     function automatic logic in_dram(input logic [31:0] addr);
         return (addr & ~(32'(DRAM_SIZE) - 32'h1)) == (DRAM_BASE & ~(32'(DRAM_SIZE) - 32'h1));
     endfunction
+
     function automatic logic in_tcm(input logic [31:0] addr);
         return in_iram(addr) | in_dram(addr);
     endfunction
@@ -234,65 +244,71 @@ module jv32_top #(
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
+        .AMO_EN    (AMO_EN),
+        .N_TRIGGERS(N_TRIGGERS),
         .BOOT_ADDR (BOOT_ADDR)
     ) u_core (
-        .clk               (clk),
-        .rst_n             (core_rst_n),
-        .imem_req_valid    (imem_req_valid),
-        .imem_req_addr     (imem_req_addr),
-        .imem_resp_valid   (imem_resp_valid),
-        .imem_resp_data    (imem_resp_data),
-        .imem_resp_pc      (imem_resp_pc),
-        .imem_resp_fault   (imem_resp_fault),
-        .imem_resp_fault_pc(imem_resp_fault_pc),
-        .timer_irq         (timer_irq),
-        .external_irq      (external_irq),
-        .software_irq      (software_irq),
-        .clic_irq          (clic_irq),
-        .clic_level        (clic_level),
-        .clic_prio         (clic_prio),
-        .clic_id           (clic_id),
-        .clic_ack          (clic_ack),
-        .halt_req_i        (dbg_halt_req_i),
-        .halted_o          (dbg_halted_o),
-        .resume_req_i      (dbg_resume_req_i),
-        .resumeack_o       (dbg_resumeack_o),
-        .dbg_reg_addr_i    (dbg_reg_addr_i),
-        .dbg_reg_wdata_i   (dbg_reg_wdata_i),
-        .dbg_reg_we_i      (dbg_reg_we_i),
-        .dbg_reg_rdata_o   (dbg_reg_rdata_o),
-        .dbg_pc_wdata_i    (dbg_pc_wdata_i),
-        .dbg_pc_we_i       (dbg_pc_we_i),
-        .dbg_pc_o          (dbg_pc_o),
-        .dbg_singlestep_i  (dbg_singlestep_i),
-        .dbg_ebreakm_i     (dbg_ebreakm_i),
-        .trigger_halt_o    (dbg_trigger_halt_o),
-        .trigger_hit_o     (dbg_trigger_hit_o),
-        .tdata1_i          (dbg_tdata1_i),
-        .tdata2_i          (dbg_tdata2_i),
-        .imem_flush        (imem_flush_core),
-        .dmem_req_valid    (dmem_req_valid),
-        .dmem_req_write    (dmem_req_write),
-        .dmem_req_addr     (dmem_req_addr),
-        .dmem_req_wdata    (dmem_req_wdata),
-        .dmem_req_wstrb    (dmem_req_wstrb),
-        .dmem_resp_valid   (dmem_resp_valid),
-        .dmem_resp_data    (dmem_resp_data),
-        .dmem_resp_fault   (dmem_resp_fault),
-        .trace_en          (trace_en),
-        .trace_valid       (trace_valid),
-        .trace_reg_we      (trace_reg_we),
-        .trace_pc          (trace_pc),
-        .trace_rd          (trace_rd),
-        .trace_rd_data     (trace_rd_data),
-        .trace_instr       (trace_instr),
-        .trace_mem_we      (trace_mem_we),
-        .trace_mem_re      (trace_mem_re),
-        .trace_mem_addr    (trace_mem_addr),
-        .trace_mem_data    (trace_mem_data),
-        .trace_irq_taken   (trace_irq_taken),
-        .trace_irq_cause   (trace_irq_cause),
-        .trace_irq_epc     (trace_irq_epc)
+        .clk                 (clk),
+        .rst_n               (core_rst_n),
+        .imem_req_valid      (imem_req_valid),
+        .imem_req_addr       (imem_req_addr),
+        .imem_resp_valid     (imem_resp_valid),
+        .imem_resp_data      (imem_resp_data),
+        .imem_resp_pc        (imem_resp_pc),
+        .imem_resp_fault     (imem_resp_fault),
+        .imem_resp_fault_pc  (imem_resp_fault_pc),
+        .timer_irq           (timer_irq),
+        .external_irq        (external_irq),
+        .software_irq        (software_irq),
+        .clic_irq            (clic_irq),
+        .clic_level          (clic_level),
+        .clic_prio           (clic_prio),
+        .clic_id             (clic_id),
+        .clic_ack            (clic_ack),
+        .halt_req_i          (dbg_halt_req_i),
+        .halted_o            (dbg_halted_o),
+        .resume_req_i        (dbg_resume_req_i),
+        .resumeack_o         (dbg_resumeack_o),
+        .dbg_reg_addr_i      (dbg_reg_addr_i),
+        .dbg_reg_wdata_i     (dbg_reg_wdata_i),
+        .dbg_reg_we_i        (dbg_reg_we_i),
+        .dbg_reg_rdata_o     (dbg_reg_rdata_o),
+        .dbg_pc_wdata_i      (dbg_pc_wdata_i),
+        .dbg_pc_we_i         (dbg_pc_we_i),
+        .dbg_pc_o            (dbg_pc_o),
+        .dbg_singlestep_i    (dbg_singlestep_i),
+        .dbg_ebreakm_i       (dbg_ebreakm_i),
+        .trigger_halt_o      (dbg_trigger_halt_o),
+        .trigger_hit_o       (dbg_trigger_hit_o),
+        .tdata1_i            (dbg_tdata1_i),
+        .tdata2_i            (dbg_tdata2_i),
+        .imem_flush          (imem_flush_core),
+        .dmem_req_valid      (dmem_req_valid),
+        .dmem_req_write      (dmem_req_write),
+        .dmem_req_addr       (dmem_req_addr),
+        .dmem_req_wdata      (dmem_req_wdata),
+        .dmem_req_wstrb      (dmem_req_wstrb),
+        .dmem_resp_valid     (dmem_resp_valid),
+        .dmem_resp_data      (dmem_resp_data),
+        .dmem_resp_fault     (dmem_resp_fault),
+        .trace_en            (trace_en),
+        .trace_valid         (trace_valid),
+        .trace_reg_we        (trace_reg_we),
+        .trace_pc            (trace_pc),
+        .trace_rd            (trace_rd),
+        .trace_rd_data       (trace_rd_data),
+        .trace_instr         (trace_instr),
+        .trace_mem_we        (trace_mem_we),
+        .trace_mem_re        (trace_mem_re),
+        .trace_mem_addr      (trace_mem_addr),
+        .trace_mem_data      (trace_mem_data),
+        .trace_irq_taken     (trace_irq_taken),
+        .trace_irq_cause     (trace_irq_cause),
+        .trace_irq_epc       (trace_irq_epc),
+        .trace_irq_store_we  (trace_irq_store_we),
+        .trace_irq_store_addr(trace_irq_store_addr),
+        .trace_irq_store_data(trace_irq_store_data),
+        .mtime_i             (mtime_i)
     );
 
     // =========================================================================

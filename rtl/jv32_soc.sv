@@ -18,7 +18,7 @@
 //  0x0200_0000  CLIC / CLINT
 //  0x4000_0000  Magic exit + MMIO
 //
-    // TCM slave ports (s_iram_tcm_* and s_dram_tcm_*)
+// TCM slave ports (s_iram_tcm_* and s_dram_tcm_*)
 // -----------------------------
 //  The jv32_top AXI slave is exposed as SoC-level ports so an external
 //  debug master or the testbench can write to TCM at run-time.
@@ -31,7 +31,9 @@ module jv32_soc #(
     parameter int unsigned        BAUD_RATE       = 115_200,
     parameter int unsigned        UART_FIFO_DEPTH = 16,          // TX/RX FIFO depth (power of 2)
     parameter bit                 USE_CJTAG       = 1'b0,        // 0=4-wire JTAG, 1=2-wire cJTAG
-    parameter logic        [31:0] JTAG_IDCODE     = 32'h1DEAD3FF,
+    parameter bit          [31:0] JTAG_IDCODE     = 32'h1DEAD3FF,
+    parameter int                 N_TRIGGERS      = 2,           // hardware breakpoints (0..4)
+    parameter bit                 AMO_EN          = 1'b1,        // 1=full A-extension; 0=LR/SC only
     parameter int unsigned        IRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter int unsigned        DRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter bit                 FAST_MUL        = 1'b1,
@@ -39,9 +41,9 @@ module jv32_soc #(
     parameter bit                 FAST_DIV        = 1'b0,
     parameter bit                 FAST_SHIFT      = 1'b1,
     parameter bit                 BP_EN           = 1'b1,
-    parameter logic        [31:0] BOOT_ADDR       = 32'h8000_0000,
-    parameter logic        [31:0] IRAM_BASE       = 32'h8000_0000,
-    parameter logic        [31:0] DRAM_BASE       = 32'hC000_0000
+    parameter bit          [31:0] BOOT_ADDR       = 32'h8000_0000,
+    parameter bit          [31:0] IRAM_BASE       = 32'h8000_0000,
+    parameter bit          [31:0] DRAM_BASE       = 32'hC000_0000
 ) (
     input logic clk,
     input logic rst_n,
@@ -135,7 +137,10 @@ module jv32_soc #(
     output logic [31:0] trace_mem_data,
     output logic        trace_irq_taken,
     output logic [31:0] trace_irq_cause,
-    output logic [31:0] trace_irq_epc
+    output logic [31:0] trace_irq_epc,
+    output logic        trace_irq_store_we,
+    output logic [31:0] trace_irq_store_addr,
+    output logic [31:0] trace_irq_store_data
 );
     import jv32_pkg::*;
 
@@ -172,8 +177,9 @@ module jv32_soc #(
     logic timer_irq, software_irq, external_irq;
     logic clic_irq;
     logic [7:0] clic_level, clic_prio;
-    logic [4:0] clic_id;
-    logic       clic_ack;
+    logic [ 4:0] clic_id;
+    logic        clic_ack;
+    logic [63:0] clic_mtime;  // mtime from CLIC, wired to core time/timeh CSR
 
     // =====================================================================
     // Debug / JTAG interconnect
@@ -194,7 +200,6 @@ module jv32_soc #(
     logic rst_n_pre, rst_sync_ff1, rst_sync_ff2;
 
     // Trigger interface wires (DTM ↔ core)
-    localparam int N_TRIGGERS = 2;
     logic                  dbg_trigger_halt;
     logic [N_TRIGGERS-1:0] dbg_trigger_hit;  // per-trigger hit bits
     logic [N_TRIGGERS-1:0][31:0] dbg_tdata1, dbg_tdata2;
@@ -270,13 +275,14 @@ module jv32_soc #(
         if (!rst_n_pre) begin
             rst_sync_ff1 <= 1'b0;
             rst_sync_ff2 <= 1'b0;
-        end else begin
+        end
+        else begin
             rst_sync_ff1 <= 1'b1;
             rst_sync_ff2 <= rst_sync_ff1;
         end
     end
 
-    assign soc_rst_n      = rst_sync_ff2;
+    assign soc_rst_n = rst_sync_ff2;
     assign dbg_tcm_select = (dbg_tcm_state == DBG_TCM_RD_ADDR)
                             || (dbg_tcm_state == DBG_TCM_RD_RESP)
                             || (dbg_tcm_state == DBG_TCM_WR_REQ)
@@ -285,7 +291,7 @@ module jv32_soc #(
                             || (dbg_tcm_state == DBG_EXT_RD_RESP)
                             || (dbg_tcm_state == DBG_EXT_WR_REQ)
                             || (dbg_tcm_state == DBG_EXT_WR_RESP);
-    assign dbg_mem_error  = dbg_mem_error_r;
+    assign dbg_mem_error = dbg_mem_error_r;
 
     // JTAG top-level interface + RISC-V debug transport module
     jtag_top #(
@@ -336,77 +342,77 @@ module jv32_soc #(
 
     // Pass external IRAM/DRAM TCM AXI masters through unless JTAG DM
     // is actively performing an in-TCM debug memory access on that bank.
-    assign iram_tcm_araddr_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_araddr;
+    assign iram_tcm_araddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_araddr;
     assign iram_tcm_arvalid_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_iram_tcm_arvalid;
     assign iram_tcm_rready_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_iram_tcm_rready;
-    assign iram_tcm_awaddr_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_awaddr;
+    assign iram_tcm_awaddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_awaddr;
     assign iram_tcm_awvalid_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_iram_tcm_awvalid;
-    assign iram_tcm_wdata_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wdata_r : s_iram_tcm_wdata;
-    assign iram_tcm_wstrb_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wstrb_r : s_iram_tcm_wstrb;
+    assign iram_tcm_wdata_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wdata_r : s_iram_tcm_wdata;
+    assign iram_tcm_wstrb_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wstrb_r : s_iram_tcm_wstrb;
     assign iram_tcm_wvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_iram_tcm_wvalid;
     assign iram_tcm_bready_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_iram_tcm_bready;
 
-    assign dram_tcm_araddr_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_araddr;
+    assign dram_tcm_araddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_araddr;
     assign dram_tcm_arvalid_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_dram_tcm_arvalid;
     assign dram_tcm_rready_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_dram_tcm_rready;
-    assign dram_tcm_awaddr_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_awaddr;
+    assign dram_tcm_awaddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_awaddr;
     assign dram_tcm_awvalid_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_dram_tcm_awvalid;
-    assign dram_tcm_wdata_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wdata_r : s_dram_tcm_wdata;
-    assign dram_tcm_wstrb_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wstrb_r : s_dram_tcm_wstrb;
+    assign dram_tcm_wdata_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wdata_r : s_dram_tcm_wdata;
+    assign dram_tcm_wstrb_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wstrb_r : s_dram_tcm_wstrb;
     assign dram_tcm_wvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_dram_tcm_wvalid;
     assign dram_tcm_bready_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_dram_tcm_bready;
 
-    assign s_iram_tcm_arready   = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_arready_int;
-    assign s_iram_tcm_rdata     = (dbg_tcm_select && dbg_tcm_is_iram) ? 32'h0 : iram_tcm_rdata_int;
-    assign s_iram_tcm_rresp     = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_rresp_int;
-    assign s_iram_tcm_rvalid    = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_rvalid_int;
-    assign s_iram_tcm_awready   = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_awready_int;
-    assign s_iram_tcm_wready    = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_wready_int;
-    assign s_iram_tcm_bresp     = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_bresp_int;
-    assign s_iram_tcm_bvalid    = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_bvalid_int;
+    assign s_iram_tcm_arready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_arready_int;
+    assign s_iram_tcm_rdata = (dbg_tcm_select && dbg_tcm_is_iram) ? 32'h0 : iram_tcm_rdata_int;
+    assign s_iram_tcm_rresp = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_rresp_int;
+    assign s_iram_tcm_rvalid = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_rvalid_int;
+    assign s_iram_tcm_awready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_awready_int;
+    assign s_iram_tcm_wready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_wready_int;
+    assign s_iram_tcm_bresp = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_bresp_int;
+    assign s_iram_tcm_bvalid = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_bvalid_int;
 
-    assign s_dram_tcm_arready   = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_arready_int;
-    assign s_dram_tcm_rdata     = (dbg_tcm_select && !dbg_tcm_is_iram) ? 32'h0 : dram_tcm_rdata_int;
-    assign s_dram_tcm_rresp     = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_rresp_int;
-    assign s_dram_tcm_rvalid    = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_rvalid_int;
-    assign s_dram_tcm_awready   = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_awready_int;
-    assign s_dram_tcm_wready    = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_wready_int;
-    assign s_dram_tcm_bresp     = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_bresp_int;
-    assign s_dram_tcm_bvalid    = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_bvalid_int;
+    assign s_dram_tcm_arready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_arready_int;
+    assign s_dram_tcm_rdata = (dbg_tcm_select && !dbg_tcm_is_iram) ? 32'h0 : dram_tcm_rdata_int;
+    assign s_dram_tcm_rresp = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_rresp_int;
+    assign s_dram_tcm_rvalid = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_rvalid_int;
+    assign s_dram_tcm_awready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_awready_int;
+    assign s_dram_tcm_wready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_wready_int;
+    assign s_dram_tcm_bresp = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_bresp_int;
+    assign s_dram_tcm_bvalid = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_bvalid_int;
 
     // Mux xbar master between core and debugger (out-of-TCM accesses).
-    assign mbus_araddr      = dbg_ext_select ? dbg_addr_r : core_mbus_araddr;
-    assign mbus_arvalid     = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_ADDR) : core_mbus_arvalid;
-    assign mbus_rready      = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_RESP) : core_mbus_rready;
-    assign mbus_awaddr      = dbg_ext_select ? dbg_addr_r : core_mbus_awaddr;
-    assign mbus_awvalid     = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_aw_done) : core_mbus_awvalid;
-    assign mbus_wdata       = dbg_ext_select ? dbg_wdata_r : core_mbus_wdata;
-    assign mbus_wstrb       = dbg_ext_select ? dbg_wstrb_r : core_mbus_wstrb;
-    assign mbus_wvalid      = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_w_done) : core_mbus_wvalid;
-    assign mbus_bready      = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_WR_RESP) : core_mbus_bready;
+    assign mbus_araddr = dbg_ext_select ? dbg_addr_r : core_mbus_araddr;
+    assign mbus_arvalid = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_ADDR) : core_mbus_arvalid;
+    assign mbus_rready = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_RESP) : core_mbus_rready;
+    assign mbus_awaddr = dbg_ext_select ? dbg_addr_r : core_mbus_awaddr;
+    assign mbus_awvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_aw_done) : core_mbus_awvalid;
+    assign mbus_wdata = dbg_ext_select ? dbg_wdata_r : core_mbus_wdata;
+    assign mbus_wstrb = dbg_ext_select ? dbg_wstrb_r : core_mbus_wstrb;
+    assign mbus_wvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_w_done) : core_mbus_wvalid;
+    assign mbus_bready = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_WR_RESP) : core_mbus_bready;
 
     assign core_mbus_arready = dbg_ext_select ? 1'b0 : mbus_arready;
-    assign core_mbus_rdata   = dbg_ext_select ? 32'h0 : mbus_rdata;
-    assign core_mbus_rresp   = dbg_ext_select ? 2'b00 : mbus_rresp;
-    assign core_mbus_rvalid  = dbg_ext_select ? 1'b0 : mbus_rvalid;
+    assign core_mbus_rdata = dbg_ext_select ? 32'h0 : mbus_rdata;
+    assign core_mbus_rresp = dbg_ext_select ? 2'b00 : mbus_rresp;
+    assign core_mbus_rvalid = dbg_ext_select ? 1'b0 : mbus_rvalid;
     assign core_mbus_awready = dbg_ext_select ? 1'b0 : mbus_awready;
-    assign core_mbus_wready  = dbg_ext_select ? 1'b0 : mbus_wready;
-    assign core_mbus_bresp   = dbg_ext_select ? 2'b00 : mbus_bresp;
-    assign core_mbus_bvalid  = dbg_ext_select ? 1'b0 : mbus_bvalid;
+    assign core_mbus_wready = dbg_ext_select ? 1'b0 : mbus_wready;
+    assign core_mbus_bresp = dbg_ext_select ? 2'b00 : mbus_bresp;
+    assign core_mbus_bvalid = dbg_ext_select ? 1'b0 : mbus_bvalid;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            dbg_tcm_state <= DBG_TCM_IDLE;
-            dbg_mem_req_d <= 1'b0;
+            dbg_tcm_state   <= DBG_TCM_IDLE;
+            dbg_mem_req_d   <= 1'b0;
             dbg_mem_error_r <= 1'b0;
-            dbg_aw_done   <= 1'b0;
-            dbg_w_done    <= 1'b0;
-            dbg_addr_r    <= 32'h0;
-            dbg_wdata_r   <= 32'h0;
-            dbg_wstrb_r   <= 4'h0;
+            dbg_aw_done     <= 1'b0;
+            dbg_w_done      <= 1'b0;
+            dbg_addr_r      <= 32'h0;
+            dbg_wdata_r     <= 32'h0;
+            dbg_wstrb_r     <= 4'h0;
             dbg_tcm_is_iram <= 1'b0;
-            dbg_mem_ready <= 1'b0;
-            dbg_mem_rdata <= 32'h0;
+            dbg_mem_ready   <= 1'b0;
+            dbg_mem_rdata   <= 32'h0;
         end
         else begin
             dbg_mem_req_d <= dbg_mem_req;
@@ -417,29 +423,27 @@ module jv32_soc #(
                     dbg_aw_done <= 1'b0;
                     dbg_w_done  <= 1'b0;
                     if (dbg_mem_req && !dbg_mem_req_d) begin
-                        dbg_addr_r    <= dbg_mem_addr;
-                        dbg_wdata_r   <= dbg_mem_wdata;
-                        dbg_wstrb_r   <= dbg_mem_we;
+                        dbg_addr_r      <= dbg_mem_addr;
+                        dbg_wdata_r     <= dbg_mem_wdata;
+                        dbg_wstrb_r     <= dbg_mem_we;
                         dbg_tcm_is_iram <= in_iram(dbg_mem_addr);
                         dbg_mem_error_r <= 1'b0;
                         if (in_tcm(dbg_mem_addr))
                             dbg_tcm_state <= (dbg_mem_we == 4'b0000) ? DBG_TCM_RD_ADDR : DBG_TCM_WR_REQ;
-                        else
-                            dbg_tcm_state <= (dbg_mem_we == 4'b0000) ? DBG_EXT_RD_ADDR : DBG_EXT_WR_REQ;
+                        else dbg_tcm_state <= (dbg_mem_we == 4'b0000) ? DBG_EXT_RD_ADDR : DBG_EXT_WR_REQ;
                     end
                 end
 
                 DBG_TCM_RD_ADDR: begin
-                    if (dbg_tcm_is_iram ? iram_tcm_arready_int : dram_tcm_arready_int)
-                        dbg_tcm_state <= DBG_TCM_RD_RESP;
+                    if (dbg_tcm_is_iram ? iram_tcm_arready_int : dram_tcm_arready_int) dbg_tcm_state <= DBG_TCM_RD_RESP;
                 end
 
                 DBG_TCM_RD_RESP: begin
                     if (dbg_tcm_is_iram ? iram_tcm_rvalid_int : dram_tcm_rvalid_int) begin
-                        dbg_mem_rdata <= dbg_tcm_is_iram ? iram_tcm_rdata_int : dram_tcm_rdata_int;
+                        dbg_mem_rdata   <= dbg_tcm_is_iram ? iram_tcm_rdata_int : dram_tcm_rdata_int;
                         dbg_mem_error_r <= (dbg_tcm_is_iram ? iram_tcm_rresp_int : dram_tcm_rresp_int) != 2'b00;
-                        dbg_mem_ready <= 1'b1;
-                        dbg_tcm_state <= DBG_TCM_IDLE;
+                        dbg_mem_ready   <= 1'b1;
+                        dbg_tcm_state   <= DBG_TCM_IDLE;
                     end
                 end
 
@@ -454,8 +458,8 @@ module jv32_soc #(
                 DBG_TCM_WR_RESP: begin
                     if (dbg_tcm_is_iram ? iram_tcm_bvalid_int : dram_tcm_bvalid_int) begin
                         dbg_mem_error_r <= (dbg_tcm_is_iram ? iram_tcm_bresp_int : dram_tcm_bresp_int) != 2'b00;
-                        dbg_mem_ready <= 1'b1;
-                        dbg_tcm_state <= DBG_TCM_IDLE;
+                        dbg_mem_ready   <= 1'b1;
+                        dbg_tcm_state   <= DBG_TCM_IDLE;
                     end
                 end
 
@@ -465,25 +469,24 @@ module jv32_soc #(
 
                 DBG_EXT_RD_RESP: begin
                     if (mbus_rvalid) begin
-                        dbg_mem_rdata <= mbus_rdata;
+                        dbg_mem_rdata   <= mbus_rdata;
                         dbg_mem_error_r <= (mbus_rresp != 2'b00);
-                        dbg_mem_ready <= 1'b1;
-                        dbg_tcm_state <= DBG_TCM_IDLE;
+                        dbg_mem_ready   <= 1'b1;
+                        dbg_tcm_state   <= DBG_TCM_IDLE;
                     end
                 end
 
                 DBG_EXT_WR_REQ: begin
                     if (mbus_awready) dbg_aw_done <= 1'b1;
                     if (mbus_wready) dbg_w_done <= 1'b1;
-                    if ((dbg_aw_done || mbus_awready) && (dbg_w_done || mbus_wready))
-                        dbg_tcm_state <= DBG_EXT_WR_RESP;
+                    if ((dbg_aw_done || mbus_awready) && (dbg_w_done || mbus_wready)) dbg_tcm_state <= DBG_EXT_WR_RESP;
                 end
 
                 DBG_EXT_WR_RESP: begin
                     if (mbus_bvalid) begin
                         dbg_mem_error_r <= (mbus_bresp != 2'b00);
-                        dbg_mem_ready <= 1'b1;
-                        dbg_tcm_state <= DBG_TCM_IDLE;
+                        dbg_mem_ready   <= 1'b1;
+                        dbg_tcm_state   <= DBG_TCM_IDLE;
                     end
                 end
 
@@ -501,6 +504,8 @@ module jv32_soc #(
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
+        .AMO_EN    (AMO_EN),
+        .N_TRIGGERS(N_TRIGGERS),
         .IRAM_SIZE (IRAM_SIZE),
         .DRAM_SIZE (DRAM_SIZE),
         .BOOT_ADDR (BOOT_ADDR),
@@ -565,51 +570,55 @@ module jv32_soc #(
         .s_dram_axi_bready (dram_tcm_bready_mux),
 
         // Interrupts
-        .timer_irq         (timer_irq),
-        .software_irq      (software_irq),
-        .external_irq      (external_irq),
-        .clic_irq          (clic_irq),
-        .clic_level        (clic_level),
-        .clic_prio         (clic_prio),
-        .clic_id           (clic_id),
-        .clic_ack          (clic_ack),
+        .timer_irq           (timer_irq),
+        .software_irq        (software_irq),
+        .external_irq        (external_irq),
+        .clic_irq            (clic_irq),
+        .clic_level          (clic_level),
+        .clic_prio           (clic_prio),
+        .clic_id             (clic_id),
+        .clic_ack            (clic_ack),
         // Debug sideband from the JTAG DM
-        .dbg_hartreset_i   (dbg_hartreset),
-        .dbg_halt_req_i    (dbg_halt_req),
-        .dbg_halted_o      (dbg_halted),
-        .dbg_resume_req_i  (dbg_resume_req),
-        .dbg_resumeack_o   (dbg_resumeack),
-        .dbg_reg_addr_i    (dbg_reg_addr),
-        .dbg_reg_wdata_i   (dbg_reg_wdata),
-        .dbg_reg_we_i      (dbg_reg_we),
-        .dbg_reg_rdata_o   (dbg_reg_rdata),
-        .dbg_pc_wdata_i    (dbg_pc_wdata),
-        .dbg_pc_we_i       (dbg_pc_we),
-        .dbg_pc_o          (dbg_pc),
-        .dbg_singlestep_i  (dbg_singlestep),
-        .dbg_ebreakm_i     (dbg_ebreakm),
-        .progbuf0_i        (progbuf0),
-        .progbuf1_i        (progbuf1),
+        .dbg_hartreset_i     (dbg_hartreset),
+        .dbg_halt_req_i      (dbg_halt_req),
+        .dbg_halted_o        (dbg_halted),
+        .dbg_resume_req_i    (dbg_resume_req),
+        .dbg_resumeack_o     (dbg_resumeack),
+        .dbg_reg_addr_i      (dbg_reg_addr),
+        .dbg_reg_wdata_i     (dbg_reg_wdata),
+        .dbg_reg_we_i        (dbg_reg_we),
+        .dbg_reg_rdata_o     (dbg_reg_rdata),
+        .dbg_pc_wdata_i      (dbg_pc_wdata),
+        .dbg_pc_we_i         (dbg_pc_we),
+        .dbg_pc_o            (dbg_pc),
+        .dbg_singlestep_i    (dbg_singlestep),
+        .dbg_ebreakm_i       (dbg_ebreakm),
+        .progbuf0_i          (progbuf0),
+        .progbuf1_i          (progbuf1),
         // Trigger interface
-        .dbg_trigger_halt_o(dbg_trigger_halt),
-        .dbg_trigger_hit_o (dbg_trigger_hit),
-        .dbg_tdata1_i      (dbg_tdata1),
-        .dbg_tdata2_i      (dbg_tdata2),
+        .dbg_trigger_halt_o  (dbg_trigger_halt),
+        .dbg_trigger_hit_o   (dbg_trigger_hit),
+        .dbg_tdata1_i        (dbg_tdata1),
+        .dbg_tdata2_i        (dbg_tdata2),
         // Trace
-        .trace_en          (trace_en),
-        .trace_valid       (trace_valid),
-        .trace_reg_we      (trace_reg_we),
-        .trace_pc          (trace_pc),
-        .trace_rd          (trace_rd),
-        .trace_rd_data     (trace_rd_data),
-        .trace_instr       (trace_instr),
-        .trace_mem_we      (trace_mem_we),
-        .trace_mem_re      (trace_mem_re),
-        .trace_mem_addr    (trace_mem_addr),
-        .trace_mem_data    (trace_mem_data),
-        .trace_irq_taken   (trace_irq_taken),
-        .trace_irq_cause   (trace_irq_cause),
-        .trace_irq_epc     (trace_irq_epc)
+        .trace_en            (trace_en),
+        .trace_valid         (trace_valid),
+        .trace_reg_we        (trace_reg_we),
+        .trace_pc            (trace_pc),
+        .trace_rd            (trace_rd),
+        .trace_rd_data       (trace_rd_data),
+        .trace_instr         (trace_instr),
+        .trace_mem_we        (trace_mem_we),
+        .trace_mem_re        (trace_mem_re),
+        .trace_mem_addr      (trace_mem_addr),
+        .trace_mem_data      (trace_mem_data),
+        .trace_irq_taken     (trace_irq_taken),
+        .trace_irq_cause     (trace_irq_cause),
+        .trace_irq_epc       (trace_irq_epc),
+        .trace_irq_store_we  (trace_irq_store_we),
+        .trace_irq_store_addr(trace_irq_store_addr),
+        .trace_irq_store_data(trace_irq_store_data),
+        .mtime_i             (clic_mtime)
     );
 
     // =====================================================================
@@ -743,7 +752,7 @@ module jv32_soc #(
     ) u_clic (
         .clk           (clk),
         .rst_n         (soc_rst_n),
-        .instret_inc   (trace_valid),
+        .mtime_o       (clic_mtime),
         .s_awaddr      (xs_awaddr[1]),
         .s_awvalid     (xs_awvalid[1]),
         .s_awready     (xs_awready[1]),

@@ -41,6 +41,9 @@ module tb_jv32_soc #(
     output logic        trace_irq_taken,
     output logic [31:0] trace_irq_cause,
     output logic [31:0] trace_irq_epc,
+    output logic        trace_irq_store_we,
+    output logic [31:0] trace_irq_store_addr,
+    output logic [31:0] trace_irq_store_data,
 
     // DPI-C memory init
     input  logic uart_rx_i,
@@ -150,14 +153,14 @@ module tb_jv32_soc #(
 
     tb_alias_state_e        tb_alias_state;
     logic            [31:0] tb_alias_addr_r;
-    logic                   tb_alias_aw_done, tb_alias_w_done;
-    logic                   tb_alias_is_iram;
-    logic                   tb_alias_rd_sel, tb_alias_wr_sel;
-    logic                   tb_alias_active;
-    logic                   decerr_bpending;
-    logic                   alias_arready, alias_rvalid, alias_awready, alias_wready, alias_bvalid;
-    logic            [31:0] alias_rdata;
-    logic             [1:0] alias_rresp, alias_bresp;
+    logic tb_alias_aw_done, tb_alias_w_done;
+    logic tb_alias_is_iram;
+    logic tb_alias_rd_sel, tb_alias_wr_sel;
+    logic tb_alias_active;
+    logic decerr_bpending;
+    logic alias_arready, alias_rvalid, alias_awready, alias_wready, alias_bvalid;
+    logic [31:0] alias_rdata;
+    logic [1:0] alias_rresp, alias_bresp;
 
     assign tb_alias_rd_sel = (tb_alias_state == TB_ALIAS_IDLE) && ext_axi_arvalid && (in_iram_alias(
         ext_axi_araddr
@@ -173,14 +176,14 @@ module tb_jv32_soc #(
 
     assign tb_alias_active = (tb_alias_state != TB_ALIAS_IDLE);
 
-    assign alias_arready  = tb_alias_is_iram ? s_iram_tcm_arready  : s_dram_tcm_arready;
-    assign alias_rvalid   = tb_alias_is_iram ? s_iram_tcm_rvalid   : s_dram_tcm_rvalid;
-    assign alias_rdata    = tb_alias_is_iram ? s_iram_tcm_rdata    : s_dram_tcm_rdata;
-    assign alias_rresp    = tb_alias_is_iram ? s_iram_tcm_rresp    : s_dram_tcm_rresp;
-    assign alias_awready  = tb_alias_is_iram ? s_iram_tcm_awready  : s_dram_tcm_awready;
-    assign alias_wready   = tb_alias_is_iram ? s_iram_tcm_wready   : s_dram_tcm_wready;
-    assign alias_bvalid   = tb_alias_is_iram ? s_iram_tcm_bvalid   : s_dram_tcm_bvalid;
-    assign alias_bresp    = tb_alias_is_iram ? s_iram_tcm_bresp    : s_dram_tcm_bresp;
+    assign alias_arready = tb_alias_is_iram ? s_iram_tcm_arready : s_dram_tcm_arready;
+    assign alias_rvalid = tb_alias_is_iram ? s_iram_tcm_rvalid : s_dram_tcm_rvalid;
+    assign alias_rdata = tb_alias_is_iram ? s_iram_tcm_rdata : s_dram_tcm_rdata;
+    assign alias_rresp = tb_alias_is_iram ? s_iram_tcm_rresp : s_dram_tcm_rresp;
+    assign alias_awready = tb_alias_is_iram ? s_iram_tcm_awready : s_dram_tcm_awready;
+    assign alias_wready = tb_alias_is_iram ? s_iram_tcm_wready : s_dram_tcm_wready;
+    assign alias_bvalid = tb_alias_is_iram ? s_iram_tcm_bvalid : s_dram_tcm_bvalid;
+    assign alias_bresp = tb_alias_is_iram ? s_iram_tcm_bresp : s_dram_tcm_bresp;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -246,25 +249,25 @@ module tb_jv32_soc #(
 
     // Drive external TCM slave interfaces from testbench alias bridge.
     always_comb begin
-        s_iram_tcm_araddr  = tb_alias_addr_r;
+        s_iram_tcm_araddr = tb_alias_addr_r;
         s_iram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && tb_alias_is_iram;
-        s_iram_tcm_rready  = (tb_alias_state == TB_ALIAS_RD_RESP && tb_alias_is_iram) ? ext_axi_rready : 1'b0;
-        s_iram_tcm_awaddr  = tb_alias_addr_r;
+        s_iram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && tb_alias_is_iram) ? ext_axi_rready : 1'b0;
+        s_iram_tcm_awaddr = tb_alias_addr_r;
         s_iram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && tb_alias_is_iram;
-        s_iram_tcm_wdata   = ext_axi_wdata;
-        s_iram_tcm_wstrb   = ext_axi_wstrb;
+        s_iram_tcm_wdata = ext_axi_wdata;
+        s_iram_tcm_wstrb = ext_axi_wstrb;
         s_iram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && tb_alias_is_iram;
-        s_iram_tcm_bready  = (tb_alias_state == TB_ALIAS_WR_RESP && tb_alias_is_iram) ? ext_axi_bready : 1'b0;
+        s_iram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && tb_alias_is_iram) ? ext_axi_bready : 1'b0;
 
-        s_dram_tcm_araddr  = tb_alias_addr_r;
+        s_dram_tcm_araddr = tb_alias_addr_r;
         s_dram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && !tb_alias_is_iram;
-        s_dram_tcm_rready  = (tb_alias_state == TB_ALIAS_RD_RESP && !tb_alias_is_iram) ? ext_axi_rready : 1'b0;
-        s_dram_tcm_awaddr  = tb_alias_addr_r;
+        s_dram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && !tb_alias_is_iram) ? ext_axi_rready : 1'b0;
+        s_dram_tcm_awaddr = tb_alias_addr_r;
         s_dram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && !tb_alias_is_iram;
-        s_dram_tcm_wdata   = ext_axi_wdata;
-        s_dram_tcm_wstrb   = ext_axi_wstrb;
+        s_dram_tcm_wdata = ext_axi_wdata;
+        s_dram_tcm_wstrb = ext_axi_wstrb;
         s_dram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && !tb_alias_is_iram;
-        s_dram_tcm_bready  = (tb_alias_state == TB_ALIAS_WR_RESP && !tb_alias_is_iram) ? ext_axi_bready : 1'b0;
+        s_dram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && !tb_alias_is_iram) ? ext_axi_bready : 1'b0;
 
         // Alias hits are rerouted into TCM; non-alias external accesses
         // return DECERR so unmatched traffic does not hang simulation.
@@ -381,71 +384,74 @@ module tb_jv32_soc #(
         .ext_irq_i       (16'h0),
 
         // TCM slaves driven by testbench alias bridge
-        .s_iram_tcm_araddr (s_iram_tcm_araddr),
-        .s_iram_tcm_arvalid(s_iram_tcm_arvalid),
-        .s_iram_tcm_arready(s_iram_tcm_arready),
-        .s_iram_tcm_rdata  (s_iram_tcm_rdata),
-        .s_iram_tcm_rresp  (s_iram_tcm_rresp),
-        .s_iram_tcm_rvalid (s_iram_tcm_rvalid),
-        .s_iram_tcm_rready (s_iram_tcm_rready),
-        .s_iram_tcm_awaddr (s_iram_tcm_awaddr),
-        .s_iram_tcm_awvalid(s_iram_tcm_awvalid),
-        .s_iram_tcm_awready(s_iram_tcm_awready),
-        .s_iram_tcm_wdata  (s_iram_tcm_wdata),
-        .s_iram_tcm_wstrb  (s_iram_tcm_wstrb),
-        .s_iram_tcm_wvalid (s_iram_tcm_wvalid),
-        .s_iram_tcm_wready (s_iram_tcm_wready),
-        .s_iram_tcm_bresp  (s_iram_tcm_bresp),
-        .s_iram_tcm_bvalid (s_iram_tcm_bvalid),
-        .s_iram_tcm_bready (s_iram_tcm_bready),
-        .s_dram_tcm_araddr (s_dram_tcm_araddr),
-        .s_dram_tcm_arvalid(s_dram_tcm_arvalid),
-        .s_dram_tcm_arready(s_dram_tcm_arready),
-        .s_dram_tcm_rdata  (s_dram_tcm_rdata),
-        .s_dram_tcm_rresp  (s_dram_tcm_rresp),
-        .s_dram_tcm_rvalid (s_dram_tcm_rvalid),
-        .s_dram_tcm_rready (s_dram_tcm_rready),
-        .s_dram_tcm_awaddr (s_dram_tcm_awaddr),
-        .s_dram_tcm_awvalid(s_dram_tcm_awvalid),
-        .s_dram_tcm_awready(s_dram_tcm_awready),
-        .s_dram_tcm_wdata  (s_dram_tcm_wdata),
-        .s_dram_tcm_wstrb  (s_dram_tcm_wstrb),
-        .s_dram_tcm_wvalid (s_dram_tcm_wvalid),
-        .s_dram_tcm_wready (s_dram_tcm_wready),
-        .s_dram_tcm_bresp  (s_dram_tcm_bresp),
-        .s_dram_tcm_bvalid (s_dram_tcm_bvalid),
-        .s_dram_tcm_bready (s_dram_tcm_bready),
-        .ext_axi_araddr    (ext_axi_araddr),
-        .ext_axi_arvalid   (ext_axi_arvalid),
-        .ext_axi_rready    (ext_axi_rready),
-        .ext_axi_awaddr    (ext_axi_awaddr),
-        .ext_axi_awvalid   (ext_axi_awvalid),
-        .ext_axi_wdata     (ext_axi_wdata),
-        .ext_axi_wstrb     (ext_axi_wstrb),
-        .ext_axi_wvalid    (ext_axi_wvalid),
-        .ext_axi_bready    (ext_axi_bready),
-        .ext_axi_arready   (ext_axi_arready),
-        .ext_axi_rdata     (ext_axi_rdata),
-        .ext_axi_rresp     (ext_axi_rresp),
-        .ext_axi_rvalid    (ext_axi_rvalid),
-        .ext_axi_awready   (ext_axi_awready),
-        .ext_axi_wready    (ext_axi_wready),
-        .ext_axi_bresp     (ext_axi_bresp),
-        .ext_axi_bvalid    (ext_axi_bvalid),
-        .trace_en          (trace_en),
-        .trace_valid       (trace_valid),
-        .trace_reg_we      (trace_reg_we),
-        .trace_pc          (trace_pc),
-        .trace_rd          (trace_rd),
-        .trace_rd_data     (trace_rd_data),
-        .trace_instr       (trace_instr),
-        .trace_mem_we      (trace_mem_we),
-        .trace_mem_re      (trace_mem_re),
-        .trace_mem_addr    (trace_mem_addr),
-        .trace_mem_data    (trace_mem_data),
-        .trace_irq_taken   (trace_irq_taken),
-        .trace_irq_cause   (trace_irq_cause),
-        .trace_irq_epc     (trace_irq_epc)
+        .s_iram_tcm_araddr   (s_iram_tcm_araddr),
+        .s_iram_tcm_arvalid  (s_iram_tcm_arvalid),
+        .s_iram_tcm_arready  (s_iram_tcm_arready),
+        .s_iram_tcm_rdata    (s_iram_tcm_rdata),
+        .s_iram_tcm_rresp    (s_iram_tcm_rresp),
+        .s_iram_tcm_rvalid   (s_iram_tcm_rvalid),
+        .s_iram_tcm_rready   (s_iram_tcm_rready),
+        .s_iram_tcm_awaddr   (s_iram_tcm_awaddr),
+        .s_iram_tcm_awvalid  (s_iram_tcm_awvalid),
+        .s_iram_tcm_awready  (s_iram_tcm_awready),
+        .s_iram_tcm_wdata    (s_iram_tcm_wdata),
+        .s_iram_tcm_wstrb    (s_iram_tcm_wstrb),
+        .s_iram_tcm_wvalid   (s_iram_tcm_wvalid),
+        .s_iram_tcm_wready   (s_iram_tcm_wready),
+        .s_iram_tcm_bresp    (s_iram_tcm_bresp),
+        .s_iram_tcm_bvalid   (s_iram_tcm_bvalid),
+        .s_iram_tcm_bready   (s_iram_tcm_bready),
+        .s_dram_tcm_araddr   (s_dram_tcm_araddr),
+        .s_dram_tcm_arvalid  (s_dram_tcm_arvalid),
+        .s_dram_tcm_arready  (s_dram_tcm_arready),
+        .s_dram_tcm_rdata    (s_dram_tcm_rdata),
+        .s_dram_tcm_rresp    (s_dram_tcm_rresp),
+        .s_dram_tcm_rvalid   (s_dram_tcm_rvalid),
+        .s_dram_tcm_rready   (s_dram_tcm_rready),
+        .s_dram_tcm_awaddr   (s_dram_tcm_awaddr),
+        .s_dram_tcm_awvalid  (s_dram_tcm_awvalid),
+        .s_dram_tcm_awready  (s_dram_tcm_awready),
+        .s_dram_tcm_wdata    (s_dram_tcm_wdata),
+        .s_dram_tcm_wstrb    (s_dram_tcm_wstrb),
+        .s_dram_tcm_wvalid   (s_dram_tcm_wvalid),
+        .s_dram_tcm_wready   (s_dram_tcm_wready),
+        .s_dram_tcm_bresp    (s_dram_tcm_bresp),
+        .s_dram_tcm_bvalid   (s_dram_tcm_bvalid),
+        .s_dram_tcm_bready   (s_dram_tcm_bready),
+        .ext_axi_araddr      (ext_axi_araddr),
+        .ext_axi_arvalid     (ext_axi_arvalid),
+        .ext_axi_rready      (ext_axi_rready),
+        .ext_axi_awaddr      (ext_axi_awaddr),
+        .ext_axi_awvalid     (ext_axi_awvalid),
+        .ext_axi_wdata       (ext_axi_wdata),
+        .ext_axi_wstrb       (ext_axi_wstrb),
+        .ext_axi_wvalid      (ext_axi_wvalid),
+        .ext_axi_bready      (ext_axi_bready),
+        .ext_axi_arready     (ext_axi_arready),
+        .ext_axi_rdata       (ext_axi_rdata),
+        .ext_axi_rresp       (ext_axi_rresp),
+        .ext_axi_rvalid      (ext_axi_rvalid),
+        .ext_axi_awready     (ext_axi_awready),
+        .ext_axi_wready      (ext_axi_wready),
+        .ext_axi_bresp       (ext_axi_bresp),
+        .ext_axi_bvalid      (ext_axi_bvalid),
+        .trace_en            (trace_en),
+        .trace_valid         (trace_valid),
+        .trace_reg_we        (trace_reg_we),
+        .trace_pc            (trace_pc),
+        .trace_rd            (trace_rd),
+        .trace_rd_data       (trace_rd_data),
+        .trace_instr         (trace_instr),
+        .trace_mem_we        (trace_mem_we),
+        .trace_mem_re        (trace_mem_re),
+        .trace_mem_addr      (trace_mem_addr),
+        .trace_mem_data      (trace_mem_data),
+        .trace_irq_taken     (trace_irq_taken),
+        .trace_irq_cause     (trace_irq_cause),
+        .trace_irq_epc       (trace_irq_epc),
+        .trace_irq_store_we  (trace_irq_store_we),
+        .trace_irq_store_addr(trace_irq_store_addr),
+        .trace_irq_store_data(trace_irq_store_data)
     );
 
 endmodule

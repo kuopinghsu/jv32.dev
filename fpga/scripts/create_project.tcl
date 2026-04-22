@@ -76,9 +76,9 @@ set_property verilog_define {XILINX_URAM} [current_fileset]
 # Add RTL source files
 # ---------------------------------------------------------------------------
 
-# jv32_macros.svh is marked as a global include so its `define macros are
+# jv32_dbgmsg.svh is marked as a global include so its `define macros are
 # visible to every compilation unit regardless of compile order.
-set macros_hdr ${rtl_dir}/jv32/core/jv32_macros.svh
+set macros_hdr ${rtl_dir}/jv32/jv32_dbgmsg.svh
 add_files -norecurse $macros_hdr
 set_property file_type {SystemVerilog Header} [get_files $macros_hdr]
 set_property is_global_include true           [get_files $macros_hdr]
@@ -191,7 +191,6 @@ if {$run_impl == "1"} {
         set mcs_file "${proj_path}/${top_module}.mcs"
         write_cfgmem \
             -format mcs \
-            -part $flash_part \
             -interface SPIx4 \
             -size 256 \
             -loadbit "up 0x0 ${bit_file}" \

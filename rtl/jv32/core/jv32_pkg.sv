@@ -7,10 +7,10 @@
 // used by the JV32 3-stage (IF→EX→WB) RV32IMAC processor core.
 // ============================================================================
 
-// Macros are defined in jv32_macros.svh (Vivado global include).
+// Macros are defined in jv32_dbgmsg.svh (Vivado global include).
 // The `include here ensures simulation tools that compile jv32_pkg.sv
 // directly also have the macros available.
-`include "jv32_macros.svh"
+`include "jv32_dbgmsg.svh"
 
 package jv32_pkg;
 
@@ -45,6 +45,7 @@ package jv32_pkg;
     localparam int unsigned FAST_DIV       = 0;              // 1=comb, 0=serial (33 cyc)
     localparam int unsigned FAST_SHIFT     = 1;              // 1=barrel, 0=serial 1-bit/cyc
     localparam int unsigned BP_EN          = 1;              // 1=BTB+RAS, 0=predict-not-taken
+    localparam int unsigned AMO_EN         = 1;              // 1=full A-extension, 0=AMO decode as illegal
     localparam int unsigned IRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned AXI_DATA_WIDTH = 32;             // 32-bit AXI data bus
@@ -154,39 +155,40 @@ package jv32_pkg;
     typedef enum logic [11:0] {
         // Unprivileged floating-point (not used, kept for completeness)
         // Machine Trap Setup
-        CSR_MSTATUS    = 12'h300,
-        CSR_MISA       = 12'h301,
-        CSR_MIE        = 12'h304,
-        CSR_MTVEC      = 12'h305,
-        CSR_MSTATUSH   = 12'h310,  // RV32 high bits of mstatus (MBE=0, all others 0)
+        CSR_MSTATUS       = 12'h300,
+        CSR_MISA          = 12'h301,
+        CSR_MIE           = 12'h304,
+        CSR_MTVEC         = 12'h305,
+        CSR_MSTATUSH      = 12'h310,  // RV32 high bits of mstatus (MBE=0, all others 0)
         // Machine Trap Handling
-        CSR_MSCRATCH   = 12'h340,
-        CSR_MEPC       = 12'h341,
-        CSR_MCAUSE     = 12'h342,
-        CSR_MTVAL      = 12'h343,
-        CSR_MIP        = 12'h344,
+        CSR_MSCRATCH      = 12'h340,
+        CSR_MEPC          = 12'h341,
+        CSR_MCAUSE        = 12'h342,
+        CSR_MTVAL         = 12'h343,
+        CSR_MIP           = 12'h344,
         // CLIC extensions (RVM23)
-        CSR_MTVT       = 12'h307,  // CLIC vector table base
-        CSR_MNXTI      = 12'h345,  // CLIC next-interrupt CSR
-        CSR_MINTSTATUS = 12'hFB1,  // CLIC interrupt status (current level)
-        CSR_MINTTHRESH = 12'h347,  // CLIC interrupt threshold
-        // Machine Counters
-        CSR_MCYCLE     = 12'hB00,
-        CSR_MINSTRET   = 12'hB02,
-        CSR_MCYCLEH    = 12'hB80,
-        CSR_MINSTRETH  = 12'hB82,
+        CSR_MTVT          = 12'h307,  // CLIC vector table base
+        CSR_MNXTI         = 12'h345,  // CLIC next-interrupt CSR
+        CSR_MINTSTATUS    = 12'hFB1,  // CLIC interrupt status (current level)
+        CSR_MINTTHRESH    = 12'h347,  // CLIC interrupt threshold
+        // Machine Counters/Timers
+        CSR_MCOUNTINHIBIT = 12'h320,  // counter-inhibit: bit0=CY, bit2=IR
+        CSR_MCYCLE        = 12'hB00,
+        CSR_MINSTRET      = 12'hB02,
+        CSR_MCYCLEH       = 12'hB80,
+        CSR_MINSTRETH     = 12'hB82,
         // User-mode read-only shadows
-        CSR_CYCLE      = 12'hC00,
-        CSR_TIME       = 12'hC01,
-        CSR_INSTRET    = 12'hC02,
-        CSR_CYCLEH     = 12'hC80,
-        CSR_TIMEH      = 12'hC81,
-        CSR_INSTRETH   = 12'hC82,
+        CSR_CYCLE         = 12'hC00,
+        CSR_TIME          = 12'hC01,
+        CSR_INSTRET       = 12'hC02,
+        CSR_CYCLEH        = 12'hC80,
+        CSR_TIMEH         = 12'hC81,
+        CSR_INSTRETH      = 12'hC82,
         // Machine information (read-only)
-        CSR_MVENDORID  = 12'hF11,
-        CSR_MARCHID    = 12'hF12,
-        CSR_MIMPID     = 12'hF13,
-        CSR_MHARTID    = 12'hF14
+        CSR_MVENDORID     = 12'hF11,
+        CSR_MARCHID       = 12'hF12,
+        CSR_MIMPID        = 12'hF13,
+        CSR_MHARTID       = 12'hF14
     } csr_addr_e;
 
     // ========================================================================

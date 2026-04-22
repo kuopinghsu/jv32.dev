@@ -37,36 +37,32 @@ static void report(const char *name, int ok)
 
 /* ── exception handlers ────────────────────────────────────────────────────── */
 
-static uint32_t on_ecall(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_ecall(jv_trap_frame_t *frame)
 {
-    (void)mcause; (void)mtval;
     g_trap_ecall = 1;
-    return mepc + 4;        /* skip ecall (always 4 bytes) */
+    frame->mepc += 4;   /* skip ecall (always 4 bytes) */
 }
 
-static uint32_t on_ebreak(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_ebreak(jv_trap_frame_t *frame)
 {
-    (void)mcause; (void)mtval;
     g_trap_ebreak = 1;
     /* Determine instruction size: bits[1:0]==11 → 32-bit, else 16-bit (C.EBREAK) */
-    uint16_t inst = *(volatile uint16_t *)mepc;
-    return mepc + (((inst & 3u) == 3u) ? 4u : 2u);
+    uint16_t inst = *(volatile uint16_t *)frame->mepc;
+    frame->mepc += (((inst & 3u) == 3u) ? 4u : 2u);
 }
 
-static uint32_t on_load_misalign(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_load_misalign(jv_trap_frame_t *frame)
 {
-    (void)mcause; (void)mtval;
     g_trap_misalign = 1;
-    return mepc + 4;
+    frame->mepc += 4;
 }
 
-static uint32_t on_illegal(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void on_illegal(jv_trap_frame_t *frame)
 {
-    (void)mcause; (void)mtval;
     g_trap_illegal = 1;
     /* Determine instruction size: bits[1:0]==11 → 32-bit, else 16-bit */
-    uint16_t inst = *(volatile uint16_t *)mepc;
-    return mepc + (((inst & 3u) == 3u) ? 4u : 2u);
+    uint16_t inst = *(volatile uint16_t *)frame->mepc;
+    frame->mepc += (((inst & 3u) == 3u) ? 4u : 2u);
 }
 
 /* ── interrupt handler ─────────────────────────────────────────────────────── */
@@ -87,10 +83,10 @@ int main(void)
 
     /* Register handlers via SDK dispatch table */
     jv_exc_register(JV_EXC_ECALL_M,       on_ecall);
-    jv_exc_register(JV_EXC_BREAKPOINT,     on_ebreak);
-    jv_exc_register(JV_EXC_LOAD_MISALIGN,  on_load_misalign);
-    jv_exc_register(JV_EXC_ILLEGAL_INSN,   on_illegal);
-    jv_irq_register(JV_CAUSE_MTI,          on_timer);
+    jv_exc_register(JV_EXC_BREAKPOINT,    on_ebreak);
+    jv_exc_register(JV_EXC_LOAD_MISALIGN, on_load_misalign);
+    jv_exc_register(JV_EXC_ILLEGAL_INSN,  on_illegal);
+    jv_irq_register(JV_CAUSE_MTI,         on_timer);
 
     /* ── Test 1: ecall ─────────────────────────────────────────────── */
     jv_uart_puts("Test 1: ecall\n");

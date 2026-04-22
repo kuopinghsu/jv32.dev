@@ -14,13 +14,21 @@
 
 _start:
     /* ------------------------------------------------------------------ */
-    /* 1. Set up mtvec to trap handler (direct mode, bottom 2 bits = 00)  */
+    /* 1. Initialise global pointer (for gp-relative data access)         */
+    /* ------------------------------------------------------------------ */
+    .option push
+    .option norelax
+    la      gp, __global_pointer$
+    .option pop
+
+    /* ------------------------------------------------------------------ */
+    /* 2. Set up mtvec to trap handler (direct mode, bottom 2 bits = 00)  */
     /* ------------------------------------------------------------------ */
     la      t0, trap_entry
     csrw    mtvec, t0
 
     /* ------------------------------------------------------------------ */
-    /* 2. Zero the BSS section                                             */
+    /* 3. Zero the BSS section                                             */
     /* ------------------------------------------------------------------ */
     la      a0, _bss_start
     la      a1, _bss_end
@@ -31,6 +39,7 @@ _start:
     bltu    a0, a1, .Lbss_loop
 .Lbss_done:
 
+    /* ------------------------------------------------------------------ */
     /* ------------------------------------------------------------------ */
     /* 3. Copy .data from LMA (IRAM copy) to VMA (DRAM)                   */
     /* ------------------------------------------------------------------ */
@@ -92,8 +101,23 @@ _exit:
     .size _exit, . - _exit
 
 /* ============================================================================
- * Trap entry: minimal M-mode trap handler
- * Saves critical registers, calls handle_trap(mcause, mepc, mtval)
+ * Trap entry: full M-mode trap handler
+ * Saves all 32 registers + mepc/mstatus/mcause/mtval to a 144-byte frame,
+ * then calls trap_handler(jv_trap_frame_t *frame).
+ *
+ * Frame layout (144 bytes, matches jv_trap_frame_t in jv_irq.h):
+ *   [sp+0]   unused (x0 placeholder)
+ *   [sp+4]   x1  (ra)       [sp+8]   x2  (sp, pre-adjust)
+ *   [sp+12]  x3  (gp)       [sp+16]  x4  (tp)
+ *   [sp+20]  x5  (t0)       [sp+24]  x6  (t1)
+ *   [sp+28]  x7  (t2)       [sp+32]  x8  (s0/fp)
+ *   [sp+36]  x9  (s1)       [sp+40]  x10 (a0)
+ *   ...
+ *   [sp+124] x31 (t6)
+ *   [sp+128] mepc     <- handlers may update to redirect return PC
+ *   [sp+132] mstatus  <- handlers may update; restored via csrw before mret
+ *   [sp+136] mcause   <- read-only for handlers
+ *   [sp+140] mtval    <- read-only for handlers
  * ============================================================================ */
     .section .text.trap, "ax", @progbits
     .global  trap_entry
@@ -101,62 +125,102 @@ _exit:
     .align   2
 
 trap_entry:
-    /* Save registers to a scratch area in DRAM.
-     * We use a simple per-hart trap stack; for single-hart this is fine. */
-    addi    sp, sp, -128
+    addi    sp, sp, -144
 
-    sw      ra,   0(sp)
-    sw      t0,   4(sp)
-    sw      t1,   8(sp)
-    sw      t2,  12(sp)
-    sw      a0,  16(sp)
-    sw      a1,  20(sp)
-    sw      a2,  24(sp)
-    sw      a3,  28(sp)
-    sw      a4,  32(sp)
-    sw      a5,  36(sp)
-    sw      a6,  40(sp)
-    sw      a7,  44(sp)
-    sw      t3,  48(sp)
-    sw      t4,  52(sp)
-    sw      t5,  56(sp)
-    sw      t6,  60(sp)
+    sw      x1,   4(sp)
+    sw      x2,   8(sp)
+    sw      x3,  12(sp)
+    sw      x4,  16(sp)
+    sw      x5,  20(sp)
+    sw      x6,  24(sp)
+    sw      x7,  28(sp)
+    sw      x8,  32(sp)
+    sw      x9,  36(sp)
+    sw      x10, 40(sp)
+    sw      x11, 44(sp)
+    sw      x12, 48(sp)
+    sw      x13, 52(sp)
+    sw      x14, 56(sp)
+    sw      x15, 60(sp)
+    sw      x16, 64(sp)
+    sw      x17, 68(sp)
+    sw      x18, 72(sp)
+    sw      x19, 76(sp)
+    sw      x20, 80(sp)
+    sw      x21, 84(sp)
+    sw      x22, 88(sp)
+    sw      x23, 92(sp)
+    sw      x24, 96(sp)
+    sw      x25, 100(sp)
+    sw      x26, 104(sp)
+    sw      x27, 108(sp)
+    sw      x28, 112(sp)
+    sw      x29, 116(sp)
+    sw      x30, 120(sp)
+    sw      x31, 124(sp)
 
-    /* Pass mcause / mepc / mtval to C handler */
-    csrr    a0, mcause
-    csrr    a1, mepc
-    csrr    a2, mtval
+    csrr    x1, mepc
+    sw      x1,  128(sp)
+    csrr    x1, mstatus
+    sw      x1,  132(sp)
+    csrr    x1, mcause
+    sw      x1,  136(sp)
+    csrr    x1, mtval
+    sw      x1,  140(sp)
 
-    call    handle_trap
+    /* Restore ra (used as scratch above) from saved copy */
+    lw      x1, 4(sp)
 
-    /* handle_trap returns updated mepc in a0 (0 = use original mepc) */
-    beqz    a0, .Ltrap_restore_mepc
-    csrw    mepc, a0
-.Ltrap_restore_mepc:
+    /* Call trap_handler(jv_trap_frame_t *frame) */
+    mv      a0, sp
+    call    trap_handler
 
-    lw      ra,   0(sp)
-    lw      t0,   4(sp)
-    lw      t1,   8(sp)
-    lw      t2,  12(sp)
-    lw      a0,  16(sp)
-    lw      a1,  20(sp)
-    lw      a2,  24(sp)
-    lw      a3,  28(sp)
-    lw      a4,  32(sp)
-    lw      a5,  36(sp)
-    lw      a6,  40(sp)
-    lw      a7,  44(sp)
-    lw      t3,  48(sp)
-    lw      t4,  52(sp)
-    lw      t5,  56(sp)
-    lw      t6,  60(sp)
-    addi    sp, sp, 128
+    /* Restore mstatus and mepc from frame (authoritative — handlers may have
+     * modified them to redirect return PC or update interrupt-enable state). */
+    lw      x1, 132(sp)
+    csrw    mstatus, x1
+    lw      x1, 128(sp)
+    csrw    mepc, x1
 
+    /* Restore all general-purpose registers */
+    lw      x1,   4(sp)
+    lw      x2,   8(sp)
+    lw      x3,  12(sp)
+    lw      x4,  16(sp)
+    lw      x5,  20(sp)
+    lw      x6,  24(sp)
+    lw      x7,  28(sp)
+    lw      x8,  32(sp)
+    lw      x9,  36(sp)
+    lw      x10, 40(sp)
+    lw      x11, 44(sp)
+    lw      x12, 48(sp)
+    lw      x13, 52(sp)
+    lw      x14, 56(sp)
+    lw      x15, 60(sp)
+    lw      x16, 64(sp)
+    lw      x17, 68(sp)
+    lw      x18, 72(sp)
+    lw      x19, 76(sp)
+    lw      x20, 80(sp)
+    lw      x21, 84(sp)
+    lw      x22, 88(sp)
+    lw      x23, 92(sp)
+    lw      x24, 96(sp)
+    lw      x25, 100(sp)
+    lw      x26, 104(sp)
+    lw      x27, 108(sp)
+    lw      x28, 112(sp)
+    lw      x29, 116(sp)
+    lw      x30, 120(sp)
+    lw      x31, 124(sp)
+
+    addi    sp, sp, 144
     mret
 
     .size trap_entry, . - trap_entry
 
 /* ============================================================================
- * Default handle_trap is provided by sw/common/jv_irq.c as a weak symbol.
- * Tests can override it by defining their own handle_trap().
+ * Default trap_handler is provided by sw/common/jv_irq.c as a weak symbol.
+ * Tests can override it by defining their own trap_handler().
  * ============================================================================ */

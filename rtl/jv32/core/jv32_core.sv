@@ -23,6 +23,8 @@ module jv32_core #(
     parameter bit        FAST_DIV   = 1'b0,
     parameter bit        FAST_SHIFT = 1'b1,
     parameter bit        BP_EN      = 1'b1,
+    parameter bit        AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
+    parameter int        N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
     parameter bit [31:0] BOOT_ADDR  = 32'h8000_0000
 ) (
     input logic clk,
@@ -59,24 +61,24 @@ module jv32_core #(
     output logic       clic_ack,
 
     // External debug interface (JTAG DM)
-    input  logic              halt_req_i,
-    output logic              halted_o,
-    input  logic              resume_req_i,
-    output logic              resumeack_o,
-    input  logic [ 4:0]       dbg_reg_addr_i,
-    input  logic [31:0]       dbg_reg_wdata_i,
-    input  logic              dbg_reg_we_i,
-    output logic [31:0]       dbg_reg_rdata_o,
-    input  logic [31:0]       dbg_pc_wdata_i,
-    input  logic              dbg_pc_we_i,
-    output logic [31:0]       dbg_pc_o,
-    input  logic              dbg_singlestep_i,
-    input  logic              dbg_ebreakm_i,
+    input  logic                        halt_req_i,
+    output logic                        halted_o,
+    input  logic                        resume_req_i,
+    output logic                        resumeack_o,
+    input  logic [           4:0]       dbg_reg_addr_i,
+    input  logic [          31:0]       dbg_reg_wdata_i,
+    input  logic                        dbg_reg_we_i,
+    output logic [          31:0]       dbg_reg_rdata_o,
+    input  logic [          31:0]       dbg_pc_wdata_i,
+    input  logic                        dbg_pc_we_i,
+    output logic [          31:0]       dbg_pc_o,
+    input  logic                        dbg_singlestep_i,
+    input  logic                        dbg_ebreakm_i,
     // Trigger interface (Debug Spec 0.13 §5.2 Trigger Module)
-    output logic              trigger_halt_o,  // trigger caused current halt
-    output logic [ 1:0]       trigger_hit_o,   // per-trigger: which trigger(s) fired
-    input  logic [ 1:0][31:0] tdata1_i,        // mcontrol config per trigger
-    input  logic [ 1:0][31:0] tdata2_i,        // match address per trigger
+    output logic                        trigger_halt_o,  // trigger caused current halt
+    output logic [N_TRIGGERS-1:0]       trigger_hit_o,   // per-trigger: which trigger(s) fired
+    input  logic [N_TRIGGERS-1:0][31:0] tdata1_i,        // mcontrol config per trigger
+    input  logic [N_TRIGGERS-1:0][31:0] tdata2_i,        // match address per trigger
 
     // I-fetch flush: asserted on branch/jump/exception/mret/IRQ redirect.
     // Allows jv32_top to suppress the stale TCM response arriving one cycle later.
@@ -98,12 +100,20 @@ module jv32_core #(
     // IRQ-taken hint: fires for one cycle when an interrupt is accepted
     output logic        trace_irq_taken,
     output logic [31:0] trace_irq_cause,
-    output logic [31:0] trace_irq_epc
+    output logic [31:0] trace_irq_epc,
+    // Squashed-store hint: fires together with trace_irq_taken when the
+    // interrupted instruction was a store that had already committed its
+    // memory write in the pipeline (irq fired during 2nd WB cycle).
+    output logic        trace_irq_store_we,
+    output logic [31:0] trace_irq_store_addr,
+    output logic [31:0] trace_irq_store_data,
+
+    // mtime from platform timer (for time/timeh CSR)
+    input logic [63:0] mtime_i
 );
     import jv32_pkg::*;
 
     localparam logic [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;
-    localparam int          N_TRIGGERS     = 2;
 
     // =====================================================================
     // RVC expander
@@ -236,7 +246,9 @@ module jv32_core #(
     logic dec_is_fence, dec_is_fence_i;
     logic dec_is_wfi;
 
-    jv32_decoder u_decoder (
+    jv32_decoder #(
+        .AMO_EN(AMO_EN)
+    ) u_decoder (
         .instr     (if_ex_r.instr),
         .valid     (if_ex_r.valid),
         .rs1_addr  (dec_rs1),
@@ -319,7 +331,8 @@ module jv32_core #(
         .irq_pending    (csr_irq_pending),
         .irq_cause      (csr_irq_cause),
         .irq_pc         (csr_irq_pc),
-        .instret_inc    (trace_valid)
+        .instret_inc    (trace_valid),
+        .mtime_i        (mtime_i)
     );
 
     // =====================================================================
@@ -1227,14 +1240,26 @@ module jv32_core #(
     // an interrupt and squashes the instruction currently in WB.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            trace_irq_taken <= 1'b0;
-            trace_irq_cause <= 32'h0;
-            trace_irq_epc   <= 32'h0;
+            trace_irq_taken      <= 1'b0;
+            trace_irq_cause      <= 32'h0;
+            trace_irq_epc        <= 32'h0;
+            trace_irq_store_we   <= 1'b0;
+            trace_irq_store_addr <= 32'h0;
+            trace_irq_store_data <= 32'h0;
+        end
+        else if (trace_en) begin
+            trace_irq_taken      <= irq_cancel && ex_wb_r.valid;
+            trace_irq_cause      <= csr_irq_cause;
+            trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
+            // squashed-store: the interrupt fires in the 2nd WB cycle of a
+            // store (dmem_resp_valid=1 means the DRAM write already committed)
+            trace_irq_store_we   <= irq_cancel && ex_wb_r.valid && ex_wb_r.mem_write && dmem_resp_valid;
+            trace_irq_store_addr <= ex_wb_r.mem_addr;
+            trace_irq_store_data <= trace_mem_data_c;
         end
         else begin
-            trace_irq_taken <= irq_cancel && ex_wb_r.valid;
-            trace_irq_cause <= csr_irq_cause;
-            trace_irq_epc   <= csr_irq_pc;
+            trace_irq_taken    <= 1'b0;
+            trace_irq_store_we <= 1'b0;
         end
     end
 

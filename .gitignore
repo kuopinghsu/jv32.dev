@@ -79,3 +79,4 @@ rtos/zephyr/build.*
 /verif/work
 
 syn/pdk/.nangate_home
+syn/slpp_all

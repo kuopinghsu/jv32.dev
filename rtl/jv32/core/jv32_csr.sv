@@ -61,7 +61,10 @@ module jv32_csr (
     output logic [31:0] irq_pc,
 
     // Instruction-retired pulse
-    input logic instret_inc
+    input logic instret_inc,
+
+    // mtime from platform timer (for time/timeh CSR shadow)
+    input logic [63:0] mtime_i
 );
     import jv32_pkg::*;
 
@@ -89,6 +92,9 @@ module jv32_csr (
     // Cycle / instret counters (64-bit)
     logic [63:0] mcycle_cnt;
     logic [63:0] minstret_cnt;
+    // mcountinhibit: bit[0]=CY (inhibit mcycle), bit[2]=IR (inhibit minstret)
+    logic        mcountinhibit_cy;
+    logic        mcountinhibit_ir;
 
     // =====================================================================
     // Write data helper (CSRRW / CSRRS / CSRRC)
@@ -118,13 +124,13 @@ module jv32_csr (
     // =====================================================================
     // CSR read
     // =====================================================================
-    // Forward instret_inc into counter reads so the EX-stage sees the count
+    // Forward instret_inc into minstret reads so the EX-stage sees the count
     // including the preceding WB-stage instruction's retirement, matching
     // the software-simulator model.
     logic [63:0] mcycle_cnt_fwd;
     logic [63:0] minstret_cnt_fwd;
-    assign mcycle_cnt_fwd   = mcycle_cnt + {63'h0, instret_inc};
-    assign minstret_cnt_fwd = minstret_cnt + {63'h0, instret_inc};
+    assign mcycle_cnt_fwd   = mcycle_cnt;                           // mcycle: no forwarding needed (counts clocks)
+    assign minstret_cnt_fwd = minstret_cnt + {63'h0, instret_inc};  // minstret: forward pending retirement
 
     always_comb begin
         csr_rdata = 32'd0;
@@ -155,11 +161,13 @@ module jv32_csr (
             CSR_MINSTRET: csr_rdata = minstret_cnt_fwd[31:0];
             CSR_MINSTRETH: csr_rdata = minstret_cnt_fwd[63:32];
             CSR_CYCLE: csr_rdata = mcycle_cnt_fwd[31:0];
-            CSR_TIME: csr_rdata = mcycle_cnt_fwd[31:0];
+            CSR_TIME: csr_rdata = mtime_i[31:0];
             CSR_INSTRET: csr_rdata = minstret_cnt_fwd[31:0];
             CSR_CYCLEH: csr_rdata = mcycle_cnt_fwd[63:32];
-            CSR_TIMEH: csr_rdata = mcycle_cnt_fwd[63:32];
+            CSR_TIMEH: csr_rdata = mtime_i[63:32];
             CSR_INSTRETH: csr_rdata = minstret_cnt_fwd[63:32];
+            // Counter inhibit
+            CSR_MCOUNTINHIBIT: csr_rdata = {29'd0, mcountinhibit_ir, 1'b0, mcountinhibit_cy};
             // Machine info (read-only)
             CSR_MVENDORID: csr_rdata = 32'h0;
             CSR_MARCHID: csr_rdata = 32'h0;
@@ -174,26 +182,27 @@ module jv32_csr (
     // =====================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            mstatus_mie    <= 1'b0;
-            mstatus_mpie   <= 1'b0;
-            mtvec_reg      <= 32'h0;
-            mscratch_reg   <= 32'h0;
-            mepc_reg       <= 32'h0;
-            mcause_reg     <= 32'h0;
-            mtval_reg      <= 32'h0;
-            mie_reg        <= 32'h0;
-            mtvt_reg       <= 32'h0;
-            mintthresh_reg <= 8'h0;
-            mintstatus_mil <= 8'h0;
-            mcycle_cnt     <= 64'h0;
-            minstret_cnt   <= 64'h0;
+            mstatus_mie      <= 1'b0;
+            mstatus_mpie     <= 1'b0;
+            mtvec_reg        <= 32'h0;
+            mscratch_reg     <= 32'h0;
+            mepc_reg         <= 32'h0;
+            mcause_reg       <= 32'h0;
+            mtval_reg        <= 32'h0;
+            mie_reg          <= 32'h0;
+            mtvt_reg         <= 32'h0;
+            mintthresh_reg   <= 8'h0;
+            mintstatus_mil   <= 8'h0;
+            mcycle_cnt       <= 64'h0;
+            minstret_cnt     <= 64'h0;
+            mcountinhibit_cy <= 1'b0;
+            mcountinhibit_ir <= 1'b0;
         end
         else begin
             // ---- performance counters ----
-            // mcycle increments per retired instruction (like minstret), so
-            // it matches a software simulator that counts executed instructions.
-            if (instret_inc) mcycle_cnt <= mcycle_cnt + 64'd1;
-            if (instret_inc) minstret_cnt <= minstret_cnt + 64'd1;
+            // mcycle counts clock cycles (spec §3.1.11); minstret counts retired instructions.
+            if (!mcountinhibit_cy) mcycle_cnt <= mcycle_cnt + 64'd1;
+            if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;
 
             // ---- exception trap ----
             if (exception) begin
@@ -257,6 +266,10 @@ module jv32_csr (
                     CSR_MTVAL:      mtval_reg <= wd;
                     CSR_MTVT:       mtvt_reg <= {wd[31:6], 6'd0};
                     CSR_MINTTHRESH: mintthresh_reg <= wd[7:0];
+                    CSR_MCOUNTINHIBIT: begin
+                        mcountinhibit_cy <= wd[0];
+                        mcountinhibit_ir <= wd[2];
+                    end
                     // mnxti write side-effect: if a qualifying CLIC IRQ is pending,
                     // atomically claim it (update mcause + mintstatus, re-enable MIE)
                     // so the handler can branch directly to tail_chain_pc_o.

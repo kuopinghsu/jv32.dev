@@ -6,13 +6,12 @@
 // Provides:
 //   - jv_irq_register()  — register an interrupt handler for a given cause
 //   - jv_exc_register()  — register an exception handler for a given cause
-//   - jv_irq_dispatch()  — route mcause to the correct registered handler
-//   - handle_trap()      — WEAK bridge from startup.S trap entry to the
+//   - jv_irq_dispatch()  — route mcause (via frame) to the correct handler
+//   - trap_handler()     — WEAK bridge from startup.S trap entry to the
 //                          dispatch table (tests may override this directly)
 //
-// Startup.S contract:
-//   uint32_t handle_trap(uint32_t mcause, uint32_t mepc, uint32_t mtval);
-//   Returns 0 → use original mepc; non-zero → redirect mepc before mret.
+// startup.S contract:
+//   void trap_handler(jv_trap_frame_t *frame);
 // ============================================================================
 
 #include <stdint.h>
@@ -42,25 +41,27 @@ static void _default_irq(uint32_t cause)
     _puts("\n");
 }
 
-static uint32_t _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+static void _default_exc(jv_trap_frame_t *frame)
 {
+    uint32_t mcause = frame->mcause;
+    uint32_t mepc   = frame->mepc;
+    uint32_t mtval  = frame->mtval;
+
     /* If the fault occurred inside the debug ROM / program-buffer area
      * (0x0f8000xx), the CPU was executing a debugger-inserted instruction.
      * For ILLEGAL_INSTRUCTION (cause=2, e.g. unsupported CSR), skip past
      * the faulting instruction so execution reaches the implicit ebreak.
      * For data-access faults (LOAD_ACCESS_FAULT=5, STORE_ACCESS_FAULT=7),
-     * do NOT skip: returning mepc=0 retries the fault, causing a tight loop
-     * that the DTM detects as an exception (CMD_EXEC timeout → CMDERR_EXCEPTION). */
+     * do NOT skip: retrying the fault lets the DTM detect it via timeout. */
     if ((mepc >> 8) == (0x0F800000u >> 8)) {
-        uint32_t cause = mcause & 0x7FFFFFFFu;  /* strip interrupt bit */
+        uint32_t cause = mcause & 0x7FFFFFFFu;
         if (cause == 2u /* ILLEGAL_INSTRUCTION */) {
-            /* Advance past the faulting instruction: 4 bytes if 32-bit (bits[1:0]==11),
-             * 2 bytes for a compressed (16-bit) instruction. */
             uint32_t insn_len = ((mtval & 3u) == 3u) ? 4u : 2u;
-            return mepc + insn_len;
+            frame->mepc = mepc + insn_len;
+            return;
         }
-        /* Data-access fault — retry at mepc until DTM times out. */
-        return 0;
+        /* Data-access fault — leave mepc unchanged (retry). */
+        return;
     }
 
     _puts("\n=== EXCEPTION ===\n");
@@ -69,9 +70,7 @@ static uint32_t _default_exc(uint32_t mcause, uint32_t mepc, uint32_t mtval)
     _puts("mtval:  "); _puthex(mtval);  _puts("\n");
     _puts("Halted.\n");
     jv_exit(1);
-    /* jv_exit never returns; spin in case it does */
     while (1) {}
-    return 0;
 }
 
 /* ── dispatch tables ──────────────────────────────────────────────────────── */
@@ -98,41 +97,39 @@ void jv_exc_register(uint32_t cause, jv_exc_handler_t handler)
 
 /* ── dispatcher ───────────────────────────────────────────────────────────── */
 
-uint32_t jv_irq_dispatch(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+void jv_irq_dispatch(jv_trap_frame_t *frame)
 {
+    uint32_t mcause = frame->mcause;
     if (mcause & 0x80000000u) {
         /* Async interrupt */
         uint32_t code = mcause & 0x7FFFFFFFu;
-        if (code < _IRQ_MAX && _irq_table[code]) {
+        if (code < _IRQ_MAX && _irq_table[code])
             _irq_table[code](code);
-        } else {
+        else
             _default_irq(code);
-        }
-        return 0;   /* resume at mepc (interrupt return) */
     } else {
         /* Synchronous exception */
         uint32_t code = mcause & 0x7FFFFFFFu;
-        if (code < _EXC_MAX && _exc_table[code]) {
-            return _exc_table[code](mcause, mepc, mtval);
-        } else {
-            return _default_exc(mcause, mepc, mtval);
-        }
+        if (code < _EXC_MAX && _exc_table[code])
+            _exc_table[code](frame);
+        else
+            _default_exc(frame);
     }
 }
 
 /* ── bridge from startup.S ────────────────────────────────────────────────── */
 
 /**
- * Default weak handle_trap(): routes to the jv_irq dispatch tables.
- * Tests that define their own handle_trap() will override this via the linker
- * (the linker prefers strong symbols over weak ones).
+ * Default weak trap_handler(): routes to the jv_irq dispatch tables.
+ * Tests that define their own trap_handler() will override this via the linker.
  */
 __attribute__((weak))
-uint32_t handle_trap(uint32_t mcause, uint32_t mepc, uint32_t mtval)
+void trap_handler(jv_trap_frame_t *frame)
 {
-    return jv_irq_dispatch(mcause, mepc, mtval);
+    jv_irq_dispatch(frame);
 }
 
 #ifdef __cplusplus
 }
 #endif
+

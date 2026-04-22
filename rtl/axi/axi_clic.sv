@@ -28,10 +28,8 @@ module axi_clic #(
     input logic clk,
     input logic rst_n,
 
-    // Instruction retirement pulse: when 1, mtime increments by 1.
-    // Connect to trace_valid from the CPU core so that mtime advances at
-    // instruction-retire rate (matching the software simulator).
-    input logic instret_inc,
+    // mtime output: exposed so core can shadow it in the time/timeh CSR.
+    output logic [63:0] mtime_o,
 
     // AXI4-Lite slave
     input  logic [31:0] s_awaddr,
@@ -75,7 +73,8 @@ module axi_clic #(
     logic [NUM_IRQ-1:0] clicint_ie;
     logic [        7:0] clicint_ctl[NUM_IRQ];  // priority/level
 
-    assign timer_irq_o    = ((mtime + {63'd0, instret_inc}) >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
+    assign timer_irq_o    = (mtime >= mtimecmp) && (mtimecmp != 64'hFFFF_FFFF_FFFF_FFFF);
+    assign mtime_o        = mtime;
     assign software_irq_o = msip;
 
     // =====================================================================
@@ -134,8 +133,8 @@ module axi_clic #(
             end
         end
         else begin
-            // Auto-increment mtime on instruction retirement
-            if (instret_inc) mtime <= mtime + 64'd1;
+            // mtime counts every clock cycle (RISC-V spec: real-time clock)
+            mtime <= mtime + 64'd1;
             // Accept AW
             if (s_awvalid && s_awready) begin
                 aw_active <= 1'b1;

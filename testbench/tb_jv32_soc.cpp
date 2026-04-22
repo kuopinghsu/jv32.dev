@@ -80,6 +80,15 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint
         if (csr_name)
             fprintf(fp, "! csr_hint %s 0x%08x\n", csr_name, rddata);
     }
+    // Emit mtime hints for CLIC peripheral reads so jv32sim can sync its
+    // internal mtime with the RTL's actual clock-cycle-based counter.
+    // rddata = rd register value = the value loaded from the CLIC address.
+    if (mem_re && rd != 0) {
+        if (mem_addr == 0x02004000U)       // CLIC_MTIME_LO
+            fprintf(fp, "! csr_hint mtime_lo 0x%08x\n", rddata);
+        else if (mem_addr == 0x02004004U)  // CLIC_MTIME_HI
+            fprintf(fp, "! csr_hint mtime_hi 0x%08x\n", rddata);
+    }
 }
 
 #ifndef CLK_FREQ_HZ
@@ -298,11 +307,24 @@ int main(int argc, char** argv) {
                                dut->trace_mem_data);
             }
         }
-        // Emit IRQ-taken hint line (one cycle after interrupt is accepted)
+        // Emit IRQ-taken hint line (one cycle after interrupt is accepted).
+        // insn=<instret> gives the total retirement count at this cycle so the
+        // SW simulator can fire the interrupt at the exact same instruction.
         if (dut->trace_irq_taken && rtl_tfp) {
-            fprintf(rtl_tfp, "! irq cause=0x%08x epc=0x%08x cycle=%" PRIu64 "\n",
+            // When the interrupted instruction was a STORE whose memory write
+            // had already committed in the pipeline (irq fired in 2nd WB
+            // cycle), emit a squashed-store hint BEFORE the irq hint so the
+            // SW simulator can apply the early write before taking the trap.
+            if (dut->trace_irq_store_we) {
+                fprintf(rtl_tfp, "! sq_store insn=%" PRIu64 " addr=0x%08x data=0x%08x\n",
+                        instret,
+                        (uint32_t)dut->trace_irq_store_addr,
+                        (uint32_t)dut->trace_irq_store_data);
+            }
+            fprintf(rtl_tfp, "! irq cause=0x%08x epc=0x%08x insn=%" PRIu64 " cycle=%" PRIu64 "\n",
                     (uint32_t)dut->trace_irq_cause,
                     (uint32_t)dut->trace_irq_epc,
+                    instret,
                     cycle);
         }
     }

@@ -7,7 +7,9 @@
 // by jv32_rvc) into control signals for the 3-stage pipeline.
 // ============================================================================
 
-module jv32_decoder (
+module jv32_decoder #(
+    parameter bit AMO_EN = 1'b1  // 1=full A-extension; 0=AMO ops decode as illegal
+) (
     input logic [31:0] instr,
     input logic        valid,
 
@@ -249,6 +251,7 @@ module jv32_decoder (
                             instr[31:20] != CSR_MNXTI      &&
                             instr[31:20] != CSR_MINTSTATUS &&
                             instr[31:20] != CSR_MINTTHRESH &&
+                            instr[31:20] != CSR_MCOUNTINHIBIT &&
                             instr[31:20] != CSR_MCYCLE     &&
                             instr[31:20] != CSR_MCYCLEH    &&
                             instr[31:20] != CSR_MINSTRET   &&
@@ -268,16 +271,21 @@ module jv32_decoder (
                 end
 
                 OPCODE_AMO: begin
-                    is_amo   = 1'b1;
-                    reg_we   = 1'b1;
-                    mem_read = 1'b1;
-                    alu_src  = 1'b1;
-                    if (funct3 != 3'b010) illegal = 1'b1;
+                    if (!AMO_EN) begin
+                        illegal = 1'b1;
+                    end
+                    else begin
+                        is_amo   = 1'b1;
+                        reg_we   = 1'b1;
+                        mem_read = 1'b1;
+                        alu_src  = 1'b1;
+                        if (funct3 != 3'b010) illegal = 1'b1;
 `ifndef SYNTHESIS
-                    amo_op = amo_op_e'(funct5);
+                        amo_op = amo_op_e'(funct5);
 `else
-                    amo_op = funct5;
+                        amo_op = funct5;
 `endif
+                    end
                 end
 
                 OPCODE_MISC_MEM: begin

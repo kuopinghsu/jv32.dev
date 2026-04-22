@@ -164,8 +164,9 @@ module jv32_dtm #(
     logic       hartreset;  // Hart reset
     logic       ndmreset;   // Non-debug module reset
     logic       dmactive;   // Debug module active
-    logic [9:0] hartsello;  // Hart select (lower 10 bits, [25:16])
-    logic [9:0] hartselhi;  // Hart select (upper 10 bits, [5:4] in spec)
+    // Single-hart SoC: hartsello is kept to report anynonexistent when hart≥1 is selected.
+    // hartselhi (selects harts 1024+) is hardwired to 0 — saving 10 FFs.
+    logic [9:0] hartsello;  // Hart select lower bits [25:16] of dmcontrol
 
     // dmstatus register (0x11) - Read only, reflects current state
     wire        all_resumeack;
@@ -199,30 +200,19 @@ module jv32_dtm #(
     logic       cmderr_clr_tog_tck;
     logic [2:0] cmderr_clr_tog_sync;                 // CLK domain toggle sync chain
     logic       cmderr_clr_tog_r;                    // CLK edge detect
-    localparam [3:0] ABSTRACTCS_DATACOUNT   = 4'd1;  // 1 data register (RV32)
+    localparam [3:0] ABSTRACTCS_DATACOUNT   = 4'd2;  // data0+data1 (RV32 abstract mem uses both)
     localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2;  // 2 program buffer registers
 
     // abstractauto register (0x18) - auto re-execute on data/progbuf access
-    logic [          11:0]       autoexec_data;  // bit[i]=1: re-exec when data[i] accessed
-    logic [          15:0]       autoexec_pbuf;  // bit[i]=1: re-exec when progbuf[i] accessed
+    // Only data[1:0] and pbuf[1:0] can ever fire (DATACOUNT=2, PROGBUFSIZE=2).
+    logic [           1:0]       autoexec_data;  // bit[i]=1: re-exec when data[i] accessed
+    logic [           1:0]       autoexec_pbuf;  // bit[i]=1: re-exec when progbuf[i] accessed
 
     // Synthetic debug CSRs — owned exclusively by CLK domain (read via Capture-DR sync)
     // ntrst_i reset is NOT needed; rst_n resets these via the CLK always_ff block below.
     logic [          31:0]       dcsr_reg;       // CSR 0x7b0 – debug control/status; bits[8:6] reserved
     logic [          31:0]       dscratch0_reg;  // CSR 0x7b2 – debug scratch 0
     logic [          31:0]       dscratch1_reg;  // CSR 0x7b3 – debug scratch 1
-
-    // Machine-mode CSRs that OpenOCD may read/write during examination and debug
-    // These are CLK-domain registers synthesized by the DM (not wired to CPU CSR file).
-    // mstatus reset value matches the CPU's hardwired read value: MPP=11 ([12:11]=2'b11).
-    logic [          31:0]       mstatus_reg;   // CSR 0x300 – updated when debugger writes
-    logic [          31:0]       mie_reg;       // CSR 0x304 – updated when debugger writes
-    logic [          31:0]       mtvec_reg;     // CSR 0x305 – updated when debugger writes
-    logic [          31:0]       mscratch_reg;  // CSR 0x340 – updated when debugger writes
-    logic [          31:0]       mepc_reg;      // CSR 0x341 – updated when debugger writes
-    logic [          31:0]       mcause_reg;    // CSR 0x342 – updated when debugger writes
-    logic [          31:0]       mtval_reg;     // CSR 0x343 – updated when debugger writes
-    logic [          31:0]       mip_reg;       // CSR 0x344 – updated when debugger writes
 
     // Trigger CSR shadow registers (Debug Spec 0.13 §5.2 Trigger Module)
     // Owned by CLK domain; OpenOCD access via CMD_CSR_READ/WRITE.
@@ -371,20 +361,18 @@ module jv32_dtm #(
     // ========================================================================
     // Status signals derived from CPU state
     // ========================================================================
-    assign any_halted    = halted_tck;   // TCK domain: for dmstatus reads
-    assign all_halted    = halted_tck;
-    assign any_running   = !halted_tck;
-    assign all_running   = !halted_tck;
-    assign any_resumeack = resumeack_tck;
-    assign all_resumeack = resumeack_tck;
-    assign any_havereset = havereset_r;  // sticky, cleared by ackhavereset
-    assign all_havereset = havereset_r;
+    assign any_halted      = halted_tck;   // TCK domain: for dmstatus reads
+    assign all_halted      = halted_tck;
+    assign any_running     = !halted_tck;
+    assign all_running     = !halted_tck;
+    assign any_resumeack   = resumeack_tck;
+    assign all_resumeack   = resumeack_tck;
+    assign any_havereset   = havereset_r;  // sticky, cleared by ackhavereset
+    assign all_havereset   = havereset_r;
 
-    // nonexistent: any hartsel bits nonzero (jv32 has only hart 0)
-    wire hartsel_nonzero;
-    assign hartsel_nonzero = (hartsello != 10'b0) || (hartselhi != 10'b0);
-    assign any_noexist     = hartsel_nonzero;
-    assign all_noexist     = hartsel_nonzero;
+    // nonexistent: hart 0 exists; any nonzero hartsello selects a non-existent hart
+    assign any_noexist     = (hartsello != 10'b0);
+    assign all_noexist     = (hartsello != 10'b0);
 
     // ndmreset / hartreset output wires
     assign dbg_ndmreset_o  = ndmreset;
@@ -506,7 +494,7 @@ module jv32_dtm #(
         1'b0,       // [27] Reserved
         1'b0,       // [26] hasel (single-hart; hartsel selects one hart)
         hartsello,  // [25:16] hartsello (10 bits)
-        hartselhi,  // [15:6]  hartselhi (10 bits)
+        10'b0,      // [15:6]  hartselhi (hardwired 0: single hart)
         4'b0,       // [5:2] Reserved
         ndmreset,   // [1] ndmreset
         dmactive    // [0] dmactive
@@ -651,7 +639,6 @@ module jv32_dtm #(
             ndmreset           <= 1'b0;
             dmactive           <= 1'b0;
             hartsello          <= 10'b0;
-            hartselhi          <= 10'b0;
             data0              <= 32'b0;
             data1              <= 32'b0;
             // Default to EBREAK so a progbuf execute with untouched entries
@@ -663,8 +650,8 @@ module jv32_dtm #(
             cmderr_clr_tck     <= 3'b0;
             cmderr_clr_tog_tck <= 1'b0;
             // abstractauto
-            autoexec_data      <= 12'b0;
-            autoexec_pbuf      <= 16'b0;
+            autoexec_data      <= 2'b0;
+            autoexec_pbuf      <= 2'b0;
             // Synthetic debug CSRs: owned by CLK domain, reset there; not here.
             // SBA
             sb_readonaddr      <= 1'b0;
@@ -710,7 +697,8 @@ module jv32_dtm #(
                         DMI_COMMAND: dmi_shift <= {dmi_address, command_reg, 2'b00};
                         DMI_PROGBUF0: dmi_shift <= {dmi_address, progbuf0, 2'b00};
                         DMI_PROGBUF1: dmi_shift <= {dmi_address, progbuf1, 2'b00};
-                        DMI_ABSTRACTAUTO: dmi_shift <= {dmi_address, {autoexec_pbuf, 4'b0, autoexec_data}, 2'b00};
+                        DMI_ABSTRACTAUTO:
+                        dmi_shift <= {dmi_address, {14'b0, autoexec_pbuf, 14'b0, autoexec_data}, 2'b00};
                         DMI_HALTSUM0: dmi_shift <= {dmi_address, haltsum0_rdata, 2'b00};
                         DMI_SBCS: begin
                             dmi_shift <= {
@@ -840,7 +828,7 @@ module jv32_dtm #(
                         resumereq <= dmi_shift[32];     // bit[30]
                         hartreset <= dmi_shift[31];     // bit[29]
                         hartsello <= dmi_shift[27:18];  // bits[25:16]
-                        hartselhi <= dmi_shift[17:8];   // bits[15:6]
+                        // hartselhi writes are ignored (hardwired 0)
                         // Set havereset sticky when hartreset or ndmreset goes high
                         if (dmi_shift[31] || dmi_shift[3]) havereset_r <= 1'b1;
                         // bit[28] ackhavereset W1C — must be last so it wins over the set above
@@ -882,10 +870,10 @@ module jv32_dtm #(
                         end
                     end
                     DMI_ABSTRACTAUTO: begin
-                        autoexec_data <= dmi_shift[13:2];   // bits[11:0]
-                        autoexec_pbuf <= dmi_shift[33:18];  // bits[31:16]
+                        autoexec_data <= dmi_shift[3:2];    // data[1:0]  (data0/data1 only)
+                        autoexec_pbuf <= dmi_shift[19:18];  // data[17:16] (pbuf0/pbuf1 only)
                         `DEBUG2(`DBG_GRP_DTM,
-                                ("Write ABSTRACTAUTO execdata=%h execprogbuf=%h", dmi_shift[13:2], dmi_shift[33:18]));
+                                ("Write ABSTRACTAUTO execdata=%h execprogbuf=%h", dmi_shift[3:2], dmi_shift[19:18]));
                     end
                     DMI_SBCS: begin
                         // [24] W1C sbbusyerror (handled by always_comb); [22] readonaddr
@@ -1075,16 +1063,6 @@ module jv32_dtm #(
             dscratch1_reg           <= 32'b0;
             dpc_reg                 <= 32'h8000_0000;  // Boot address (matches jv32 BOOT_ADDR)
 
-            // Machine-mode CSR mocks: reasonable defaults for a halted M-mode hart
-            mstatus_reg             <= 32'h00001800;  // MPP=11(M-mode), MIE=0, MPIE=0
-            mie_reg                 <= 32'b0;
-            mtvec_reg               <= 32'b0;
-            mscratch_reg            <= 32'b0;
-            mepc_reg                <= 32'b0;
-            mcause_reg              <= 32'b0;
-            mtval_reg               <= 32'b0;
-            mip_reg                 <= 32'b0;
-
             // Trigger register reset: type=2 (mcontrol), all mode/action bits=0 (disabled)
             tselect_reg             <= 32'b0;
             tdata1_reg[0]           <= 32'h2000_0000;  // type=2, disabled
@@ -1267,14 +1245,6 @@ module jv32_dtm #(
                                     cmd_regno == 16'h0C22 ||      // vlenb (no vector extension -> 0)
                                     cmd_regno == 16'h0FB0 ||      // mtopi (optional interrupt-top CSR, absent -> 0)
                                     cmd_regno == 16'h0F14 ||      // mhartid (read-only)
-                                    cmd_regno == 16'h0300 ||      // mstatus
-                                    cmd_regno == 16'h0304 ||      // mie
-                                    cmd_regno == 16'h0305 ||      // mtvec
-                                    cmd_regno == 16'h0340 ||      // mscratch
-                                    cmd_regno == 16'h0341 ||      // mepc
-                                    cmd_regno == 16'h0342 ||      // mcause
-                                    cmd_regno == 16'h0343 ||      // mtval
-                                    cmd_regno == 16'h0344 ||      // mip
                                     cmd_regno == 16'h0F11 ||      // mvendorid (read-only)
                                     cmd_regno == 16'h0F12 ||      // marchid (read-only)
                                     cmd_regno == 16'h0F13) begin  // mimpid (read-only)
@@ -1286,6 +1256,22 @@ module jv32_dtm #(
                                         cmd_state <= CMD_CSR_READ;
                                         `DEBUG2(`DBG_GRP_DTM, ("Execute: Read CSR 0x%h", cmd_regno));
                                     end
+                                end
+                                else if (cmd_regno == 16'h0300 ||  // mstatus
+                                    cmd_regno == 16'h0304 ||      // mie
+                                    cmd_regno == 16'h0305 ||      // mtvec
+                                    cmd_regno == 16'h0340 ||      // mscratch
+                                    cmd_regno == 16'h0341 ||      // mepc
+                                    cmd_regno == 16'h0342 ||      // mcause
+                                    cmd_regno == 16'h0343 ||      // mtval
+                                    cmd_regno == 16'h0344) begin  // mip
+                                    // M-mode CSRs are not owned by the DM.
+                                    // CMDERR_NOTSUP causes OpenOCD to fall back to progbuf
+                                    // execution (CSRRW on the real CPU), which reads/writes
+                                    // the live CPU CSR state correctly.
+                                    cmderr_sys <= CMDERR_NOTSUP;
+                                    `DEBUG2(`DBG_GRP_DTM,
+                                            ("M-mode CSR 0x%h: NOTSUP → OpenOCD will use progbuf", cmd_regno));
                                 end
                                 else begin
                                     // Unknown register: return 0 for reads, silently accept writes.
@@ -1456,38 +1442,6 @@ module jv32_dtm #(
                             data0_result <= 32'h0;
                             `DEBUG2(`DBG_GRP_DTM, ("Read mhartid = 0"));
                         end
-                        16'h0300: begin  // mstatus: MPP=11(M-mode), MIE=0
-                            data0_result <= mstatus_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mstatus = 0x%h", mstatus_reg));
-                        end
-                        16'h0304: begin  // mie
-                            data0_result <= mie_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mie = 0x%h", mie_reg));
-                        end
-                        16'h0305: begin  // mtvec
-                            data0_result <= mtvec_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mtvec = 0x%h", mtvec_reg));
-                        end
-                        16'h0340: begin  // mscratch
-                            data0_result <= mscratch_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mscratch = 0x%h", mscratch_reg));
-                        end
-                        16'h0341: begin  // mepc
-                            data0_result <= mepc_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mepc = 0x%h", mepc_reg));
-                        end
-                        16'h0342: begin  // mcause
-                            data0_result <= mcause_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mcause = 0x%h", mcause_reg));
-                        end
-                        16'h0343: begin  // mtval
-                            data0_result <= mtval_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mtval = 0x%h", mtval_reg));
-                        end
-                        16'h0344: begin  // mip
-                            data0_result <= mip_reg;
-                            `DEBUG2(`DBG_GRP_DTM, ("Read mip = 0x%h", mip_reg));
-                        end
                         16'h0F11: begin  // mvendorid
                             data0_result <= 32'h0;
                             `DEBUG2(`DBG_GRP_DTM, ("Read mvendorid = 0"));
@@ -1556,16 +1510,15 @@ module jv32_dtm #(
                             dscratch1_reg <= data0_sys;
                             `DEBUG2(`DBG_GRP_DTM, ("Write DSCRATCH1 = 0x%h", data0_sys));
                         end
-                        // Machine-mode CSRs that debugger may update
-                        16'h0300: begin  // mstatus: store for readback
-                            mstatus_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mstatus = 0x%h", data0_sys));
-                        end
-                        16'h0341: begin  // mepc: store for readback
-                            mepc_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mepc = 0x%h", data0_sys));
-                        end
-                        // Read-only CSRs: accept write silently (no error)
+                        // Accept writes silently (no error) for CSRs not owned by DM
+                        16'h0300,        // mstatus
+                        16'h0304,        // mie
+                        16'h0305,        // mtvec
+                        16'h0340,        // mscratch
+                        16'h0341,        // mepc
+                        16'h0342,        // mcause
+                        16'h0343,        // mtval
+                        16'h0344,        // mip
                         16'h0301,        // misa
                         16'h0C22,        // vlenb
                         16'h0FB0,        // mtopi
@@ -1573,32 +1526,7 @@ module jv32_dtm #(
                         16'h0F11,        // mvendorid
                         16'h0F12,        // marchid
                         16'h0F13: begin  // mimpid
-                            `DEBUG2(`DBG_GRP_DTM, ("Write to read-only CSR 0x%h, ignored", cmd_regno));
-                        end
-                        // Writable CSRs stored for readback
-                        16'h0304: begin  // mie
-                            mie_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mie = 0x%h", data0_sys));
-                        end
-                        16'h0305: begin  // mtvec
-                            mtvec_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mtvec = 0x%h", data0_sys));
-                        end
-                        16'h0340: begin  // mscratch: fully writable, no side-effects
-                            mscratch_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mscratch = 0x%h", data0_sys));
-                        end
-                        16'h0342: begin  // mcause
-                            mcause_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mcause = 0x%h", data0_sys));
-                        end
-                        16'h0343: begin  // mtval
-                            mtval_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mtval = 0x%h", data0_sys));
-                        end
-                        16'h0344: begin  // mip
-                            mip_reg <= data0_sys;
-                            `DEBUG2(`DBG_GRP_DTM, ("Write mip = 0x%h", data0_sys));
+                            `DEBUG2(`DBG_GRP_DTM, ("Write to non-DM CSR 0x%h, ignored", cmd_regno));
                         end
                         16'h07A0: begin  // tselect: only accept values 0..N_TRIGGERS-1
                             if (data0_sys < 32'(N_TRIGGERS)) tselect_reg <= data0_sys;

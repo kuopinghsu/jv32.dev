@@ -358,47 +358,43 @@ synth-resume: synth
 #   make gate-count
 #
 GATE_COUNT_RUN_DIR := $(BUILD_DIR)/gate_count_run
+GATE_COUNT_STAT    := $(GATE_COUNT_RUN_DIR)/stat.json
 GATE_COUNT_RPT     := $(BUILD_DIR)/gate_count.rpt
+
+# RTL_DIR: absolute path to the project rtl/ directory (one level above syn/).
+RTL_DIR := $(abspath $(SYN_DIR)/../rtl)
 
 gate-count: check $(BUILD_DIR)
 	@echo "========================================"
 	@echo " Gate Count Analysis (NAND2 equivalents)"
 	@echo "  Design : $(DESIGN)"
-	@echo "  Config : config.yaml + config_gate_count.yaml"
+	@echo "  Method : standalone Yosys (no flatten)"
 	@echo "  Output : $(GATE_COUNT_RPT)"
 	@echo "========================================"
-	@if [ ! -f "$(SRAM_LEF)" ]; then \
-	    echo "ERROR: SRAM macro LEF not found: $(SRAM_LEF)"; \
-	    echo "       Run 'make gen-mem' before 'make gate-count'."; \
-	    exit 1; \
-	fi
 	@if [ -z "$(NANGATE_HOME)" ]; then \
 	    echo "ERROR: NANGATE_HOME is not set. Set it in env.config."; \
 	    exit 1; \
 	fi
-	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
-	@cp $(OPENLANE_DIR)/jv32_soc_pnr.sdc  $(BUILD_DIR)/jv32_soc_pnr.sdc
-	@cp $(OPENLANE_DIR)/macro_placement.cfg $(BUILD_DIR)/macro_placement.cfg
 	@rm -rf $(GATE_COUNT_RUN_DIR)
 	@mkdir -p $(GATE_COUNT_RUN_DIR)
 	@( \
-	    export PYTHONPATH="$(OPENLANE):$$PYTHONPATH"; \
-	    export NANGATE_HOME="$(NANGATE_HOME)"; \
-	    cd $(OPENLANE_DIR) && \
-	    $(OPENLANE_CMD) \
-	        --pdk-root $(PDK_ROOT) \
-	        --pdk $(PDK) \
-	        --manual-pdk \
-	        --force-run-dir $(GATE_COUNT_RUN_DIR) \
-	        -T Yosys.Synthesis \
-	        config.yaml \
-	        $(TCM_PARAMS_YAML) \
-	        config_gate_count.yaml; \
+	    export NANGATE_LIB="$(NANGATE_LIB)"; \
+	    export STAT_JSON="$(GATE_COUNT_STAT)"; \
+	    export RTL_DIR="$(RTL_DIR)"; \
+	    export LIB_DIR="$(SYN_DIR)/lib"; \
+	    export IRAM_SIZE="$(IRAM_SIZE)"; \
+	    export DRAM_SIZE="$(DRAM_SIZE)"; \
+	    export FAST_MUL="$(FAST_MUL)"; \
+	    export MUL_MC="$(MUL_MC)"; \
+	    export FAST_DIV="$(FAST_DIV)"; \
+	    export FAST_SHIFT="$(FAST_SHIFT)"; \
+	    export BP_EN="$(BP_EN)"; \
+	    $(NIX_SHELL) $(OPENLANE)/shell.nix \
+	        --run "bash $(SYN_DIR)/scripts/hier_synth.sh"; \
 	)
 	@echo " Generating gate count report..."
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_gate_count.py \
-	    $$(find $(GATE_COUNT_RUN_DIR) -name "stat.json" | sort | tail -1) \
+	    $(GATE_COUNT_STAT) \
 	    $(NANGATE_LIB) \
 	    --output $(GATE_COUNT_RPT)
 	@echo ""

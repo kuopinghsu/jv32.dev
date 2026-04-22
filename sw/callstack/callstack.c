@@ -66,9 +66,9 @@ static void _putdec(int v)
 
 /* Stack grows down from __stack_top toward __stack_bottom.
  * We define a guard: frame pointers must lie within RAM. */
-extern char __stack_top[];
-#define BT_FP_MIN  ((uintptr_t)JV_RAM_BASE)
-#define BT_FP_MAX  ((uintptr_t)(uintptr_t)__stack_top)
+extern char _stack_top[];
+#define BT_FP_MIN  ((uintptr_t)JV_DRAM_BASE)
+#define BT_FP_MAX  ((uintptr_t)(uintptr_t)_stack_top)
 #define BT_MAX_FRAMES 16
 
 /* ── flag so main() knows the trap fired ─────────────────────────────── */

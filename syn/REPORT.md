@@ -3,7 +3,7 @@
 **Design:** `jv32_soc`
 **PDK:** FreePDK45 / Nangate 45nm Open Cell Library
 **Flow:** OpenLane2 (Classic)
-**Date:** 2026-04-21
+**Date:** 2026-04-22
 
 ---
 
@@ -15,9 +15,9 @@
 | IRAM | 16 KB |
 | DRAM | 16 KB |
 | `FAST_MUL` | 1 |
-| `FAST_DIV` | 1 |
+| `FAST_DIV` | 0 |
 | `FAST_SHIFT` | 1 |
-| `BP_EN` | 0 |
+| `BP_EN` | 1 |
 
 ---
 
@@ -27,10 +27,10 @@
 |---|---|
 | Die area | 4500000 µm² = 4.500 mm² |
 | Core area | 4406880 µm² = 4.407 mm² |
-| Standard cell area | 65994 µm² |
+| Standard cell area | 65856 µm² |
 | Macro area | 2183510 µm² |
 | Total instance utilization | 51.0% |
-| Std cell utilization | 2.97% |
+| Std cell utilization | 2.96% |
 
 ---
 
@@ -38,15 +38,16 @@
 
 | Category | Count |
 |---|---|
-| Total instances | 45188 |
-| Standard cells (excl. tap) | 45184 |
-| Sequential (flip-flops) | 5372 |
-| Multi-input combinational | 27800 |
-| Buffers | N/A |
-| Inverters | 2108 |
+| Total instances | 44313 |
+| Standard cells (excl. tap) | 44309 |
+| Sequential (flip-flops) | 5438 |
+| Multi-input combinational | 26625 |
+| Buffers | 96 |
+| Inverters | 2246 |
 | Macros | 4 |
 | Tap cells | 9904 |
-| I/O ports | 638 |
+| I/O ports | 768 |
+| **NAND2 equivalents (post-P&R)** | **82,526** |
 
 ---
 
@@ -61,8 +62,8 @@
 
 | Clock | Setup skew (ns) |
 |---|---|
-| `core_clk` | 0.636869 |
-| `jtag_tck` | 1.014340 |
+| `core_clk` | 0.613819 |
+| `jtag_tck` | 1.013976 |
 
 ---
 
@@ -72,12 +73,12 @@
 
 | Group | Internal (W) | Switching (W) | Leakage (W) | Total (W) | % |
 |---|---|---|---|---|---|
-| Sequential | 3.24 mW | 0.52 mW | 0.45 mW | 4.21 mW | 21.3% |
-| Combinational | 1.52 mW | 2.26 mW | 1.27 mW | 5.04 mW | 25.6% |
-| Clock | 0.31 mW | 0.92 mW | 0.02 mW | 1.25 mW | 6.3% |
-| Macro | 8.63 mW | 0.00 mW | 0.59 mW | 9.22 mW | 46.8% |
+| Sequential | 3.37 mW | 0.59 mW | 0.45 mW | 4.42 mW | 22.2% |
+| Combinational | 1.54 mW | 2.21 mW | 1.28 mW | 5.02 mW | 25.2% |
+| Clock | 0.30 mW | 0.93 mW | 0.02 mW | 1.25 mW | 6.3% |
+| Macro | 8.63 mW | 0.00 mW | 0.59 mW | 9.22 mW | 46.3% |
 | Pad | 0.00 mW | 0.00 mW | 0.00 mW | 0.00 mW | 0.0% |
-| Total | 13.69 mW | 3.70 mW | 2.32 mW | 19.72 mW | 100.0% |
+| Total | 13.85 mW | 3.73 mW | 2.34 mW | 19.91 mW | 100.0% |
 
 ---
 
@@ -85,9 +86,9 @@
 
 | Metric | Value |
 |---|---|
-| Total nets | 38,714 |
-| Total wirelength | **1151.71 mm** |
-| Longest net (`net135`) | 2.127 mm |
+| Total nets | 38,087 |
+| Total wirelength | **1177.69 mm** |
+| Longest net (`net135`) | 1.740 mm |
 
 ---
 

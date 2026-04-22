@@ -162,7 +162,8 @@ RTL_SOURCES = \
     $(wildcard $(CORE_DIR)/jtag/*.sv) \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
-    $(wildcard $(MEM_DIR)/*.sv)
+    $(wildcard $(MEM_DIR)/*.sv) \
+    $(RTL_DIR)/jv32_soc.sv
 
 TB_SV_SOURCES = \
     $(wildcard $(TB_DIR)/*.sv)
@@ -197,7 +198,7 @@ RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FA
 # ============================================================================
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
-	lint-verible lint-svlint format-verible sim-build compare-% compare-all arch-test-% FORCE \
+	lint-verible lint-svlint format-rtl sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
@@ -332,7 +333,8 @@ lint-full:
 	    -I$(AXI_DIR) \
 	    -I$(MEM_DIR) \
 	    -I$(RTL_DIR) \
-	    $(RTL_SOURCES)
+	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES)
 	@echo ""
 	@echo "=========================================="
 	@echo "Lint passed!"
@@ -433,7 +435,7 @@ lint-svlint:
 	else \
 	    echo "svlint: $(SVLINT)"; \
 	    echo "config: .svlint.toml"; \
-	    $(SVLINT) -I rtl/jv32/core $(RTL_ONLY_SRCS) && \
+	    $(SVLINT) -I rtl/jv32/core -I rtl/jv32 $(RTL_ONLY_SRCS) && \
 	    echo "" && \
 	    echo "==========================================" && \
 	    echo "svlint passed!" && \
@@ -753,14 +755,16 @@ compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
 	@echo " JV32 FreeRTOS Trace Comparison: $*"
 	@echo "=========================================="
 	@echo ""
-	@echo "[1/3] Running software simulator..."
-	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt $(BUILD_DIR)/freertos-$*.elf \
-	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
-	@echo ""
-	@echo "[2/3] Running RTL simulator..."
+	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
 	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --rtl-hints $(BUILD_DIR)/rtl_trace.txt \
+	    $(BUILD_DIR)/freertos-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces..."
 	@python3 scripts/trace_compare.py \
@@ -836,10 +840,10 @@ cleanup-all:
 # ============================================================================
 # SystemVerilog formatting with Verible
 # Usage:
-#   make format-verible
-#   make format-verible FILES="rtl/jv32/core/jv32_rvc.sv rtl/axi/axi_clic.sv"
+#   make format-rtl
+#   make format-rtl FILES="rtl/jv32/core/jv32_rvc.sv rtl/axi/axi_clic.sv"
 # ============================================================================
-format-verible:
+format-rtl:
 	@echo "=========================================="
 	@echo "Verible SystemVerilog format"
 	@echo "=========================================="
@@ -902,7 +906,7 @@ help:
 	@echo "  sw-all               Build all software tests"
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"
-	@echo "  format-verible       Format SystemVerilog files with Verible (all RTL or FILES=...)"
+	@echo "  format-rtl           Format SystemVerilog files with Verible (all RTL or FILES=...)"
 	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-verible + lint-svlint)"
 	@echo "  lint-full            Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules         Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"

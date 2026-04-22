@@ -15,9 +15,12 @@
 //   2  verbose — unmapped memory accesses, segment warnings, CSR details
 // ============================================================================
 
+#include <cinttypes>
+#include <deque>
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+static uint32_t expand_rvc(uint16_t ci);
 #include <csignal>
 #include <iostream>
 #include <iomanip>
@@ -168,9 +171,11 @@ static uint64_t max_insns        = 0;  // 0 = unlimited
 static uint64_t timeout_seconds  = 0;  // 0 = no timeout
 
 // ============================================================================
-// RTL hint file: list of cycle-counter CSR values from the RTL simulation.
+// RTL hint file: cycle-counter CSR values and IRQ-taken events from the RTL.
 // When --rtl-hints <file> is provided the software sim uses the RTL's exact
 // values when executing cycle-counter CSR reads, eliminating off-by-one drift.
+// IRQ hints are used to fire timer interrupts at the exact same instruction as
+// the RTL, regardless of mtime tick-rate differences (cycles vs. instructions).
 // ============================================================================
 struct CsrHint {
     uint32_t csr_addr;   // 0xB00=mcycle, 0xB80=mcycleh, etc.
@@ -179,6 +184,35 @@ struct CsrHint {
 
 static std::vector<CsrHint> g_csr_hints;
 static size_t                g_hint_idx = 0;
+
+// IRQ hints: taken from RTL trace '! irq cause=0x<c> epc=0x<e> insn=<N> ...' lines.
+// After each step(), if insn_count has reached the hint's retirement count, the
+// corresponding interrupt is forced via g_timer_irq_pending so check_interrupts()
+// fires the timer on the very next step().  Natural timer firing is suppressed
+// when hints are loaded so only hint-driven ticks occur.
+struct IrqHint {
+    uint32_t cause;
+    uint32_t epc;
+    uint64_t insn_count;  // total retirements in RTL at time of hint
+};
+static std::deque<IrqHint> g_irq_hints;
+static bool g_hints_loaded      = false;  // true once --rtl-hints file is loaded
+static bool g_timer_irq_pending = false;  // set by hint; cleared when timer taken
+static uint32_t g_timer_irq_epc = 0;      // mepc to use when hint fires the timer
+static bool g_msi_irq_pending   = false;  // set by hint; cleared when MSI taken
+static uint32_t g_msi_irq_epc   = 0;      // mepc to use when hint fires the MSI
+
+// Squashed-store hints: when the JV32 pipeline commits a store's DRAM write
+// in the 1st WB cycle but the instruction is then squashed by an interrupt in
+// the 2nd WB cycle, the RTL emits a '! sq_store' hint before the irq hint so
+// the SW sim can apply the early write (making the store effectively idempotent
+// when it re-executes after mret).
+struct SqStoreHint {
+    uint64_t insn_count;
+    uint32_t addr;
+    uint32_t data;
+};
+static std::deque<SqStoreHint> g_sq_store_hints;
 
 // Map CSR name string → address
 static uint32_t hint_csr_addr(const char* name) {
@@ -192,6 +226,8 @@ static uint32_t hint_csr_addr(const char* name) {
     if (!strcmp(name, "timeh"))     return 0xC81;
     if (!strcmp(name, "instret"))   return 0xC02;
     if (!strcmp(name, "instreth"))  return 0xC82;
+    if (!strcmp(name, "mtime_lo"))  return 0x1000;  // pseudo-addr for CLIC mtime lo
+    if (!strcmp(name, "mtime_hi"))  return 0x1001;  // pseudo-addr for CLIC mtime hi
     return 0xFFFFFFFFu;
 }
 
@@ -201,6 +237,7 @@ static bool load_rtl_hints(const char* path) {
         fprintf(stderr, "[SIM] Cannot open rtl-hints file: %s\n", path);
         return false;
     }
+    setvbuf(f, nullptr, _IOFBF, 4 * 1024 * 1024);  // 4 MB read buffer
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         // Match lines of the form: ! csr_hint <name> 0x<value>
@@ -212,6 +249,20 @@ static bool load_rtl_hints(const char* path) {
             if (addr == 0xFFFFFFFFu) continue;
             uint32_t val = (uint32_t)strtoul(val_str, nullptr, 16);
             g_csr_hints.push_back({addr, val});
+        }
+        // Match lines of the form: ! sq_store insn=<N> addr=0x<a> data=0x<d>
+        uint32_t sq_addr = 0, sq_data = 0;
+        uint64_t sq_insn = 0;
+        if (sscanf(line, "! sq_store insn=%" SCNu64 " addr=0x%x data=0x%x",
+                   &sq_insn, &sq_addr, &sq_data) == 3) {
+            g_sq_store_hints.push_back({sq_insn, sq_addr, sq_data});
+        }
+        // Match lines of the form: ! irq cause=0x<c> epc=0x<e> insn=<N> cycle=<cyc>
+        uint32_t irq_cause = 0, irq_epc = 0;
+        uint64_t irq_insn = 0, irq_cyc = 0;
+        if (sscanf(line, "! irq cause=0x%x epc=0x%x insn=%" SCNu64 " cycle=%" SCNu64,
+                   &irq_cause, &irq_epc, &irq_insn, &irq_cyc) >= 3) {
+            g_irq_hints.push_back({irq_cause, irq_epc, irq_insn});
         }
     }
     fclose(f);
@@ -278,26 +329,26 @@ static void emit_trace(uint32_t instr_pc, uint32_t raw_instr,
     if (!trace_on) return;
     if (rd == 0 && !has_mem) return;  // nothing to log
 
-    std::ostringstream oss;
-    oss << std::dec << insn_count << " "
-        << "0x" << std::hex << std::setfill('0') << std::setw(8) << instr_pc << " "
-        << "(0x" << std::setw(8) << raw_instr << ")";
-
-    if (rd > 0) {
-        oss << " " << REG_ABI[rd]
-            << " 0x" << std::setfill('0') << std::setw(8) << result;
-    }
+    char base[128];
+    int pos = 0;
+    pos += snprintf(base + pos, sizeof(base) - pos,
+                    "%" PRIu64 " 0x%08x (0x%08x)",
+                    insn_count, instr_pc, raw_instr);
+    if (rd > 0)
+        pos += snprintf(base + pos, sizeof(base) - pos,
+                        " %s 0x%08x", REG_ABI[rd], result);
     if (has_mem) {
-        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr;
+        pos += snprintf(base + pos, sizeof(base) - pos,
+                        " mem 0x%08x", mem_addr);
         if (is_store)
-            oss << " 0x" << std::setw(8) << mem_val;
+            pos += snprintf(base + pos, sizeof(base) - pos,
+                            " 0x%08x", mem_val);
     }
 
-    std::string base = oss.str();
     std::string disasm = disassembler.disassemble(raw_instr, instr_pc);
-    int pad = 72 - (int)base.size();
+    int pad = 72 - pos;
     if (pad < 2) pad = 2;
-    fprintf(trace_fp, "%s%*s; %s\n", base.c_str(), pad, "", disasm.c_str());
+    fprintf(trace_fp, "%s%*s; %s\n", base, pad, "", disasm.c_str());
 }
 
 // ============================================================================
@@ -341,6 +392,9 @@ static inline bool dram_offset_for_addr(uint32_t addr, int size, uint32_t *off) 
     return false;
 }
 
+// Forward declaration (defined after the hint infrastructure)
+static uint32_t consume_hint(uint32_t csr_addr, uint32_t fallback_val);
+
 static uint32_t mem_read(uint32_t addr, int size) {
     uint32_t off = 0;
 
@@ -372,8 +426,16 @@ static uint32_t mem_read(uint32_t addr, int size) {
     if (addr >= CLIC_BASE && addr < CLIC_BASE + 0x200000U) {
         uint32_t off = addr - CLIC_BASE;
         if (off == CLIC_MSIP_OFF)        return msip & 1u;
-        if (off == CLIC_MTIME_LO_OFF)    return (uint32_t)(mtime & 0xFFFFFFFFu);
-        if (off == CLIC_MTIME_HI_OFF)    return (uint32_t)(mtime >> 32);
+        if (off == CLIC_MTIME_LO_OFF) {
+            uint32_t lo = consume_hint(0x1000, (uint32_t)(mtime & 0xFFFFFFFFu));
+            mtime = (mtime & 0xFFFFFFFF00000000ULL) | lo;
+            return lo;
+        }
+        if (off == CLIC_MTIME_HI_OFF) {
+            uint32_t hi = consume_hint(0x1001, (uint32_t)(mtime >> 32));
+            mtime = (mtime & 0x00000000FFFFFFFFULL) | ((uint64_t)hi << 32);
+            return hi;
+        }
         if (off == CLIC_MTIMECMP_LO_OFF) return (uint32_t)(mtimecmp & 0xFFFFFFFFu);
         if (off == CLIC_MTIMECMP_HI_OFF) return (uint32_t)(mtimecmp >> 32);
         return 0;
@@ -494,9 +556,9 @@ static uint32_t read_csr(uint32_t csr) {
     case CSR_MINSTRET:  return consume_hint(0xB02, (uint32_t)(csr_minstret & 0xFFFFFFFFu));
     case CSR_MINSTRETH: return consume_hint(0xB82, (uint32_t)(csr_minstret >> 32));
     case CSR_CYCLE:     return consume_hint(0xC00, (uint32_t)(csr_mcycle & 0xFFFFFFFFu));
-    case CSR_TIME:      return consume_hint(0xC01, (uint32_t)(csr_mcycle & 0xFFFFFFFFu));
+    case CSR_TIME:      return consume_hint(0xC01, (uint32_t)(mtime & 0xFFFFFFFFu));
     case CSR_CYCLEH:    return consume_hint(0xC80, (uint32_t)(csr_mcycle >> 32));
-    case CSR_TIMEH:     return consume_hint(0xC81, (uint32_t)(csr_mcycle >> 32));
+    case CSR_TIMEH:     return consume_hint(0xC81, (uint32_t)(mtime >> 32));
     case CSR_INSTRET:   return consume_hint(0xC02, (uint32_t)(csr_minstret & 0xFFFFFFFFu));
     case CSR_INSTRETH:  return consume_hint(0xC82, (uint32_t)(csr_minstret >> 32));
     case CSR_MVENDORID: return 0x0u;
@@ -560,19 +622,149 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
 }
 
 static bool check_interrupts() {
-    if (!(csr_mstatus & MSTATUS_MIE)) return false;
+    // When RTL hints are loaded: allow firing the timer even when mstatus.MIE=0
+    // if we are exactly at the instruction that the RTL squashed via irq_cancel.
+    // This handles the case where irq_cancel squashes a MIE-enabling instruction
+    // (e.g. "csrsi mstatus,8") in the WB stage simultaneously with taking the
+    // interrupt.
+    //
+    // jv32 microarchitecture note: when the squashed instruction is a CSR write
+    // to mstatus that would SET MIE=1 (e.g. csrsi mstatus,8), jv32 lets the
+    // CSR write commit in the same clock cycle as irq_cancel fires, so the
+    // interrupt is taken with MIE=1 (MPIE←1).  We replicate this by applying
+    // the CSR write side-effect before computing MPIE in take_trap.
+    bool timer_at_squash_pc = g_hints_loaded && g_timer_irq_pending
+                              && g_timer_irq_epc && (pc == g_timer_irq_epc);
+    bool msi_at_squash_pc   = g_hints_loaded && g_msi_irq_pending
+                              && g_msi_irq_epc   && (pc == g_msi_irq_epc);
+    bool at_squash_pc = timer_at_squash_pc || msi_at_squash_pc;
 
-    bool timer_irq = (mtime >= mtimecmp &&
+    // If at_squash_pc and the squashed instruction is a CSR write to mstatus
+    // that enables interrupts, apply the write first (before take_trap).
+    if (at_squash_pc) {
+        uint16_t sq_half0 = (uint16_t)mem_read(pc & ~1u, 2);
+        uint32_t sq_instr;
+        if ((sq_half0 & 3u) != 3u) {
+            sq_instr = expand_rvc(sq_half0);
+        } else {
+            uint16_t sq_half1 = (uint16_t)mem_read((pc & ~1u) + 2u, 2);
+            sq_instr = ((uint32_t)sq_half1 << 16) | sq_half0;
+        }
+        uint32_t sq_opcode = sq_instr & 0x7Fu;
+        if (sq_opcode == 0x73u) {  // SYSTEM (CSR)
+            uint32_t sq_funct3 = (sq_instr >> 12) & 7u;
+            uint32_t sq_csr    = sq_instr >> 20;
+            if (sq_csr == 0x300u && sq_funct3 != 0u) {
+                // CSR read-modify-write on mstatus: compute new value and apply
+                uint32_t old_val  = (csr_mstatus & 0x1888u) | 0x1800u;
+                uint32_t src_bits = (sq_funct3 & 4u)
+                    ? ((sq_instr >> 15) & 0x1Fu)          // zimm for CSRRSI/CSRRCI/CSRRWI
+                    : regs[(sq_instr >> 15) & 0x1Fu];     // rs1 value
+                uint32_t new_val;
+                switch (sq_funct3 & 3u) {
+                    case 1: new_val = src_bits;              break; // CSRRW(I)
+                    case 2: new_val = old_val | src_bits;    break; // CSRRS(I)
+                    case 3: new_val = old_val & ~src_bits;   break; // CSRRC(I)
+                    default: new_val = old_val;              break;
+                }
+                // Apply write to mstatus
+                csr_mstatus = (new_val & (MSTATUS_MIE | MSTATUS_MPIE)) | MSTATUS_MPP;
+                DBG(1, "at_squash_pc: applied csrsi mstatus side-effect, "
+                       "mstatus=0x%08x\n", (unsigned)csr_mstatus);
+            }
+        }
+    }
+
+    if (!(csr_mstatus & MSTATUS_MIE) && !at_squash_pc) return false;
+
+    // When RTL hints are loaded: timer fires only via g_timer_irq_pending (set
+    // by the hint mechanism below).  Without hints: fire naturally.
+    bool timer_irq = g_timer_irq_pending ||
+                     (!g_hints_loaded &&
+                      mtime >= mtimecmp &&
                       mtimecmp != 0xFFFFFFFFFFFFFFFFULL);
     bool soft_irq  = (msip != 0);
     // external CLIC IRQ not simulated here
 
     if ((csr_mie & MIP_MTIP) && timer_irq) {
-        take_trap(CAUSE_TIMER_INT, 0, pc);
+        g_timer_irq_pending = false;  // consumed
+        // Use the hint's epc as mepc when available (matches RTL pipeline
+        // behaviour where mepc = interrupted/squashed instruction PC).
+        uint32_t trap_pc = (g_hints_loaded && g_timer_irq_epc) ? g_timer_irq_epc : pc;
+
+        // Detect "spurious ISR due to load-use stall" (jv32 microarch quirk):
+        // When the timer IRQ fires while a load instruction is in WB AND the
+        // following instruction has a RAW dependency on the loaded register,
+        // jv32's load_use_stall makes if_stall=1 at the same cycle irq_cancel
+        // fires.  The CSR takes the interrupt (mepc=load.pc, MIE=0) but
+        // pc_if is NOT redirected to mtvec — instead the pipeline resumes
+        // from pc_if which is stuck pointing past the load instruction.
+        // We replicate this: update CSRs as if interrupted but set PC to
+        // epc + instr_size (skip the load) instead of mtvec.
+        if (g_hints_loaded && g_timer_irq_epc) {
+            // Decode the instruction at epc
+            uint32_t epc = trap_pc;
+            uint16_t ehalf0 = (uint16_t)mem_read(epc & ~1u, 2);
+            uint32_t einstr;
+            uint32_t einstr_size;
+            if ((ehalf0 & 3u) != 3u) {
+                einstr      = expand_rvc(ehalf0);
+                einstr_size = 2u;
+            } else {
+                uint16_t ehalf1 = (uint16_t)mem_read((epc & ~1u) + 2u, 2);
+                einstr      = ((uint32_t)ehalf1 << 16) | ehalf0;
+                einstr_size = 4u;
+            }
+            uint32_t eopcode = einstr & 0x7Fu;
+            if (eopcode == 0x03u) {  // LOAD
+                uint32_t erd = (einstr >> 7) & 0x1Fu;
+                if (erd != 0u) {
+                    // Check if next instruction has a RAW hazard on erd
+                    uint32_t next_pc = epc + einstr_size;
+                    uint16_t nhalf0 = (uint16_t)mem_read(next_pc & ~1u, 2);
+                    uint32_t ninstr;
+                    if ((nhalf0 & 3u) != 3u) {
+                        ninstr = expand_rvc(nhalf0);
+                    } else {
+                        uint16_t nhalf1 = (uint16_t)mem_read((next_pc & ~1u) + 2u, 2);
+                        ninstr = ((uint32_t)nhalf1 << 16) | nhalf0;
+                    }
+                    uint32_t nrs1 = (ninstr >> 15) & 0x1Fu;
+                    uint32_t nrs2 = (ninstr >> 20) & 0x1Fu;
+                    if (nrs1 == erd || nrs2 == erd) {
+                        // Spurious ISR: update CSRs but redirect to epc+size
+                        DBG(1, "spurious_isr: load-use stall at epc=0x%08x, "
+                               "skip load, pc->0x%08x\n",
+                               (unsigned)epc, (unsigned)next_pc);
+                        uint32_t mie_bit = (csr_mstatus >> 3) & 1u;
+                        csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
+                                    | (mie_bit ? MSTATUS_MPIE : 0u)
+                                    | MSTATUS_MPP;
+                        csr_mcause = CAUSE_TIMER_INT;
+                        csr_mepc   = epc & ~1u;
+                        csr_mtval  = 0u;
+                        pc = next_pc;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        take_trap(CAUSE_TIMER_INT, 0, trap_pc);
         return true;
     } else if ((csr_mie & MIP_MSIP) && soft_irq) {
-        take_trap(CAUSE_SOFTWARE_INT, 0, pc);
-        return true;
+        if (msi_at_squash_pc) {
+            // RTL squashed the instruction at msi_irq_epc (e.g. csrrsi that
+            // enables MIE) while simultaneously firing the MSI.  Match that
+            // behaviour: take the trap at the squash PC without retiring it.
+            g_msi_irq_pending = false;
+            take_trap(CAUSE_SOFTWARE_INT, 0, g_msi_irq_epc);
+            return true;
+        } else if (!timer_at_squash_pc) {
+            // Normal MSI (not suppressed by a simultaneous timer squash).
+            take_trap(CAUSE_SOFTWARE_INT, 0, pc);
+            return true;
+        }
     }
     return false;
 }
@@ -1192,8 +1384,8 @@ static void step() {
             regs[rd] = result;
         regs[0] = 0;  // x0 always zero
         pc = new_pc;
-        mtime++;        // increment mtime on retirement to match RTL instret_inc
-        csr_mcycle++;   // increment mcycle on retirement to match RTL instret_inc gating
+        mtime++;        // increment mtime per retired instruction (approx. clock cycles)
+        csr_mcycle++;   // increment mcycle per retired instruction (fallback when no RTL hint)
         csr_minstret++;
         insn_count++;
         emit_trace(instr_pc, raw_instr,
@@ -1307,12 +1499,14 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[SIM] Cannot open trace file: %s\n", trace_path);
             return 1;
         }
+        setvbuf(trace_fp, nullptr, _IOFBF, 4 * 1024 * 1024);  // 4 MB write buffer
         trace_on = true;
     }
 
     // Load RTL hints (optional — used to sync cycle-counter CSR values)
     if (hints_path) {
         if (!load_rtl_hints(hints_path)) return 1;
+        g_hints_loaded = true;
         DBG(1, "Loaded %zu cycle-CSR hints from %s\n",
             g_csr_hints.size(), hints_path);
     }
@@ -1362,26 +1556,64 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        // Apply squashed-store hints before irq hints: when the JV32 pipeline
+        // committed a store's DRAM write before the interrupt squashed the
+        // instruction, replay that write now so the SW sim memory matches.
+        while (!g_sq_store_hints.empty() &&
+               insn_count >= g_sq_store_hints.front().insn_count) {
+            DBG(2, "[sq_store] write 0x%08x = 0x%08x at insn=%llu\n",
+                (unsigned)g_sq_store_hints.front().addr,
+                (unsigned)g_sq_store_hints.front().data,
+                (unsigned long long)insn_count);
+            mem_write(g_sq_store_hints.front().addr, g_sq_store_hints.front().data, 4);
+            g_sq_store_hints.pop_front();
+        }
+        // Apply any pending IRQ hint once the retirement count matches.
+        // Suppress natural timer firing (above) while a hint is pending so the
+        // interrupt fires at exactly the same instruction as in the RTL.
+        if (!g_irq_hints.empty() && insn_count >= g_irq_hints.front().insn_count) {
+            uint32_t hint_epc   = g_irq_hints.front().epc;
+            uint32_t hint_cause = g_irq_hints.front().cause;
+            g_irq_hints.pop_front();
+            // Timer interrupt (cause = 0x8000_0007): set mtime = mtimecmp so
+            // that check_interrupts() fires on the very next step().
+            if ((hint_cause & 0x8000007Fu) == 0x80000007u &&
+                    mtimecmp != 0xFFFFFFFFFFFFFFFFULL) {
+                DBG(2, "[irq] tick at insn=%llu epc=0x%08x hint_idx=%zu\n",
+                    (unsigned long long)insn_count, (unsigned)hint_epc, g_hint_idx);
+                mtime = mtimecmp;        // keep mtime in sync at tick boundaries
+                g_timer_irq_pending = true;  // fire on the very next step()
+                g_timer_irq_epc     = hint_epc;
+            } else if ((hint_cause & 0x8000007Fu) == 0x80000003u) {
+                // MSI hint: fire on the very next step() at hint_epc.
+                // The RTL squashes the instruction at hint_epc (typically a
+                // csrrsi that enables MIE) in the same cycle the interrupt fires.
+                DBG(2, "[irq] msi hint at insn=%llu epc=0x%08x\n",
+                    (unsigned long long)insn_count, (unsigned)hint_epc);
+                g_msi_irq_pending = true;
+                g_msi_irq_epc     = hint_epc;
+            }
+        }
         step();
     }
 
-    if (g_sigint) {
+    if (g_sigint || exit_code) {
         fprintf(stderr, "\n*** SIGINT received: dumping registers and exiting ***\n");
         dump_registers();
         exit_code = 1;
     }
 
-        auto   time_end = std::chrono::steady_clock::now();
-        double elapsed_seconds = std::chrono::duration<double>(time_end - time_begin).count();
-        double eff_hz = (elapsed_seconds > 0.0) ? ((double)csr_mcycle / elapsed_seconds) : 0.0;
-        double eff_mhz = eff_hz / 1.0e6;
+    auto   time_end = std::chrono::steady_clock::now();
+    double elapsed_seconds = std::chrono::duration<double>(time_end - time_begin).count();
+    double eff_hz = (elapsed_seconds > 0.0) ? ((double)csr_mcycle / elapsed_seconds) : 0.0;
+    double eff_mhz = eff_hz / 1.0e6;
 
-        DBG(1, "%llu instructions retired\n",
-            (unsigned long long)insn_count);
-        fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
-            elapsed_seconds,
-            (unsigned long long)csr_mcycle,
-            eff_mhz);
+    DBG(1, "%llu instructions retired\n",
+        (unsigned long long)insn_count);
+    fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
+        elapsed_seconds,
+        (unsigned long long)csr_mcycle,
+        eff_mhz);
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);
     return exit_code;

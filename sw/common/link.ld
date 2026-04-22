@@ -29,6 +29,7 @@ SECTIONS {
 
     .rodata : {
         *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
         *(.gnu.linkonce.r.*)
     } > IRAM
 
@@ -45,6 +46,10 @@ SECTIONS {
         *(.data .data.*)
         *(.gnu.linkonce.d.*)
         . = ALIGN(4);
+        /* Global pointer for gp-relative data access (sdata/sbss) */
+        PROVIDE(__global_pointer$ = . + 0x800);
+        *(.sdata .sdata.*)
+        . = ALIGN(4);
         _data_end = .;
     } > DRAM
 
@@ -55,6 +60,7 @@ SECTIONS {
         . = ALIGN(4);
         _bss_start = .;
         *(.bss .bss.*)
+        *(.sbss .sbss.*)
         *(.gnu.linkonce.b.*)
         *(COMMON)
         . = ALIGN(4);
