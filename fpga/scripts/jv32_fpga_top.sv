@@ -2,20 +2,27 @@
 // File   : jv32_fpga_top.sv
 // Project: JV32 RISC-V SoC
 // Brief  : FPGA top-level wrapper – Xilinx KU5P (XCKU5PFFVB676)
+//          Configurable for 4-wire JTAG (USE_CJTAG=0, default) or
+//          2-wire cJTAG / OScan1 (USE_CJTAG=1).
 //
 // Pins
 // ----
-//   clk_50m    E18   LVCMOS18  50 MHz system clock
+//   clk_50m       E18   LVCMOS18  50 MHz system clock
 //
-//   JTAG (LVCMOS33)
-//   jtag_tck_i D11   TCK
-//   jtag_tms_i C12   TMS
-//   jtag_tdi_i J12   TDI
-//   jtag_tdo_o E12   TDO
+//   JTAG / cJTAG (LVCMOS33, shared physical connector)
+//   jtag_tck_i    D11   TCK  (JTAG) / TCKC (cJTAG) – always input
+//   jtag_tmsc_io  C12   TMS  (JTAG) / TMSC (cJTAG) – bidir IOBUF
+//   jtag_tdi_i    J12   TDI  (JTAG only; tie to GND in cJTAG)
+//   jtag_tdo_o    E12   TDO  (JTAG only; driven 0   in cJTAG)
 //
 //   UART (LVCMOS33)
-//   uart_tx_o  J14   TX
-//   uart_rx_i  G12   RX
+//   uart_tx_o     J14   TX
+//   uart_rx_i     G12   RX
+//
+// Parameters
+// ----------
+//   USE_CJTAG  0 (default) = 4-wire JTAG
+//              1           = 2-wire cJTAG (IEEE 1149.7 OScan1)
 //
 // Reset
 // -----
@@ -23,14 +30,16 @@
 //   rst_n is held low until the MMCM is locked after configuration.
 // ============================================================================
 
-module jv32_fpga_top (
+module jv32_fpga_top #(
+    parameter bit USE_CJTAG = 1'b0  // 0 = 4-wire JTAG, 1 = 2-wire cJTAG
+) (
     input  logic clk_50m,
 
-    // JTAG – 4-wire
-    input  logic jtag_tck_i,
-    input  logic jtag_tms_i,
-    input  logic jtag_tdi_i,
-    output logic jtag_tdo_o,
+    // JTAG / cJTAG – shared physical connector
+    input  logic jtag_tck_i,    // TCK  (JTAG) / TCKC (cJTAG)  – D11
+    inout  wire  jtag_tmsc_io,  // TMS  (JTAG) / TMSC (cJTAG)  – C12 bidir
+    input  logic jtag_tdi_i,    // TDI  (JTAG only)             – J12
+    output logic jtag_tdo_o,    // TDO  (JTAG only)             – E12
 
     // UART
     output logic uart_tx_o,
@@ -50,12 +59,51 @@ module jv32_fpga_top (
     );
 
     // -----------------------------------------------------------------------
+    // IOBUF for TMS / TMSC (C12)
+    //
+    // Xilinx IOBUF primitive:
+    //   IO – bidirectional FPGA pad
+    //   I  – fabric data driven to pad when T=0
+    //   O  – fabric data read from pad
+    //   T  – tristate enable: 1=tristate (input mode), 0=drive output
+    //
+    // JTAG mode  (USE_CJTAG=0): T is permanently 1 → pad is a pure input.
+    // cJTAG mode (USE_CJTAG=1): T follows soc_tms_oe; the SoC drives TMSC
+    //                            during the TDO-capture OScan1 phase.
+    // -----------------------------------------------------------------------
+    logic tmsc_in;    // data read from TMS / TMSC pad
+    logic tmsc_out;   // data driven to TMSC pad  (cJTAG only)
+    logic tmsc_oe_n;  // IOBUF T: 1=tristate/input, 0=drive output
+
+    IOBUF u_tmsc_iobuf (
+        .IO (jtag_tmsc_io),
+        .I  (tmsc_out),
+        .O  (tmsc_in),
+        .T  (tmsc_oe_n)
+    );
+
+    // SoC-side TMS / TMSC signals (always declared; unused ports tie off)
+    logic soc_tms_o, soc_tms_oe, soc_tdo_o;
+
+    if (USE_CJTAG) begin : g_cjtag_io
+        // cJTAG: SoC drives TMSC and controls output-enable
+        assign tmsc_out   = soc_tms_o;
+        assign tmsc_oe_n  = soc_tms_oe;
+        assign jtag_tdo_o = 1'b0;  // TDO pin (E12) unused in cJTAG – drive 0
+    end else begin : g_jtag_io
+        // JTAG: TMS is always an input – permanently tristate the IOBUF
+        assign tmsc_out   = 1'b0;
+        assign tmsc_oe_n  = 1'b1;
+        assign jtag_tdo_o = soc_tdo_o;
+    end
+
+    // -----------------------------------------------------------------------
     // JV32 SoC
     // -----------------------------------------------------------------------
     jv32_soc #(
         .CLK_FREQ  (50_000_000),
         .BAUD_RATE (115_200),
-        .USE_CJTAG (1'b0)         // 4-wire JTAG
+        .USE_CJTAG (USE_CJTAG)
     ) u_soc (
         .clk   (clk_core),
         .rst_n (rst_n),
@@ -64,15 +112,15 @@ module jv32_fpga_top (
         .uart_rx_i (uart_rx_i),
         .uart_tx_o (uart_tx_o),
 
-        // ── JTAG (4-wire, USE_CJTAG=0) ─────────────────────────────────────
-        .jtag_ntrst_i     (1'b1),       // deasserted (active-low)
+        // ── JTAG / cJTAG ────────────────────────────────────────────────────
+        .jtag_ntrst_i     (1'b1),                           // nTRST deasserted
         .jtag_pin0_tck_i  (jtag_tck_i),
-        .jtag_pin1_tms_i  (jtag_tms_i),
-        .jtag_pin1_tms_o  (),           // cJTAG only – not used
-        .jtag_pin1_tms_oe (),           // cJTAG only – not used
-        .jtag_pin2_tdi_i  (jtag_tdi_i),
-        .jtag_pin3_tdo_o  (jtag_tdo_o),
-        .jtag_pin3_tdo_oe (),           // cJTAG only – not used
+        .jtag_pin1_tms_i  (tmsc_in),                        // TMS / TMSC in
+        .jtag_pin1_tms_o  (soc_tms_o),                      // TMSC out (cJTAG)
+        .jtag_pin1_tms_oe (soc_tms_oe),                     // TMSC OE  (cJTAG)
+        .jtag_pin2_tdi_i  (USE_CJTAG ? 1'b0 : jtag_tdi_i), // unused in cJTAG
+        .jtag_pin3_tdo_o  (soc_tdo_o),                      // TDO → g_jtag_io
+        .jtag_pin3_tdo_oe (),                                // not used on FPGA
 
         // ── External IRQ (unused) ───────────────────────────────────────────
         .ext_irq_i (16'h0),

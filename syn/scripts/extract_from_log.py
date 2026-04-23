@@ -16,11 +16,9 @@ import os
 import re
 import sys
 
-
 def read_text(path):
     with open(path) as f:
         return f.read()
-
 
 def content_missing(rpt_path):
     """Return True when the report has no useful data (only header / fallback lines)."""
@@ -31,11 +29,9 @@ def content_missing(rpt_path):
               if l.strip() and not l.startswith('#')]
     return len(useful) == 0
 
-
 def append_content(rpt_path, content):
     with open(rpt_path, 'a') as f:
         f.write(content.rstrip('\n') + '\n')
-
 
 # ---------------------------------------------------------------------------
 # Extraction helpers
@@ -139,11 +135,9 @@ def extract_area(log, reports_dir=None):
 
     return '\n'.join(lines) + '\n' if lines else None
 
-
 def extract_cts(log):
     lines = re.findall(r'^\[INFO CTS-\d+\].*$', log, re.MULTILINE)
     return ('\n'.join(lines) + '\n') if lines else None
-
 
 def extract_cells(log):
     """Return the full Cell-type-report table (header through Total line)."""
@@ -161,7 +155,6 @@ def extract_cells(log):
     eol = log.find('\n', end)
     end = eol if eol >= 0 else len(log)
     return log[bol:end].rstrip('\n') + '\n'
-
 
 def extract_congestion(log):
     """Return a congestion summary built from GRT-0026 warnings.
@@ -190,7 +183,6 @@ def extract_congestion(log):
     for pin in warnings:
         lines.append(f"[WARNING GRT-0026] Missing route to pin {pin}.")
     return '\n'.join(lines) + '\n'
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -228,7 +220,6 @@ def main():
 
     if any_fixed:
         print(f"  (source: {log_file})")
-
 
 if __name__ == '__main__':
     main()

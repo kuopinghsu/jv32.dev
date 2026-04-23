@@ -90,12 +90,13 @@ puts "====================================================\n"
 if {$odb_file ne ""} {
     puts "  Using ODB: $odb_file"
     read_db $odb_file
+    # ODB already contains the fully linked P&R database; link_design is not
+    # needed (and will error STA-1000 if called on an ODB-loaded design).
 } else {
     puts "  Using DEF: $def_file"
     read_def $def_file
+    link_design $design
 }
-
-link_design $design
 
 ###############################################################################
 # Constraints + wire RC
@@ -192,16 +193,14 @@ write_rpt_header $rpt "WNS / TNS summary" $design $corner $timestamp
 set fp [open $rpt a]
 puts $fp "# --- Setup ---"
 close $fp
-report_wns -setup >> $rpt
-report_tns -setup >> $rpt
 report_worst_slack -max >> $rpt
+report_wns >> $rpt
+report_tns >> $rpt
 
 set fp [open $rpt a]
 puts $fp ""
 puts $fp "# --- Hold ---"
 close $fp
-report_wns -hold >> $rpt
-report_tns -hold >> $rpt
 report_worst_slack -min >> $rpt
 
 puts "  Written: $rpt"
@@ -223,28 +222,84 @@ write_rpt_header $rpt "Power estimate" $design $corner $timestamp
 report_power >> $rpt
 puts "  Written: $rpt"
 
+# ---------------------------------------------------------------------------
+# Helper: run a command and append its captured output to a report file.
+# OpenROAD-native commands (report_cts, report_cell_usage, report_congestion,
+# report_design_area) write through the C++ logger or OpenSTA reporter rather
+# than plain Tcl stdout, so plain Tcl '>> file' redirection does not work.
+# We try three mechanisms in order:
+#   1. ord::redirect_file_begin / ord::redirect_file_end  (OpenROAD ≥ 2.x)
+#   2. sta_redirect_file_begin / sta_redirect_file_end    (OpenSTA built-in)
+#   3. Bare execution – output lands in timing_run.log via the Makefile tee;
+#      a post-processing script (extract_from_log.py) recovers it afterward.
+# ---------------------------------------------------------------------------
+proc openroad_rpt {rpt_file cmd} {
+    set tmp "${rpt_file}.tmp"
+
+    # Method 1: ord::redirect_file_begin (captures logger + OpenSTA reporter)
+    if {![catch {
+        ord::redirect_file_begin $tmp
+        catch {eval $cmd}
+        ord::redirect_file_end
+    }]} {
+        if {[file exists $tmp] && [file size $tmp] > 0} {
+            set fi [open $tmp r]; set data [read $fi]; close $fi
+            set fo [open $rpt_file a]; puts -nonewline $fo $data; close $fo
+        }
+        catch {file delete $tmp}
+        return
+    }
+    catch {ord::redirect_file_end}
+    catch {file delete $tmp}
+
+    # Method 2: sta_redirect_file_begin (OpenSTA reporter only)
+    if {![catch {
+        sta_redirect_file_begin $tmp
+        catch {eval $cmd}
+        sta_redirect_file_end
+    }]} {
+        if {[file exists $tmp] && [file size $tmp] > 0} {
+            set fi [open $tmp r]; set data [read $fi]; close $fi
+            set fo [open $rpt_file a]; puts -nonewline $fo $data; close $fo
+        }
+        catch {file delete $tmp}
+        return
+    }
+    catch {sta_redirect_file_end}
+    catch {file delete $tmp}
+
+    # Fallback: bare execution – output goes to timing_run.log
+    set fp [open $rpt_file a]
+    puts $fp "# Output written to timing_run.log (redirect unavailable)"
+    close $fp
+    catch {eval $cmd}
+}
+
 # -- Area ------------------------------------------------------------------
 set rpt $reports_dir/area.rpt
 write_rpt_header $rpt "Design area" $design $corner $timestamp
-report_design_area >> $rpt
+openroad_rpt $rpt { report_design_area }
 puts "  Written: $rpt"
 
 # -- Clock tree ------------------------------------------------------------
 set rpt $reports_dir/cts.rpt
 write_rpt_header $rpt "Clock tree" $design $corner $timestamp
-report_cts >> $rpt
+openroad_rpt $rpt { report_cts }
 puts "  Written: $rpt"
 
 # -- Cell usage ------------------------------------------------------------
 set rpt $reports_dir/cells.rpt
 write_rpt_header $rpt "Cell usage" $design $corner $timestamp
-report_cell_usage >> $rpt
+openroad_rpt $rpt { report_cell_usage }
 puts "  Written: $rpt"
 
 # -- Routing congestion (may be absent for pre-route databases) -----------
-if {[catch { report_congestion >> $reports_dir/congestion.rpt } err]} {
+set rpt $reports_dir/congestion.rpt
+write_rpt_header $rpt "Routing congestion" $design $corner $timestamp
+if {[catch { openroad_rpt $rpt { report_congestion } } err]} {
     puts "NOTE: report_congestion skipped ($err)"
 }
+puts "  Written: $rpt"
 
 # Done
 puts "\n===================================================="

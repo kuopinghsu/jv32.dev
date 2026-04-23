@@ -13,6 +13,7 @@ TOP_MODULE      ?= jv32_fpga_top
 FPGA_PART       ?= xcku5p-ffvb676-2-i
 JV32_CLK_HZ     ?= 50000000
 FLASH_PART      ?= mt25qu256-spi-x1_x2_x4
+USE_CJTAG       ?= 0
 
 VIVADO_SCRIPT   := scripts/create_project.tcl
 
@@ -31,6 +32,7 @@ help:
 	@echo "  TOP_MODULE=<rtl-top>                (default: jv32_fpga_top)"
 	@echo "  FPGA_PART=<part-number>             (default: xcku5pffvb676-2)"
 	@echo "  FLASH_PART=<flash-part>             (default: mt25qu256-spi-x1_x2_x4)"
+	@echo "  USE_CJTAG=0|1                       (default: 0 = 4-wire JTAG)"
 
 project:
 	PROJ_NAME=$(PROJ_NAME) \
@@ -38,6 +40,7 @@ project:
 	TOP_MODULE=$(TOP_MODULE) \
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
+	USE_CJTAG=$(USE_CJTAG) \
 	RUN_SYNTH=0 RUN_IMPL=0 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
 
@@ -47,6 +50,7 @@ synth:
 	TOP_MODULE=$(TOP_MODULE) \
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
+	USE_CJTAG=$(USE_CJTAG) \
 	RUN_SYNTH=1 RUN_IMPL=0 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
 
@@ -57,6 +61,7 @@ impl:
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
 	FLASH_PART=$(FLASH_PART) \
+	USE_CJTAG=$(USE_CJTAG) \
 	RUN_SYNTH=1 RUN_IMPL=1 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
 

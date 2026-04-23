@@ -23,8 +23,8 @@ set_input_jitter clk_50m 0.200
 set_property PACKAGE_PIN D11 [get_ports jtag_tck_i]
 set_property IOSTANDARD  LVCMOS33 [get_ports jtag_tck_i]
 
-set_property PACKAGE_PIN C12 [get_ports jtag_tms_i]
-set_property IOSTANDARD  LVCMOS33 [get_ports jtag_tms_i]
+set_property PACKAGE_PIN C12 [get_ports jtag_tmsc_io]
+set_property IOSTANDARD  LVCMOS33 [get_ports jtag_tmsc_io]
 
 set_property PACKAGE_PIN J12 [get_ports jtag_tdi_i]
 set_property IOSTANDARD  LVCMOS33 [get_ports jtag_tdi_i]
@@ -42,14 +42,37 @@ set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks clk_50m] \
     -group [get_clocks jtag_tck]
 
-# Constrain JTAG I/O relative to TCK.
-# TMS/TDI are captured on the rising edge of TCK.
-set_input_delay -clock jtag_tck -max 10.0           [get_ports {jtag_tms_i jtag_tdi_i}]
-set_input_delay -clock jtag_tck -min  0.0 -add_delay [get_ports {jtag_tms_i jtag_tdi_i}]
-# TDO is launched on the *falling* edge of TCK (IEEE 1149.1 / jtag_tap.sv negedge FF).
-# Rising-edge-only output delay would leave TIMING-18 unresolved.
-set_output_delay -clock jtag_tck -clock_fall -max 10.0           [get_ports jtag_tdo_o]
-set_output_delay -clock jtag_tck -clock_fall -min  0.0 -add_delay [get_ports jtag_tdo_o]
+# Detect USE_CJTAG from the synthesis generic written by create_project.tcl.
+# This runs post-synthesis when constraints are applied, so the project
+# property is already set.  Fall back to JTAG mode (0) on any error.
+set _use_cjtag 0
+catch {
+    set _gen [get_property GENERIC [get_filesets sources_1]]
+    if {[regexp {USE_CJTAG\s*=\s*1'b1} $_gen]} { set _use_cjtag 1 }
+}
+
+if {!$_use_cjtag} {
+    # -------------------------------------------------------------------------
+    # 4-wire JTAG I/O delays
+    # -------------------------------------------------------------------------
+    # TMS/TDI are captured on the rising edge of TCK.
+    set_input_delay -clock jtag_tck -max 10.0            [get_ports {jtag_tmsc_io jtag_tdi_i}]
+    set_input_delay -clock jtag_tck -min  0.0 -add_delay [get_ports {jtag_tmsc_io jtag_tdi_i}]
+    # TDO is launched on the *falling* edge of TCK (negedge FF in jtag_tap.sv).
+    set_output_delay -clock jtag_tck -clock_fall -max 10.0            [get_ports jtag_tdo_o]
+    set_output_delay -clock jtag_tck -clock_fall -min  0.0 -add_delay [get_ports jtag_tdo_o]
+} else {
+    # -------------------------------------------------------------------------
+    # 2-wire cJTAG (OScan1) I/O constraints
+    # -------------------------------------------------------------------------
+    # TMSC is sampled by a 2-stage synchronizer inside cjtag_bridge (clk_core
+    # domain), so both directions are asynchronous to any defined clock.
+    set_false_path -from [get_ports jtag_tmsc_io]
+    set_false_path -to   [get_ports jtag_tmsc_io]
+    # TDI (J12) and TDO (E12) are unused in cJTAG mode.
+    set_false_path -from [get_ports jtag_tdi_i]
+    set_false_path -to   [get_ports jtag_tdo_o]
+}
 
 # -----------------------------------------------------------------------------
 # UART – 3.3 V LVCMOS33 (HR bank)

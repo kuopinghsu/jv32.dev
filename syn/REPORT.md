@@ -34,7 +34,46 @@
 
 ---
 
-## 3. Cell Count
+## 3. Area Hierarchy (Gate Count)
+
+> Source: `syn/build/gate_count.rpt`
+> Methodology: hierarchical (non-flattening) Yosys synthesis against Nangate 45 nm OCL.
+> Reference cell: NAND2_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
+> Note: pre-P&R counts; post-P&R NAND2-eq total is 82,526 (see §4).
+
+| Module | NAND2-eq | Area (µm²) | % of SoC logic |
+|---|---:|---:|---:|
+| **jv32_soc** | **84,750** | **67,630.77** | 100.0% |
+| ↳ jv32_top | 54,389 | 43,402.42 | 64.2% |
+| &nbsp;&nbsp;↳ jv32_core | 50,097 | 39,977.67 | 59.1% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ **jv32_alu** | **16,046** | **12,804.44** | **18.9%** |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 14,295 | 11,407.14 | 16.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,506 | 4,393.52 | 6.5% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,410 | 1,922.91 | 2.8% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 311 | 248.44 | 0.4% |
+| &nbsp;&nbsp;↳ sram_1rw (glue) | 84 | 66.77 | 0.1% |
+| ↳ jtag_top | 17,254 | 13,768.96 | 20.4% |
+| &nbsp;&nbsp;↳ jtag_tap | 17,254 | 13,768.96 | 20.4% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 17,047 | 13,603.77 | 20.1% |
+| ↳ axi_clic | 5,863 | 4,678.94 | 6.9% |
+| ↳ axi_uart | 4,382 | 3,497.10 | 5.2% |
+| ↳ axi_xbar | 689 | 550.09 | 0.8% |
+| ↳ axi_magic | 0 | 0.00 | 0.0% |
+
+### ALU area breakdown by function
+
+| Sub-block | Config | Key cell types | Est. NAND2-eq | % of ALU |
+|---|---|---|---:|---:|
+| Multiplier (MUL/MULH/MULHSU/MULHU) | `FAST_MUL=1, MUL_MC=1` (2-stage 4×16×16 pipeline) | XOR2/XNOR2, DFFR (193 FFs) | ~7,200 | ~45% |
+| Divider (DIV/DIVU/REM/REMU) | `FAST_DIV=0` (serial restoring) | NAND2/NOR2, DFFR (210 FFs) | ~4,500 | ~28% |
+| Barrel shifter (SLL/SRL/SRA) | `FAST_SHIFT=1` (SRL/SRA shared¹) | MUX2, INV | ~2,800 | ~17% |
+| ADD/SUB/logic/compare | — | XOR2/XNOR2, AOI/OAI | ~1,546 | ~10% |
+
+¹ SRL and SRA now share a single right-shift barrel tree (see [rtl/jv32/core/jv32_alu.sv](../rtl/jv32/core/jv32_alu.sv)); the second independent barrel shifter was removed, saving ~100–180 NAND2-eq.
+
+---
+
+## 4. Cell Count
 
 | Category | Count |
 |---|---|
@@ -51,7 +90,7 @@
 
 ---
 
-## 4. Timing (Post-PnR STA)
+## 5. Timing (Post-PnR STA)
 
 **Corner: tt_025C_1v10**
 
@@ -67,7 +106,7 @@
 
 ---
 
-## 5. Power
+## 6. Power
 
 **Corner: tt_025C_1v10**
 
@@ -82,7 +121,7 @@
 
 ---
 
-## 6. Routing & Wire Length
+## 7. Routing & Wire Length
 
 | Metric | Value |
 |---|---|
@@ -92,7 +131,7 @@
 
 ---
 
-## 7. Manufacturability
+## 8. Manufacturability
 
 | Check | Result |
 |---|---|
@@ -102,7 +141,7 @@
 
 ---
 
-## 8. Output Files
+## 9. Output Files
 
 | Format | Path |
 |---|---|

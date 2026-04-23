@@ -1439,13 +1439,37 @@ static bool load_elf(const char *path, uint32_t *entry) {
         if (phdr.p_memsz <= max_sz)
             memset(dst, 0, phdr.p_memsz);
 
-        // Copy file data
+        // Copy file data to VMA
         fseek(f, (long)phdr.p_offset, SEEK_SET);
         uint32_t to_copy = (phdr.p_filesz < phdr.p_memsz) ? phdr.p_filesz : phdr.p_memsz;
         if (to_copy > max_sz) to_copy = max_sz;
         if (to_copy > 0 && fread(dst, 1, to_copy, f) != to_copy) {
             fprintf(stderr, "[SIM] ELF read error at segment %d\n", i);
             fclose(f); return false;
+        }
+
+        // When LMA (p_paddr) differs from VMA (p_vaddr), also copy file data to
+        // the LMA region.  Bare-metal startup code copies .data from LMA (e.g.
+        // IRAM at end of .text) to VMA (DRAM); without the LMA populated the
+        // startup reads zeros and overwrites the correctly-initialised VMA data.
+        uint32_t paddr = phdr.p_paddr;
+        if (to_copy > 0 && paddr != phdr.p_vaddr) {
+            uint8_t *dst_lma = nullptr;
+            uint32_t max_lma = 0;
+            if (paddr >= IRAM_BASE && paddr < IRAM_BASE + IRAM_SIZE) {
+                dst_lma = iram + (paddr - IRAM_BASE);
+                max_lma = IRAM_SIZE - (paddr - IRAM_BASE);
+            } else if (paddr >= DRAM_BASE && paddr < DRAM_BASE + DRAM_SIZE) {
+                dst_lma = dram + (paddr - DRAM_BASE);
+                max_lma = DRAM_SIZE - (paddr - DRAM_BASE);
+            }
+            if (dst_lma && to_copy <= max_lma) {
+                fseek(f, (long)phdr.p_offset, SEEK_SET);
+                if (fread(dst_lma, 1, to_copy, f) != to_copy) {
+                    fprintf(stderr, "[SIM] ELF read error at LMA for segment %d\n", i);
+                    fclose(f); return false;
+                }
+            }
         }
     }
 

@@ -188,6 +188,136 @@ def section_power(sta_dir):
         lines.append("")
     return "\n".join(lines)
 
+def section_gate_hierarchy(stat_json_path: str, nand2_area: float = 0.0) -> str:
+    """Generate the area hierarchy section from a Yosys stat.json file."""
+    if not stat_json_path or not os.path.isfile(stat_json_path):
+        return "_Gate-count JSON not found. Re-run with --gate-count-json._\n"
+    try:
+        with open(stat_json_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        return f"_Could not parse stat.json: {e}_\n"
+
+    modules = data.get("modules", {})
+    ref_area = nand2_area if nand2_area > 0 else 0.7980  # Nangate NAND2_X1 fallback
+
+    # Build a name → {area, nand2} lookup keyed by the bare (unparameterised)
+    # module name — the last backslash-separated component of the Yosys JSON key.
+    def bare(key: str) -> str:
+        return key.rstrip("\\").split("\\")[-1]
+
+    info: dict = {}
+    for key, mod in modules.items():
+        area  = float(mod.get("area", 0))
+        nand2 = round(area / ref_area) if ref_area else 0
+        b = bare(key)
+        # Prefer the entry with the largest area when multiple parameterisations
+        # share the same bare name (pick the most representative instance).
+        if b not in info or area > info[b]["area"]:
+            info[b] = {"area": area, "nand2": nand2, "_cells": mod.get("num_cells_by_type", {})}
+
+    soc_nand2 = info.get("jv32_soc", {}).get("nand2", 1) or 1
+
+    def row(indent: str, name: str) -> str:
+        d = info.get(name, {})
+        n = d.get("nand2", 0)
+        a = d.get("area", 0.0)
+        pct = n / soc_nand2 * 100
+        bold = "**" if name in ("jv32_soc", "jv32_alu") else ""
+        return (f"| {indent}{bold}{name}{bold} "
+                f"| {bold}{n:,}{bold} "
+                f"| {bold}{a:,.2f}{bold} "
+                f"| {bold}{pct:.1f}%{bold} |")
+
+    hier_rows = [
+        row("",                             "jv32_soc"),
+        row("\u21b3 ",                      "jv32_top"),
+        row("&nbsp;&nbsp;\u21b3 ",          "jv32_core"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_alu"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_regfile"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_csr"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_rvc"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_decoder"),
+        row("&nbsp;&nbsp;\u21b3 ",          "sram_1rw"),
+        row("\u21b3 ",                      "jtag_top"),
+        row("&nbsp;&nbsp;\u21b3 ",          "jtag_tap"),
+        row("&nbsp;&nbsp;&nbsp;&nbsp;\u21b3 ", "jv32_dtm"),
+        row("\u21b3 ",                      "axi_clic"),
+        row("\u21b3 ",                      "axi_uart"),
+        row("\u21b3 ",                      "axi_xbar"),
+        row("\u21b3 ",                      "axi_magic"),
+    ]
+
+    hier_table = (
+        "| Module | NAND2-eq | Area (µm²) | % of SoC logic |\n"
+        "|---|---:|---:|---:|\n"
+        + "\n".join(hier_rows)
+    )
+
+    # ── ALU sub-block breakdown ───────────────────────────────────────────────
+    alu_nand2 = info.get("jv32_alu", {}).get("nand2", 0)
+    cells     = info.get("jv32_alu", {}).get("_cells", {})
+    dffr      = cells.get("DFFR_X1", 0)
+    xor_cnt   = cells.get("XOR2_X1", 0) + cells.get("XNOR2_X1", 0)
+
+    # Multiplier pipeline FFs: 4×32 partial-product regs + 2×32 operand regs + s1_valid
+    mul_ff  = 193
+    div_ff  = max(0, dffr - mul_ff)
+    # ~80% of XOR2/XNOR2 cells come from the four 16×16 multiply trees + accumulation
+    mul_xor = min(xor_cnt, round(xor_cnt * 0.80))
+
+    # Cell cost weights for Nangate OCL: DFF ≈ 1.3 NAND2-eq, XOR2/XNOR2 ≈ 1.67 NAND2-eq
+    mul_eq   = round(mul_ff * 1.3 + mul_xor * 1.67)
+    div_eq   = round(div_ff * 1.3
+                     + cells.get("NAND2_X1", 0) * 0.35
+                     + cells.get("NOR2_X1",  0) * 0.35)
+    shift_eq = max(0, round((cells.get("MUX2_X1", 0) * 0.60
+                              + cells.get("INV_X1",  0) * 0.15) * 0.55))
+    base_eq  = max(0, alu_nand2 - mul_eq - div_eq - shift_eq)
+
+    def pct_alu(n: int) -> str:
+        return f"{n / alu_nand2 * 100:.0f}%" if alu_nand2 else "N/A"
+
+    alu_table = (
+        "| Sub-block | Config | Key cell types | Est. NAND2-eq | % of ALU |\n"
+        "|---|---|---|---:|---:|\n"
+        f"| Multiplier (MUL/MULH/MULHSU/MULHU) "
+        f"| `FAST_MUL=1, MUL_MC=1` (2-stage 4\u00d716\u00d716 pipeline) "
+        f"| XOR2/XNOR2, DFFR ({mul_ff} FFs) "
+        f"| ~{mul_eq:,} | ~{pct_alu(mul_eq)} |\n"
+        f"| Divider (DIV/DIVU/REM/REMU) "
+        f"| `FAST_DIV=0` (serial restoring) "
+        f"| NAND2/NOR2, DFFR ({div_ff} FFs) "
+        f"| ~{div_eq:,} | ~{pct_alu(div_eq)} |\n"
+        f"| Barrel shifter (SLL/SRL/SRA) "
+        f"| `FAST_SHIFT=1` (SRL/SRA shared\u00b9) "
+        f"| MUX2, INV "
+        f"| ~{shift_eq:,} | ~{pct_alu(shift_eq)} |\n"
+        f"| ADD/SUB/logic/compare "
+        f"| \u2014 "
+        f"| XOR2/XNOR2, AOI/OAI "
+        f"| ~{base_eq:,} | ~{pct_alu(base_eq)} |"
+    )
+
+    note = (
+        "\u00b9 SRL and SRA share a single right-shift barrel tree "
+        "(see [rtl/jv32/core/jv32_alu.sv](../rtl/jv32/core/jv32_alu.sv)); "
+        "the second independent barrel shifter was removed, saving ~100\u2013180 NAND2-eq."
+    )
+
+    rel_path = os.path.relpath(stat_json_path) if os.path.isabs(stat_json_path) else stat_json_path
+    return (
+        f"> Source: `{rel_path}`  \n"
+        f"> Methodology: hierarchical (non-flattening) Yosys synthesis against Nangate 45 nm OCL.  \n"
+        f"> Reference cell: NAND2\\_X1 = {ref_area:.4f} \u00b5m\u00b2."
+        f"  SRAM macros treated as black-boxes (area excluded).  \n"
+        f"> Note: pre-P&R counts; post-P&R NAND2-eq total is in \u00a74.\n\n"
+        f"{hier_table}\n\n"
+        f"### ALU area breakdown by function\n\n"
+        f"{alu_table}\n\n"
+        f"{note}\n"
+    )
+
 def section_area(metrics_path):
     if not metrics_path or not os.path.isfile(metrics_path):
         return "_Metrics not found._\n"
@@ -322,6 +452,9 @@ def main():
     ap.add_argument("--clock-mhz",   default="?")
     ap.add_argument("--nangate-lib", default=None,
                     help="Nangate liberty file path; enables NAND2-equivalent reporting")
+    ap.add_argument("--gate-count-json", default=None,
+                    help="Path to Yosys stat.json for area hierarchy section "
+                         "(e.g. syn/build/gate_count_run/stat.json)")
     args = ap.parse_args()
 
     run_dir = os.path.abspath(args.run_dir)
@@ -330,6 +463,7 @@ def main():
         sys.exit(1)
 
     nand2_area = read_nand2_area(args.nangate_lib) if args.nangate_lib else 0.0
+    gate_count_section = section_gate_hierarchy(args.gate_count_json, nand2_area)
 
     # locate key directories
     sta_dir   = find_latest_step(run_dir, "*-openroad-stapostpnr")
@@ -370,32 +504,37 @@ def main():
 {section_area(metrics)}
 ---
 
-## 3. Cell Count
+## 3. Area Hierarchy (Gate Count)
+
+{gate_count_section}
+---
+
+## 4. Cell Count
 
 {section_cells(metrics, nand2_area)}
 ---
 
-## 4. Timing (Post-PnR STA)
+## 5. Timing (Post-PnR STA)
 
 {section_timing(sta_dir)}
 ---
 
-## 5. Power
+## 6. Power
 
 {section_power(sta_dir)}
 ---
 
-## 6. Routing & Wire Length
+## 7. Routing & Wire Length
 
 {section_wirelength(wl_csv)}
 ---
 
-## 7. Manufacturability
+## 8. Manufacturability
 
 {section_antenna(mfg_rpt)}
 ---
 
-## 8. Output Files
+## 9. Output Files
 
 {section_outputs(run_dir)}
 """

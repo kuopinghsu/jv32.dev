@@ -46,9 +46,16 @@ module jv32_alu #(
 
     generate
         if (FAST_SHIFT == 1) begin : gen_barrel_shift
+            // SRL and SRA share a single right-shift barrel tree.
+            // fill_mask sets the vacated MSBs to operand_a[31] for SRA;
+            // it is zero for SRL (unsigned fill), so no extra mux is needed.
+            logic [31:0] result_sr;
+            logic [31:0] fill_mask;
+            assign result_sr   = operand_a >> operand_b[4:0];
+            assign fill_mask   = ~(32'hFFFF_FFFF >> operand_b[4:0]) & {32{operand_a[31]}};
             assign result_sll  = operand_a << operand_b[4:0];
-            assign result_srl  = operand_a >> operand_b[4:0];
-            assign result_sra  = $signed(operand_a) >>> operand_b[4:0];
+            assign result_srl  = result_sr;
+            assign result_sra  = result_sr | fill_mask;
             assign shift_ready = 1'b1;
         end
         else begin : gen_serial_shift

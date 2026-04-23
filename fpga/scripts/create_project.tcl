@@ -41,6 +41,7 @@ set run_synth  [getenv RUN_SYNTH  "0"]
 set run_impl   [getenv RUN_IMPL   "0"]
 set flash_part [getenv FLASH_PART "mt25ql256-spi-x1_x2_x4"]
 set flash_part [getenv FLASH_PART "mt25ql256-spi-x1_x2_x4"]
+set use_cjtag  [getenv USE_CJTAG  "0"]
 
 # Derive absolute paths from the script location so the project can be
 # created from any working directory.
@@ -56,6 +57,7 @@ puts "   Part      : ${fpga_part}"
 puts "   Project   : ${proj_path}/${proj_name}"
 puts "   Top module: ${top_module}"
 puts "   CLK Hz    : ${clk_hz}"
+puts "   USE_CJTAG : ${use_cjtag}"
 puts "   run_synth : ${run_synth}"
 puts "   run_impl  : ${run_impl}"
 puts "   flash_part: ${flash_part}"
@@ -71,6 +73,10 @@ set_property default_lib        work    [current_project]
 
 # XILINX_URAM selects the UltraRAM inference path in sram_1rw.sv (XCKU5P)
 set_property verilog_define {XILINX_URAM} [current_fileset]
+
+# USE_CJTAG parameter override: 0=4-wire JTAG (default), 1=2-wire cJTAG.
+# Also read by constraints.xdc to select JTAG delays vs cJTAG false-paths.
+set_property generic "USE_CJTAG=1'b${use_cjtag}" [current_fileset]
 
 # ---------------------------------------------------------------------------
 # Add RTL source files
