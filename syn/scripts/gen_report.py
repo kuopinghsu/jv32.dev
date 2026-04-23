@@ -91,7 +91,7 @@ def wirelength_stats(csv_path):
 # section generators
 # ---------------------------------------------------------------------------
 
-def section_timing(sta_dir):
+def section_timing(sta_dir, run_dir=None):
     if not sta_dir or not os.path.isdir(sta_dir):
         return "_STA reports not found._\n"
 
@@ -136,7 +136,7 @@ def section_timing(sta_dir):
                 lines.append(f"| `{clk}` | {skew} |")
             lines.append("")
 
-        # critical-path slack
+        # worst setup slack from max.rpt
         max_txt = read(os.path.join(cdir, "max.rpt"))
         slacks = re.findall(r"slack \(MET\)\s*([\d.]+)|slack \(VIOLATED\)\s*(-[\d.]+)",
                             max_txt)
@@ -149,6 +149,67 @@ def section_timing(sta_dir):
                               f"Best: **{best:.3f} ns**\n")
             except ValueError:
                 pass
+
+        # design checks (slew/cap/fanout violations)
+        checks_txt = read(os.path.join(cdir, "checks.rpt"))
+        slew_viol   = grep_val(checks_txt, r"max slew violation count\s+(\d+)",     default=None)
+        fanout_viol = grep_val(checks_txt, r"max fanout violation count\s+(\d+)",   default=None)
+        cap_viol    = grep_val(checks_txt, r"max cap violation count\s+(\d+)",      default=None)
+        unconstr    = grep_val(checks_txt,
+                               r"There are (\d+) unconstrained endpoints", default=None)
+        if any(v is not None for v in [slew_viol, fanout_viol, cap_viol]):
+            lines.append("### Design Checks\n")
+            lines.append("| Check | Count | |")
+            lines.append("|---|---|---|")
+            if slew_viol   is not None:
+                icon = "✅" if slew_viol == "0" else "⚠️"
+                lines.append(f"| Max slew violations   | {slew_viol}   | {icon} |")
+            if cap_viol    is not None:
+                icon = "✅" if cap_viol == "0" else "⚠️"
+                lines.append(f"| Max cap violations    | {cap_viol}    | {icon} |")
+            if fanout_viol is not None:
+                icon = "✅" if fanout_viol == "0" else "⚠️"
+                lines.append(f"| Max fanout violations | {fanout_viol} | {icon} |")
+            if unconstr is not None:
+                lines.append(f"| Unconstrained endpoints | {unconstr} | ℹ️ |")
+            lines.append("")
+
+    # timing convergence table (if run_dir is provided)
+    if run_dir:
+        conv_steps = [
+            ("12-openroad-staprepnr",    "Pre-PnR (synthesis)"),
+            ("30-openroad-stamidpnr",    "Post-placement (mid-PnR)"),
+            ("35-openroad-stamidpnr-1",  "Post-CTS + resizer"),
+            ("42-openroad-stamidpnr-3",  "Post-GRT resizer"),
+        ]
+        conv_rows = []
+        for step_name, label in conv_steps:
+            step_dir = os.path.join(run_dir, step_name)
+            wns_file = os.path.join(step_dir, "wns.max.rpt")
+            if not os.path.isfile(wns_file):
+                # try in corner subdir
+                wns_file = os.path.join(step_dir, "tt_025C_1v10", "wns.max.rpt")
+            wns = grep_val(read(wns_file), r"^\s*\S+:\s*(-?[\d.]+)", default=None)
+            if wns is not None:
+                try:
+                    w = float(wns)
+                    icon = "✅" if w >= 0 else ("⚠️" if w > -1 else "❌")
+                    conv_rows.append(f"| {label} | {w:.3f} | {icon} |")
+                except ValueError:
+                    pass
+        if conv_rows:
+            # add final post-route row
+            try:
+                wf = float(wns_setup)
+                icon = "✅" if wf >= 0 else "❌"
+                conv_rows.append(f"| **Post-route STA (sign-off)** | **{wf:.3f}** | {icon} |")
+            except ValueError:
+                pass
+            lines += [
+                "### Timing Convergence\n",
+                "| Stage | Setup WNS (ns) | |",
+                "|---|---|---|",
+            ] + conv_rows + [""]
 
     return "\n".join(lines)
 
@@ -359,7 +420,7 @@ def section_cells(metrics_path, nand2_area: float = 0.0):
 
     def iv(k):
         v = d.get(k)
-        return str(int(v)) if v is not None else "N/A"
+        return int(v) if v is not None else None
 
     # NAND2-equivalent gate count from post-P&R standard-cell area.
     nand2_row = ""
@@ -367,48 +428,355 @@ def section_cells(metrics_path, nand2_area: float = 0.0):
         area_val = d.get("design__instance__area__stdcell")
         if area_val is not None:
             nand2_eq = float(area_val) / nand2_area
-            nand2_row = f"| **NAND2 equivalents (post-P&R)** | **{nand2_eq:,.0f}** |"
+            nand2_row = f"| **NAND2 equivalents (post-P&R)** | **{nand2_eq:,.0f}** | — |"
+
+    stdcell = iv('design__instance__count__stdcell') or 1
+
+    def pct(k):
+        v = iv(k)
+        if v is None or stdcell == 0:
+            return "N/A"
+        return f"{v / stdcell * 100:.1f}%"
 
     lines = [
-        "| Category | Count |",
-        "|---|---|",
-        f"| Total instances | {iv('design__instance__count')} |",
-        f"| Standard cells (excl. tap) | {iv('design__instance__count__stdcell')} |",
-        f"| Sequential (flip-flops) | {iv('design__instance__count__class:sequential_cell')} |",
-        f"| Multi-input combinational | {iv('design__instance__count__class:multi_input_combinational_cell')} |",
-        f"| Buffers | {iv('design__instance__count__class:buffer')} |",
-        f"| Inverters | {iv('design__instance__count__class:inverter')} |",
-        f"| Macros | {iv('design__instance__count__macros')} |",
-        f"| Tap cells | {iv('design__instance__count__class:tap_cell')} |",
-        f"| I/O ports | {iv('design__io')} |",
+        "| Category | Count | % of std cells |",
+        "|---|---|---|",
+        f"| Total instances | {iv('design__instance__count') or 'N/A'} | — |",
+        f"| Standard cells (excl. tap) | {stdcell:,} | 100% |",
+        f"| Sequential (flip-flops) | {iv('design__instance__count__class:sequential_cell') or 'N/A'} "
+        f"| {pct('design__instance__count__class:sequential_cell')} |",
+        f"| Multi-input combinational | {iv('design__instance__count__class:multi_input_combinational_cell') or 'N/A'} "
+        f"| {pct('design__instance__count__class:multi_input_combinational_cell')} |",
+        f"| Buffers | {iv('design__instance__count__class:buffer') or 'N/A'} "
+        f"| {pct('design__instance__count__class:buffer')} |",
+        f"| Inverters | {iv('design__instance__count__class:inverter') or 'N/A'} "
+        f"| {pct('design__instance__count__class:inverter')} |",
+        f"| Macros | {iv('design__instance__count__macros') or 'N/A'} | — |",
+        f"| Tap cells | {iv('design__instance__count__class:tap_cell') or 'N/A'} | — |",
+        f"| I/O ports | {iv('design__io') or 'N/A'} | — |",
     ]
     if nand2_row:
         lines.append(nand2_row)
     return "\n".join(lines) + "\n"
 
-def section_wirelength(wl_csv):
+def section_wirelength(wl_csv, drt_metrics=None):
     stats = wirelength_stats(wl_csv)
     if stats is None:
         return "_Wire length data not found._\n"
     total, n_nets, longest_net, longest_mm = stats
+
+    # Via count from detailed-routing metrics
+    via_count = "N/A"
+    if drt_metrics and os.path.isfile(drt_metrics):
+        try:
+            d = json.load(open(drt_metrics))
+            v = d.get("route__vias")
+            if v is not None:
+                via_count = f"{int(v):,}"
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Total routed nets from DRT metrics
+    routed_nets = "N/A"
+    if drt_metrics and os.path.isfile(drt_metrics):
+        try:
+            d = json.load(open(drt_metrics))
+            v = d.get("route__net")
+            if v is not None:
+                routed_nets = f"{int(v):,}"
+        except (OSError, json.JSONDecodeError):
+            pass
+
     lines = [
         "| Metric | Value |",
         "|---|---|",
-        f"| Total nets | {n_nets:,} |",
+        f"| Total routed nets | {routed_nets} |",
+        f"| Constrained signal nets | {n_nets:,} |",
         f"| Total wirelength | **{total:.2f} mm** |",
-        f"| Longest net (`{longest_net}`) | {longest_mm:.3f} mm |",
+        f"| Total vias | {via_count} |",
     ]
+
+    # Top-10 longest nets table
+    try:
+        with open(wl_csv) as f:
+            rows = list(csv.DictReader(f))
+        if rows:
+            def _to_mm(s):
+                s = s.strip()
+                if s.endswith("mm"):
+                    return float(s[:-2])
+                if "µm" in s or "um" in s:
+                    return float(re.sub(r"[µu]m", "", s)) / 1000
+                return float(s) / 1000
+            top10 = [(r["net"], _to_mm(r["length_um"])) for r in rows[:10]]
+            lines.append("")
+            lines.append("### Longest Nets (Top 10)")
+            lines.append("")
+            lines.append("| Rank | Net | Length |")
+            lines.append("|---|---|---|")
+            for i, (net, mm) in enumerate(top10, 1):
+                lines.append(f"| {i} | `{net}` | {mm:.3f} mm |")
+    except (OSError, KeyError):
+        pass
+
     return "\n".join(lines) + "\n"
 
-def section_antenna(mfg_rpt):
+def section_cts(run_dir):
+    """Clock Tree Synthesis statistics."""
+    cts_dir = find_latest_step(run_dir, "*-openroad-cts")
+    if not cts_dir:
+        return "_CTS report not found._\n"
+    txt = read(os.path.join(cts_dir, "cts.rpt"))
+
+    def cts_val(pat, default="N/A"):
+        m = re.search(pat, txt)
+        return m.group(1) if m else default
+
+    roots   = cts_val(r"Total number of Clock Roots:\s*(\d+)")
+    bufs    = cts_val(r"Total number of Buffers Inserted:\s*(\d+)")
+    subnets = cts_val(r"Total number of Clock Subnets:\s*(\d+)")
+    sinks   = cts_val(r"Total number of Sinks:\s*(\d+)")
+
+    # Grab post-CTS STA WNS from step 35 (stamidpnr-1 = post-CTS)
+    sta_cts = find_latest_step(run_dir, "*-openroad-stamidpnr-1")
+    setup_wns = hold_wns = "N/A"
+    if sta_cts:
+        setup_wns = grep_val(read(os.path.join(sta_cts, "wns.max.rpt")),
+                             r"^tt_025C.*?:\s*(-?[\d.]+)", default="N/A")
+        hold_wns  = grep_val(read(os.path.join(sta_cts, "wns.min.rpt")),
+                             r"^tt_025C.*?:\s*(-?[\d.]+)", default="N/A")
+    def _ok(v):
+        try:
+            return "✅" if float(v) >= 0 else "⚠️"
+        except ValueError:
+            return ""
+
+    # Clock latency/skew from post-PnR STA (most accurate)
+    sta_dir = find_latest_step(run_dir, "*-openroad-stapostpnr")
+    skew_rows = []
+    if sta_dir:
+        corners = sorted(d for d in os.listdir(sta_dir)
+                         if os.path.isdir(os.path.join(sta_dir, d)))
+        for corner in corners[:1]:  # report first corner
+            cdir = os.path.join(sta_dir, corner)
+            skew_max = read(os.path.join(cdir, "skew.max.rpt"))
+            skew_min = read(os.path.join(cdir, "skew.min.rpt"))
+            for clk, skew in re.findall(
+                    r"Clock\s+(\S+)\n.*?\n(-?[\d.]+)\s+setup skew",
+                    skew_max, re.DOTALL):
+                hold_skew = grep_val(
+                    skew_min,
+                    rf"Clock\s+{re.escape(clk)}(?:\n[^\n]*){{1,4}}\n(-?[\d.]+)\s+hold skew",
+                    default=grep_val(
+                        skew_min,
+                        rf"Clock\s+{re.escape(clk)}\n[\s\S]{{1,300}}\n(-?[\d.]+)\s+hold skew",
+                        default="N/A"))
+                skew_rows.append(
+                    f"| `{clk}` | {skew} | {hold_skew} |")
+
+    lines = [
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Clock roots | {roots} |",
+        f"| CTS buffers inserted | {bufs} |",
+        f"| Clock subnets | {subnets} |",
+        f"| Clock sinks | {sinks} |",
+        f"| Post-CTS setup WNS | {setup_wns} ns {_ok(setup_wns)} |",
+        f"| Post-CTS hold WNS  | {hold_wns} ns {_ok(hold_wns)} |",
+    ]
+    if skew_rows:
+        lines += [
+            "",
+            "### Clock Skew (post-PnR, tt_025C_1v10)",
+            "",
+            "| Clock | Setup skew (ns) | Hold skew (ns) |",
+            "|---|---|---|",
+        ] + skew_rows
+    return "\n".join(lines) + "\n"
+
+def section_routing_drc(run_dir):
+    """TritonRoute DRC convergence table from or_metrics_out.json."""
+    drt_dir = find_latest_step(run_dir, "*-openroad-detailedrouting")
+    if not drt_dir:
+        return "_Detailed routing directory not found._\n"
+    metrics_path = os.path.join(drt_dir, "or_metrics_out.json")
+    if not os.path.isfile(metrics_path):
+        return "_Routing metrics not found._\n"
+    try:
+        d = json.load(open(metrics_path))
+    except (OSError, json.JSONDecodeError):
+        return "_Could not parse routing metrics._\n"
+
+    lines = [
+        "| Iteration | DRC Errors | Wirelength (µm) |",
+        "|---|---|---|",
+    ]
+    i = 1
+    while True:
+        errs = d.get(f"route__drc_errors__iter:{i}")
+        wl   = d.get(f"route__wirelength__iter:{i}")
+        if errs is None:
+            break
+        lines.append(f"| {i} | {int(errs):,} | {int(wl):,} |")
+        if int(errs) == 0:
+            break
+        i += 1
+
+    final_errs = d.get("route__drc_errors", "?")
+    result = "✅" if str(final_errs) == "0" else "❌"
+    lines.append(f"| **Final** | **{final_errs}** {result} | — |")
+    return "\n".join(lines) + "\n"
+
+def section_congestion(run_dir):
+    """GRT final congestion report extracted from the OpenROAD log."""
+    grt_dir = find_latest_step(run_dir, "*-openroad-globalrouting")
+    if not grt_dir:
+        return "_Global routing directory not found._\n"
+    log = read(os.path.join(grt_dir, "openroad-globalrouting.log"))
+    # Extract lines after "Final congestion report:"
+    m = re.search(r"Final congestion report:\n(.*?)(?:\n\[|$)", log,
+                  re.DOTALL)
+    if not m:
+        return "_Congestion report not found in GRT log._\n"
+    table_txt = m.group(1)
+    layer_rows = re.findall(
+        r"(metal\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)%\s+(\d+\s*/\s*\d+\s*/\s*\d+)",
+        table_txt)
+    total_m = re.search(
+        r"Total\s+(\d+)\s+(\d+)\s+([\d.]+)%\s+(\d+\s*/\s*\d+\s*/\s*\d+)",
+        table_txt)
+
+    lines = [
+        "| Layer | Resource | Demand | Usage | Overflow (H/V/Total) |",
+        "|---|---|---|---|---|",
+    ]
+    for layer, res, dem, pct, ovf in layer_rows:
+        pct_f = float(pct)
+        flag = " ⚠️" if pct_f > 70 else " ✅" if pct_f < 90 else ""
+        lines.append(f"| {layer} | {int(res):,} | {int(dem):,} | {pct}%{flag} | {ovf.strip()} |")
+    if total_m:
+        r, d2, p, ov = total_m.groups()
+        flag = " ✅" if all(x.strip() == "0" for x in ov.split("/")) else " ❌"
+        lines.append(
+            f"| **Total** | **{int(r):,}** | **{int(d2):,}** | **{p}%** | **{ov.strip()}**{flag} |")
+
+    # Add GRT wirelength from log
+    grt_wl = grep_val(log, r"GRT-0018\].*?wirelength:\s*([\d,]+)", default=None)
+    if grt_wl:
+        lines += ["", f"> GRT total wirelength: {grt_wl} µm"]
+    return "\n".join(lines) + "\n"
+
+def section_runtime(run_dir):
+    """Flow step runtimes from runtime.txt files."""
+    steps = [
+        ("06-yosys-synthesis",           "Synthesis",           "Yosys"),
+        ("13-openroad-floorplan",         "Floorplan",           "OpenROAD"),
+        ("27-openroad-globalplacement",   "Global Placement",    "OpenROAD (RePLace)"),
+        ("34-openroad-cts",               "Clock Tree Synthesis","TritonCTS"),
+        ("38-openroad-globalrouting",     "Global Routing",      "OpenROAD (FastRoute)"),
+        ("43-openroad-detailedrouting",   "Detailed Routing",    "TritonRoute"),
+        ("54-openroad-stapostpnr",        "Post-PnR STA",        "OpenROAD (OpenSTA)"),
+    ]
+    rows = []
+    total_s = 0
+    for pattern, label, tool in steps:
+        # exact directory name
+        rt_file = os.path.join(run_dir, pattern, "runtime.txt")
+        if not os.path.isfile(rt_file):
+            # fall back to glob
+            matches = sorted(glob.glob(os.path.join(run_dir, f"*{pattern[2:]}*")))
+            rt_file = os.path.join(matches[-1], "runtime.txt") if matches else ""
+        rt = read(rt_file).strip() if rt_file and os.path.isfile(rt_file) else "N/A"
+        if re.match(r"\d+:\d+:\d+", rt):
+            h, m, s = rt.split(":")
+            total_s += int(h) * 3600 + int(m) * 60 + int(float(s))
+        rows.append(f"| {label} | {tool} | {rt} |")
+
+    lines = [
+        "| Step | Tool | Runtime |",
+        "|---|---|---|",
+    ] + rows
+    if total_s > 0:
+        tm, ts = divmod(total_s, 60)
+        th, tm = divmod(tm, 60)
+        total_str = (f"{th} h {tm} m {ts} s" if th else f"{tm} m {ts} s")
+        lines.append(f"| **Total (key steps)** | | **{total_str}** |")
+    return "\n".join(lines) + "\n"
+
+def section_antenna(run_dir, mfg_rpt):
+    """
+    Build the Manufacturability table.  Reads the OpenLane2 manufacturability
+    report for the Antenna and any LVS/DRC summary lines already embedded
+    there, then falls back to dedicated step output files for Magic DRC and
+    Netgen LVS so the table is populated even when those steps ran in a later
+    resumption of the flow.
+    """
     txt = read(mfg_rpt)
-    if not txt:
-        return "_Manufacturability report not found._\n"
-    lines = ["| Check | Result |", "|---|---|"]
-    for check in ("Antenna", "LVS", "DRC"):
+
+    # --- parse manufacturability.rpt for pre-filled results ---
+    def mfg_result(check):
         m = re.search(rf"\*\s+{check}\n(.+)", txt)
-        result = m.group(1).strip() if m else "N/A"
-        lines.append(f"| {check} | {result} |")
+        return m.group(1).strip() if m else None
+
+    antenna_res = mfg_result("Antenna") or "N/A"
+    lvs_res     = mfg_result("LVS")     or None
+    drc_res     = mfg_result("DRC")     or None
+
+    # --- Magic DRC result from dedicated step directory ---
+    if drc_res is None or drc_res == "N/A":
+        magic_drc_step = find_latest_step(run_dir, "*-magic-drc")
+        if magic_drc_step:
+            # magic.drc.json produced by OpenLane2
+            drc_json = os.path.join(magic_drc_step, "reports", "magic.drc.json")
+            # older OpenLane2 versions write the count directly into metrics
+            drc_rpt  = os.path.join(magic_drc_step, "magic.drc.rpt")
+            drc_count_txt = ""
+            if os.path.isfile(drc_json):
+                try:
+                    dj = json.load(open(drc_json))
+                    total = dj.get("total", dj.get("count", None))
+                    if total is not None:
+                        drc_count_txt = str(total)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            if not drc_count_txt and os.path.isfile(drc_rpt):
+                m = re.search(r"(\d+)\s+DRC.*error", read(drc_rpt), re.IGNORECASE)
+                drc_count_txt = m.group(1) if m else ""
+            if drc_count_txt:
+                count = int(drc_count_txt) if drc_count_txt.isdigit() else 0
+                drc_res = ("Passed ✅" if count == 0
+                           else f"{count} violations ❌")
+            else:
+                drc_res = "Step ran — see DRC report"
+
+    # --- Netgen LVS result from dedicated step directory ---
+    if lvs_res is None or lvs_res == "N/A":
+        lvs_step = find_latest_step(run_dir, "*-netgen-lvs")
+        if lvs_step:
+            lvs_rpt = os.path.join(lvs_step, "lvs.rpt")
+            if not os.path.isfile(lvs_rpt):
+                # Some OpenLane2 versions put it here
+                lvs_rpt = os.path.join(lvs_step, "reports", "lvs.rpt")
+            lvs_txt = read(lvs_rpt)
+            if lvs_txt:
+                if re.search(r"match\.?\s*$|Circuits match|Netlists match",
+                             lvs_txt, re.IGNORECASE | re.MULTILINE):
+                    lvs_res = "Passed ✅"
+                else:
+                    m = re.search(r"(\d+)\s+(error|discrepanc)",
+                                  lvs_txt, re.IGNORECASE)
+                    lvs_res = (f"{m.group(1)} mismatches ❌" if m
+                               else "Failed ❌")
+            else:
+                lvs_res = "Step ran — see LVS report"
+
+    lines = [
+        "| Check | Result |",
+        "|---|---|",
+        f"| Antenna | {antenna_res} |",
+        f"| LVS     | {lvs_res or 'N/A — run `make synth` (RUN_LVS enabled) or `make lvs`'} |",
+        f"| DRC     | {drc_res or 'N/A — run `make synth` (RUN_MAGIC_DRC enabled) or `make drc`'} |",
+    ]
     return "\n".join(lines) + "\n"
 
 def section_outputs(run_dir):
@@ -463,17 +831,29 @@ def main():
         sys.exit(1)
 
     nand2_area = read_nand2_area(args.nangate_lib) if args.nangate_lib else 0.0
-    gate_count_section = section_gate_hierarchy(args.gate_count_json, nand2_area)
 
     # locate key directories
     sta_dir   = find_latest_step(run_dir, "*-openroad-stapostpnr")
     mfg_dir   = find_latest_step(run_dir, "*-misc-reportmanufacturability")
     wl_dir    = find_latest_step(run_dir, "*-odb-reportwirelength")
     gpl_dir   = find_latest_step(run_dir, "*-openroad-globalplacement")
+    drt_dir   = find_latest_step(run_dir, "*-openroad-detailedrouting")
 
-    mfg_rpt   = os.path.join(mfg_dir, "manufacturability.rpt") if mfg_dir else ""
-    wl_csv    = os.path.join(wl_dir,  "wire_lengths.csv")       if wl_dir  else ""
-    metrics   = os.path.join(gpl_dir, "or_metrics_out.json")    if gpl_dir else ""
+    mfg_rpt     = os.path.join(mfg_dir, "manufacturability.rpt") if mfg_dir else ""
+    wl_csv      = os.path.join(wl_dir,  "wire_lengths.csv")       if wl_dir  else ""
+    metrics     = os.path.join(gpl_dir, "or_metrics_out.json")    if gpl_dir else ""
+    drt_metrics = os.path.join(drt_dir, "or_metrics_out.json")    if drt_dir else ""
+
+    # Auto-discover gate_count stat.json when --gate-count-json is not given.
+    # 'make gate-count' writes to build/gate_count_run/stat.json, which sits
+    # one directory above the openlane_run directory.
+    if not args.gate_count_json:
+        candidate = os.path.join(run_dir, "..", "gate_count_run", "stat.json")
+        candidate = os.path.normpath(candidate)
+        if os.path.isfile(candidate):
+            args.gate_count_json = candidate
+
+    gate_count_section = section_gate_hierarchy(args.gate_count_json, nand2_area)
 
     report = f"""\
 # jv32_soc — P&R Results Report
@@ -489,7 +869,7 @@ def main():
 
 | Parameter | Value |
 |---|---|
-| Clock | {args.clock_mhz} MHz |
+| Clock | {args.clock_mhz} MHz (`core_clk`, period = {f"{1000/float(args.clock_mhz):.1f}" if args.clock_mhz not in ("?","") else "?"} ns) |
 | IRAM | {args.iram_kb} KB |
 | DRAM | {args.dram_kb} KB |
 | `FAST_MUL` | {args.fast_mul} |
@@ -509,32 +889,52 @@ def main():
 {gate_count_section}
 ---
 
-## 4. Cell Count
+## 4. Cell Count & Mix
 
 {section_cells(metrics, nand2_area)}
 ---
 
-## 5. Timing (Post-PnR STA)
+## 5. Clock Tree Synthesis
 
-{section_timing(sta_dir)}
+{section_cts(run_dir)}
 ---
 
-## 6. Power
+## 6. Timing — Post-PnR STA
+
+{section_timing(sta_dir, run_dir)}
+---
+
+## 7. Design Rule Checks (Post-Route)
+
+{section_routing_drc(run_dir)}
+---
+
+## 8. Power
 
 {section_power(sta_dir)}
 ---
 
-## 7. Routing & Wire Length
+## 9. Routing & Wire Length
 
-{section_wirelength(wl_csv)}
+{section_wirelength(wl_csv, drt_metrics)}
 ---
 
-## 8. Manufacturability
+## 10. Routing Congestion (GRT)
 
-{section_antenna(mfg_rpt)}
+{section_congestion(run_dir)}
 ---
 
-## 9. Output Files
+## 11. Manufacturability
+
+{section_antenna(run_dir, mfg_rpt)}
+---
+
+## 12. Flow Runtime
+
+{section_runtime(run_dir)}
+---
+
+## 13. Output Files
 
 {section_outputs(run_dir)}
 """

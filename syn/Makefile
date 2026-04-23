@@ -104,7 +104,7 @@ export NIX_SHELL
 # reporting in gen_report.py.
 NANGATE_LIB ?= $(NANGATE_HOME)/lib/NangateOpenCellLibrary_typical.lib
 
-.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report gate-count clean cleanall help
+.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report gate-count drc lvs clean cleanall help
 
 all: synth
 
@@ -537,6 +537,127 @@ summary:
 	@find $(OPENLANE_RUN_DIR) -name "metrics.json" | sort -r | head -1 | \
 	    xargs -r cat
 
+# ── Standalone DRC (Magic) ───────────────────────────────────────────────────
+# Runs Magic DRC on the KLayout GDS from the last OpenLane2 run.
+# Magic uses the built-in FreePDK45 / Nangate45 DRC rule deck.
+#
+# Usage:
+#   make drc
+#   make drc GDS_FILE=/path/to/custom.gds
+#
+_OL_GDS  := $(OPENLANE_RUN_DIR)/final/klayout_gds/$(DESIGN).klayout.gds
+GDS_FILE ?= $(if $(wildcard $(_OL_GDS)),$(_OL_GDS),)
+DRC_RPT  := $(BUILD_DIR)/drc.rpt
+DRC_LOG  := $(BUILD_DIR)/drc_magic.log
+
+drc:
+	@echo "========================================"
+	@echo " Standalone Magic DRC"
+	@echo "  Design  : $(DESIGN)"
+	@echo "  GDS     : $(GDS_FILE)"
+	@echo "  Report  : $(DRC_RPT)"
+	@echo "========================================"
+	@if [ -z "$(GDS_FILE)" ] || [ ! -f "$(GDS_FILE)" ]; then \
+	    echo "ERROR: GDS not found: $(GDS_FILE)"; \
+	    echo "       Run 'make synth' first, or set GDS_FILE=<path>"; \
+	    exit 1; \
+	fi
+	@if [ -z "$(PDK_ROOT)" ]; then \
+	    echo "ERROR: PDK_ROOT is not set."; exit 1; \
+	fi
+	@mkdir -p $(BUILD_DIR)
+	@printf '%%s\n' \
+	    'drc euclidean on' \
+	    'load $(GDS_FILE) -dereference' \
+	    'select top cell' \
+	    'drc check' \
+	    'set count [drc listcount]' \
+	    'puts "DRC violations: $$count"' \
+	    'set f [open $(DRC_RPT) w]' \
+	    'puts $$f "Magic DRC report — $(DESIGN)"' \
+	    'puts $$f "GDS : $(GDS_FILE)"' \
+	    'puts $$f "Date: [clock format [clock seconds]]"' \
+	    'puts $$f ""' \
+	    'puts $$f "Total DRC violations: $$count"' \
+	    'puts $$f ""' \
+	    'foreach item [drc listall why] { puts $$f $$item }' \
+	    'close $$f' \
+	    'quit -noprompt' \
+	    > $(BUILD_DIR)/drc_magic_cmd.tcl
+	MAGIC_EXT_USE_GDS=1 \
+	    magic -dnull -noconsole \
+	        -rcfile $(PDK_ROOT)/freepdk45/libs.tech/magic/FreePDK45.magicrc \
+	        $(BUILD_DIR)/drc_magic_cmd.tcl \
+	    2>&1 | tee $(DRC_LOG)
+	@rm -f $(BUILD_DIR)/drc_magic_cmd.tcl
+	@echo "========================================"
+	@echo " DRC report: $(DRC_RPT)"
+	@grep -E "^Total DRC" $(DRC_RPT) || true
+	@echo "========================================"
+
+# ── Standalone LVS (Magic + Netgen) ─────────────────────────────────────────
+# Extracts a SPICE netlist from the GDS using Magic, then runs Netgen LVS
+# against the post-route gate-level Verilog netlist.
+#
+# Usage:
+#   make lvs
+#   make lvs GDS_FILE=... NETLIST=...
+#
+_OL_NL   := $(OPENLANE_RUN_DIR)/final/nl/$(DESIGN).nl.v
+LVS_NL   ?= $(if $(wildcard $(_OL_NL)),$(_OL_NL),)
+LVS_LOG  := $(BUILD_DIR)/lvs.log
+LVS_RPT  := $(BUILD_DIR)/lvs.rpt
+
+lvs:
+	@echo "========================================"
+	@echo " Standalone Magic + Netgen LVS"
+	@echo "  Design  : $(DESIGN)"
+	@echo "  GDS     : $(GDS_FILE)"
+	@echo "  Netlist : $(LVS_NL)"
+	@echo "  Report  : $(LVS_RPT)"
+	@echo "========================================"
+	@if [ -z "$(GDS_FILE)" ] || [ ! -f "$(GDS_FILE)" ]; then \
+	    echo "ERROR: GDS not found: $(GDS_FILE)"; \
+	    echo "       Run 'make synth' first, or set GDS_FILE=<path>"; \
+	    exit 1; \
+	fi
+	@if [ -z "$(LVS_NL)" ] || [ ! -f "$(LVS_NL)" ]; then \
+	    echo "ERROR: Gate-level netlist not found: $(LVS_NL)"; \
+	    echo "       Run 'make synth' first, or set LVS_NL=<path>"; \
+	    exit 1; \
+	fi
+	@if [ -z "$(PDK_ROOT)" ]; then \
+	    echo "ERROR: PDK_ROOT is not set."; exit 1; \
+	fi
+	@mkdir -p $(BUILD_DIR)
+	@# Step 1: Magic SPICE extraction from GDS
+	@printf '%%s\n' \
+	    'gds read $(GDS_FILE)' \
+	    'load $(DESIGN)' \
+	    'select top cell' \
+	    'port makeall' \
+	    'ext2spice lvs' \
+	    'ext2spice -o $(BUILD_DIR)/$(DESIGN).spice' \
+	    'quit -noprompt' \
+	    > $(BUILD_DIR)/lvs_magic_cmd.tcl
+	MAGIC_EXT_USE_GDS=1 \
+	    magic -dnull -noconsole \
+	        -rcfile $(PDK_ROOT)/freepdk45/libs.tech/magic/FreePDK45.magicrc \
+	        $(BUILD_DIR)/lvs_magic_cmd.tcl \
+	    2>&1 | tee $(LVS_LOG)
+	@rm -f $(BUILD_DIR)/lvs_magic_cmd.tcl
+	@# Step 2: Netgen LVS (extracted SPICE vs gate-level netlist)
+	netgen -batch lvs \
+	    "$(BUILD_DIR)/$(DESIGN).spice $(DESIGN)" \
+	    "$(LVS_NL) $(DESIGN)" \
+	    $(PDK_ROOT)/freepdk45/libs.tech/netgen/FreePDK45_setup.tcl \
+	    $(LVS_RPT) \
+	    2>&1 | tee -a $(LVS_LOG)
+	@echo "========================================"
+	@echo " LVS report: $(LVS_RPT)"
+	@grep -E "(Circuit|Netlist|match|Mismatch)" $(LVS_RPT) | tail -5 || true
+	@echo "========================================"
+
 # ── Clean ─────────────────────────────────────────────────────────────────────
 # SLPP_ALL_DIRS: Surelog pre-processing cache directories generated by OpenLane
 # (yosys-with-surelog step).  They live in the source tree but are fully
@@ -567,11 +688,13 @@ help:
 	@echo "  make openram-setup            # create local Python venv for OpenRAM"
 	@echo "  make syn-setup                # pre-fetch OpenLane2 Nix deps (run once)"
 	@echo "  make gen-mem                  # compile OpenRAM SRAM macros (freepdk45)"
-	@echo "  make synth                    # run OpenLane2 (synth + PnR)"
+	@echo "  make synth                    # run OpenLane2 (synth + PnR + DRC + LVS)"
 	@echo "  make synth-resume             # resume last OpenLane2 run from failed step"
 	@echo "  make gate-count               # hierarchical gate count (NAND2 eq, with hierarchy)"
 	@echo "  make pnr                      # standalone OpenROAD P&R (after synth)"
-	@echo "  make timing-report            # post-route STA (after pnr)"
+	@echo "  make timing-report            # post-route STA with hold repair (after pnr)"
+	@echo "  make drc                      # standalone Magic DRC on last OpenLane2 GDS"
+	@echo "  make lvs                      # standalone Magic+Netgen LVS on last OpenLane2 GDS"
 	@echo "  make check                    # verify tool paths"
 	@echo "  make reports                  # print all .rpt files from last OpenLane2 run"
 	@echo "  make summary                  # print metrics.json from last OpenLane2 run"

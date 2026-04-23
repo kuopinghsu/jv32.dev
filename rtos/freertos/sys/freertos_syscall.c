@@ -38,32 +38,38 @@ void *_sbrk(int incr)
 
 int _close(int file)
 {
+    UNUSED(file);
     return -1;
 }
 
 int _fstat(int file, struct stat *st)
 {
+    UNUSED(file);
     st->st_mode = S_IFCHR;
     return 0;
 }
 
 int _isatty(int file)
 {
+    UNUSED(file);
     return 1;
 }
 
 int _lseek(int file, int offset, int whence)
 {
+    UNUSED(file); UNUSED(offset); UNUSED(whence);
     return 0;
 }
 
 int _read(int file, char *ptr, int len)
 {
+    UNUSED(file); UNUSED(ptr); UNUSED(len);
     return 0;
 }
 
 int _write(int file, char *ptr, int len)
 {
+    UNUSED(file);
     for (int i = 0; i < len; i++) {
         if (ptr[i] == '\n')
             jv_putc('\r');
@@ -76,6 +82,7 @@ int _write(int file, char *ptr, int len)
 
 int _kill(int pid, int sig)
 {
+    UNUSED(pid); UNUSED(sig);
     errno = EINVAL;
     return -1;
 }
@@ -87,34 +94,40 @@ int _getpid(void)
 
 int _open(const char *name, int flags, int mode)
 {
+    UNUSED(name); UNUSED(flags); UNUSED(mode);
     return -1;
 }
 
 int _wait(int *status)
 {
+    UNUSED(status);
     errno = ECHILD;
     return -1;
 }
 
 int _unlink(const char *name)
 {
+    UNUSED(name);
     errno = ENOENT;
     return -1;
 }
 
 int _times(struct tms *buf)
 {
+    UNUSED(buf);
     return -1;
 }
 
 int _stat(const char *file, struct stat *st)
 {
+    UNUSED(file);
     st->st_mode = S_IFCHR;
     return 0;
 }
 
 int _link(const char *old, const char *new)
 {
+    UNUSED(old); UNUSED(new);
     errno = EMLINK;
     return -1;
 }
@@ -127,6 +140,7 @@ int _fork(void)
 
 int _execve(const char *name, char *const *argv, char *const *env)
 {
+    UNUSED(name); UNUSED(argv); UNUSED(env);
     errno = ENOMEM;
     return -1;
 }

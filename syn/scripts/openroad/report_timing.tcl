@@ -128,6 +128,28 @@ if {[catch {estimate_parasitics -global_routing} err]} {
 }
 
 ###############################################################################
+# Hold-time repair
+# Insert delay buffers on paths with hold-time violations before reporting.
+# Violations of -7 to -2 ps WNS (observed post-route) are fixed here for the
+# standalone timing-report run.  Future OpenLane2 flow runs use the increased
+# PL_RESIZER_HOLD_SLACK_MARGIN / GRT_RESIZER_HOLD_SLACK_MARGIN (config.yaml).
+###############################################################################
+puts "\n===================================================="
+puts " \[4b/5\] Repairing hold violations (slack margin 0.03 ns)"
+puts "====================================================\n"
+
+if {[catch {
+    repair_timing -hold -slack_margin 0.03 -max_buffer_percent 20
+    # Re-estimate parasitics so subsequent reports see the repaired topology.
+    if {[catch {estimate_parasitics -global_routing} err]} {
+        estimate_parasitics -placement
+    }
+    puts "  Hold repair complete."
+} err]} {
+    puts "  NOTE: repair_timing -hold skipped: $err"
+}
+
+###############################################################################
 # Reports
 ###############################################################################
 puts "\n===================================================="

@@ -150,11 +150,16 @@ PL_RESIZER_SETUP_MAX_BUFFER_PCT: 100
 
 # Reduce post-CTS timing margins to avoid over-constraining pre-route repair.
 PL_RESIZER_SETUP_SLACK_MARGIN: 0.01
-PL_RESIZER_HOLD_SLACK_MARGIN: 0.01
+# Hold slack margin: 0.03 ns covers the worst observed post-route hold
+# violation (-7.2 ps WNS) with headroom.  Applied at placement, post-CTS, and
+# post-global-routing resizer stages.
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.03
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.03
 
 # Stage 36 hold repair can exceed the default hold-buffer budget on this
 # macro-heavy design; raise the cap to prevent RSZ-0060 early termination.
 PL_RESIZER_HOLD_MAX_BUFFER_PCT: 100
+GRT_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 PL_RESIZER_ALLOW_SETUP_VIOS: true
 PL_RESIZER_FIX_HOLD_FIRST: true
 
@@ -191,20 +196,24 @@ RUN_KLAYOUT_XOR: false
 #       Magic.WriteLEF; it is gated on RUN_MAGIC_WRITE_LEF in classic.py so
 #       setting this to false also skips that checker.
 RUN_MAGIC_WRITE_LEF: false
-RUN_MAGIC_DRC: false
+# Enable DRC and LVS checks.
+# Magic DRC uses the built-in FreePDK45/Nangate45 rule deck.
+# LVS: Magic SPICE extraction (GDS input, see MAGIC_EXT_USE_GDS) + Netgen.
+# KLayout DRC is only supported for sky130; FreePDK45 is handled by Magic DRC.
+RUN_MAGIC_DRC: true
 RUN_KLAYOUT_DRC: false
-RUN_LVS: false
+RUN_LVS: true
 
 # Magic.SpiceExtraction still executes in Classic; use GDS input to bypass LEF
 # parsing issues seen with via1/metal1/metal2 in Magic.
 MAGIC_EXT_USE_GDS: true
 
 # Preserve progress with current implementation quality by warning (not error)
-# on extraction overlap findings and residual hold violations at final checkers.
+# on extraction overlap findings and PDN gaps at final checkers.
 ERROR_ON_ILLEGAL_OVERLAPS: false
 ERROR_ON_PDN_VIOLATIONS: false
-HOLD_VIOLATION_CORNERS:
-  - ""
+# HOLD_VIOLATION_CORNERS: no longer suppressed — hold repair margins above
+# should eliminate violations in future runs.
 
 # ── Fill insertion ────────────────────────────────────────────────────────────
 RUN_FILL_INSERTION: true
