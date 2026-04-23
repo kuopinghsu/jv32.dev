@@ -321,6 +321,8 @@ synth: check $(BUILD_DIR)
 	@echo " OpenLane2 run complete."
 	@echo " Results: $(OPENLANE_RUN_DIR)/"
 	@echo "========================================"
+	@echo " Running gate-count analysis..."
+	@$(MAKE) --no-print-directory gate-count
 	@echo " Generating summary report..."
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_report.py \
 	    $(OPENLANE_RUN_DIR) \

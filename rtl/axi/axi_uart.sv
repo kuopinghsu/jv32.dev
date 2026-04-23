@@ -78,12 +78,16 @@ module axi_uart #(
     input logic rst_n,
 
     // AXI4-Lite interface
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [31:0] axi_awaddr,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic        axi_awvalid,
     output logic        axi_awready,
 
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [31:0] axi_wdata,
     input  logic [ 3:0] axi_wstrb,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic        axi_wvalid,
     output logic        axi_wready,
 
@@ -91,7 +95,9 @@ module axi_uart #(
     output logic       axi_bvalid,
     input  logic       axi_bready,
 
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [31:0] axi_araddr,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic        axi_arvalid,
     output logic        axi_arready,
 

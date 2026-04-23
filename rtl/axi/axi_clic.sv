@@ -42,7 +42,9 @@ module axi_clic #(
     output logic [ 1:0] s_bresp,
     output logic        s_bvalid,
     input  logic        s_bready,
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [31:0] s_araddr,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic        s_arvalid,
     output logic        s_arready,
     output logic [31:0] s_rdata,
@@ -106,7 +108,9 @@ module axi_clic #(
     logic        w_active;
     logic [31:0] w_data_r;
     logic [ 3:0] w_strb_r;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] wr_addr_sel;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] wr_data_sel;
     logic [ 3:0] wr_strb_sel;
     logic [31:0] wr_msk;

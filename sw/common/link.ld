@@ -33,6 +33,18 @@ SECTIONS {
         *(.gnu.linkonce.r.*)
     } > IRAM
 
+    .init_array : {
+        __init_array_start = .;
+        KEEP(*(.init_array*))
+        __init_array_end = .;
+    } > IRAM
+
+    .fini_array : {
+        __fini_array_start = .;
+        KEEP(*(.fini_array*))
+        __fini_array_end = .;
+    } > IRAM
+
     /* End of IRAM read-only content */
     _iram_end = .;
 
@@ -71,6 +83,8 @@ SECTIONS {
     /* Stack: grows downward from top of DRAM                             */
     /* ------------------------------------------------------------------ */
     _stack_bottom = _bss_end;
+    __heap_start  = _bss_end;
+    __heap_end    = ORIGIN(DRAM) + LENGTH(DRAM) - 0x1000; /* reserve 4 KB for stack */
     _stack_top    = ORIGIN(DRAM) + LENGTH(DRAM);
 
     /* ------------------------------------------------------------------ */
@@ -79,7 +93,8 @@ SECTIONS {
     /DISCARD/ : {
         *(.note.*)
         *(.comment)
-        *(.eh_frame)
+        *(.eh_frame .eh_frame_hdr)
+        *(.gcc_except_table .gcc_except_table.*)
         *(.riscv.attributes)
     }
 }

@@ -40,6 +40,7 @@ package jv32_pkg;
     // ========================================================================
     // Top-Level SoC Configuration Parameters
     // ========================================================================
+    /* verilator lint_off UNUSEDPARAM */
     localparam int unsigned FAST_MUL       = 1;              // 1=comb, 0=serial (32 cyc)
     localparam int unsigned MUL_MC         = 1;              // 1=2-stage pipelined (2 cyc); 0=1-cycle comb.
     localparam int unsigned FAST_DIV       = 0;              // 1=comb, 0=serial (33 cyc)
@@ -50,6 +51,7 @@ package jv32_pkg;
     localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned AXI_DATA_WIDTH = 32;             // 32-bit AXI data bus
     localparam logic [31:0] BOOT_ADDR      = 32'h8000_0000;  // reset PC
+    /* verilator lint_on UNUSEDPARAM */
 
     // ========================================================================
     // Opcodes (7-bit)

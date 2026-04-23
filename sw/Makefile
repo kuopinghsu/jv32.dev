@@ -22,6 +22,7 @@ else
 endif
 
 CC      := $(CROSS)-gcc
+CXX     := $(CROSS)-g++
 OBJCOPY := $(CROSS)-objcopy
 OBJDUMP := $(CROSS)-objdump
 SIZE    := $(CROSS)-size
@@ -36,6 +37,8 @@ CFLAGS  += -Wall -Wextra
 CFLAGS  += -nostartfiles -ffreestanding
 CFLAGS  += -ffunction-sections -fdata-sections
 CFLAGS  += -Iinclude
+
+CXXFLAGS := $(CFLAGS)
 
 # Per-test optional extra flags: sourced from <test>/makefile.mak if it exists.
 # That file may append to CFLAGS, e.g.:  CFLAGS += -O3 -DFOO
@@ -93,7 +96,7 @@ FORCE:
 # or any source/header under the test directory changes.
 .SECONDEXPANSION:
 $(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(COMMON_LINK) \
-                    $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.S $(SW_DIR)/$$*/*.h)
+                    $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.S $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@
 
 __build-test:
@@ -105,13 +108,41 @@ __build-test:
 		echo "Error: Test directory $(SW_DIR)/$(TEST) not found"; \
 		exit 1; \
 	fi
-	$(CC) $(CFLAGS) -I$(SW_DIR)/$(TEST) \
-		$(COMMON_SRCS) \
-		$(wildcard $(SW_DIR)/$(TEST)/*.c) \
-		$(wildcard $(SW_DIR)/$(TEST)/*.S) \
-		$(LDFLAGS) \
-		-Wl,-Map,$(OBJ_DIR)/$(TEST).map \
-		-o $(OUT)
+	@set -e; \
+	OBJS=""; \
+	for src in $(COMMON_SRCS); do \
+		stem=$$(basename $${src%.*}); \
+		obj="$(OBJ_DIR)/_common_$${stem}.o"; \
+		OBJS="$$OBJS $$obj"; \
+		$(CC) $(CFLAGS) -c $$src -o $$obj; \
+	done; \
+	C_SRCS="$(wildcard $(SW_DIR)/$(TEST)/*.c)"; \
+	if [ -n "$$C_SRCS" ]; then \
+		for src in $$C_SRCS; do \
+			obj="$(OBJ_DIR)/$(TEST)_$$(basename $${src%.c}).o"; \
+			OBJS="$$OBJS $$obj"; \
+			$(CC) $(CFLAGS) -I$(SW_DIR)/$(TEST) -c $$src -o $$obj; \
+		done; \
+	fi; \
+	S_SRCS="$(wildcard $(SW_DIR)/$(TEST)/*.S)"; \
+	if [ -n "$$S_SRCS" ]; then \
+		for src in $$S_SRCS; do \
+			obj="$(OBJ_DIR)/$(TEST)_$$(basename $${src%.S}).o"; \
+			OBJS="$$OBJS $$obj"; \
+			$(CC) $(CFLAGS) -I$(SW_DIR)/$(TEST) -c $$src -o $$obj; \
+		done; \
+	fi; \
+	CPP_SRCS="$(wildcard $(SW_DIR)/$(TEST)/*.cpp)"; \
+	LINKER="$(CC)"; \
+	if [ -n "$$CPP_SRCS" ]; then \
+		LINKER="$(CXX)"; \
+		for src in $$CPP_SRCS; do \
+			obj="$(OBJ_DIR)/$(TEST)_$$(basename $${src%.cpp}).o"; \
+			OBJS="$$OBJS $$obj"; \
+			$(CXX) $(CXXFLAGS) -I$(SW_DIR)/$(TEST) -c $$src -o $$obj; \
+		done; \
+	fi; \
+	$$LINKER $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/$(TEST).map -o $(OUT) $$OBJS
 	@$(SIZE) $(OUT)
 
 # Disassembly (built on demand)

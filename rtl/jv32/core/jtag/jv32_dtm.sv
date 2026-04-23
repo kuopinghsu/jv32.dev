@@ -112,18 +112,24 @@ module jv32_dtm #(
     // ========================================================================
     // Abstract Command Encoding
     // ========================================================================
-    localparam CMD_ACCESS_REG   = 8'h00;  // Register access command
+    localparam CMD_ACCESS_REG = 8'h00;  // Register access command
+    /* verilator lint_off UNUSEDPARAM */
     localparam CMD_QUICK_ACCESS = 8'h01;  // Quick access command
-    localparam CMD_ACCESS_MEM   = 8'h02;  // Memory access command
+    /* verilator lint_on UNUSEDPARAM */
+    localparam CMD_ACCESS_MEM = 8'h02;  // Memory access command
 
     // Abstract command status
-    localparam CMDERR_NONE       = 3'd0;  // No error
+    /* verilator lint_off UNUSEDPARAM */
+    localparam CMDERR_NONE = 3'd0;  // No error
+    /* verilator lint_on UNUSEDPARAM */
     localparam CMDERR_BUSY       = 3'd1;  // Command is busy
     localparam CMDERR_NOTSUP     = 3'd2;  // Command not supported
     localparam CMDERR_EXCEPTION  = 3'd3;  // Exception during command
     localparam CMDERR_HALTRESUME = 3'd4;  // Hart not in correct state
     localparam CMDERR_BUS        = 3'd5;  // Bus error
-    localparam CMDERR_OTHER      = 3'd7;  // Other error
+    /* verilator lint_off UNUSEDPARAM */
+    localparam CMDERR_OTHER = 3'd7;  // Other error
+    /* verilator lint_on UNUSEDPARAM */
 
     // ========================================================================
     // DTMCS Register (32 bits) - capture value (read fields)
@@ -210,7 +216,9 @@ module jv32_dtm #(
 
     // Synthetic debug CSRs — owned exclusively by CLK domain (read via Capture-DR sync)
     // ntrst_i reset is NOT needed; rst_n resets these via the CLK always_ff block below.
-    logic [          31:0]       dcsr_reg;       // CSR 0x7b0 – debug control/status; bits[8:6] reserved
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [          31:0]       dcsr_reg;  // CSR 0x7b0 – debug control/status; bits[8:6] reserved
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [          31:0]       dscratch0_reg;  // CSR 0x7b2 – debug scratch 0
     logic [          31:0]       dscratch1_reg;  // CSR 0x7b3 – debug scratch 1
 
@@ -291,7 +299,9 @@ module jv32_dtm #(
     logic [31:0] data1_sys;           // CLK-domain stable copy of data1 (for abstract mem addr)
     logic [31:0] data0_result;        // Result written by system domain
     logic        data0_result_valid;  // Result valid flag
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] command_reg_sys;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic        command_valid_sys;
 
     // ========================================================================
@@ -332,7 +342,9 @@ module jv32_dtm #(
     logic resumeack_tck;  // dbg_resumeack_i synced to TCK domain
 
     // CPU Control Signals (system clock domain)
+    /* verilator lint_off UNUSEDSIGNAL */
     logic halted_clk;  // dbg_halted_i synchronized to clk domain (reserved for future use)
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // Memory access tracking
     logic mem_req_pending;

@@ -741,7 +741,9 @@ module jv32_soc #(
         .axi_rready (xs_rready[0]),
         .uart_rx    (uart_rx_i),
         .uart_tx    (uart_tx_o),
+        /* verilator lint_off PINCONNECTEMPTY */
         .irq        ()
+        /* verilator lint_on PINCONNECTEMPTY */
     );
 
     // =====================================================================

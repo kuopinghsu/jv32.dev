@@ -19,6 +19,10 @@ STD_CELL_LIBRARY: NangateOpenCellLibrary
 # So ../../rtl/ → project rtl/, and ../lib/ → syn/lib/.
 # The black-box wrapper (syn/lib/sram_1rw.sv) is included here so Yosys
 # can emit a correct black-box reference for sram_1rw_32768x8 during synthesis.
+# Include search paths for `include directives (e.g. jv32_dbgmsg.svh)
+VERILOG_INCLUDE_DIRS:
+  - dir::../../rtl/jv32
+
 VERILOG_FILES:
   - dir::../../rtl/jv32/core/jv32_pkg.sv
   - dir::../../rtl/jv32/core/jv32_rvc.sv

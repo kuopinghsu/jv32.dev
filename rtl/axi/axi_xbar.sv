@@ -65,7 +65,9 @@ module axi_xbar #(
     output logic [N_SLAVES-1:0]       s_bready,
     output logic [N_SLAVES-1:0][31:0] s_araddr,
     output logic [N_SLAVES-1:0]       s_arvalid,
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [N_SLAVES-1:0]       s_arready,
+    /* verilator lint_on UNUSEDSIGNAL */
     input  logic [N_SLAVES-1:0][31:0] s_rdata,
     input  logic [N_SLAVES-1:0][ 1:0] s_rresp,
     input  logic [N_SLAVES-1:0]       s_rvalid,

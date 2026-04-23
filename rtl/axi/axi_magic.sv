@@ -32,6 +32,7 @@
 import "DPI-C" function void sim_request_exit(input int exit_code);
 `endif
 
+/* verilator lint_off UNUSEDSIGNAL */
 module axi_magic (
     input logic clk,
     input logic rst_n,
@@ -58,6 +59,7 @@ module axi_magic (
     output logic [ 1:0] axi_rresp,
     output logic        axi_rvalid,
     input  logic        axi_rready
+    /* verilator lint_on UNUSEDSIGNAL */
 );
 
 `ifdef SYNTHESIS

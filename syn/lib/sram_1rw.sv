@@ -69,12 +69,12 @@ generate
         localparam int N_BANKS    = 16;
         localparam int BANK_ABITS = 11;  // log2(2048)
 
-        logic [3:0]  bank_sel;
-        logic [10:0] sub_addr;
-        logic [31:0] dout [0:N_BANKS-1];
+        logic [3:0]            bank_sel;
+        logic [BANK_ABITS-1:0] sub_addr;
+        logic [31:0]           dout [0:N_BANKS-1];
 
         assign bank_sel = addr[14:11];
-        assign sub_addr = addr[10:0];
+        assign sub_addr = addr[BANK_ABITS-1:0];
 
         genvar i;
         for (i = 0; i < N_BANKS; i++) begin : g_bank
@@ -110,12 +110,12 @@ generate
         localparam int N_BANKS    = 2;
         localparam int BANK_ABITS = 11;  // log2(2048)
 
-        logic        bank_sel;
-        logic [10:0] sub_addr;
-        logic [31:0] dout [0:N_BANKS-1];
+        logic              bank_sel;
+        logic [BANK_ABITS-1:0] sub_addr;
+        logic [31:0]       dout [0:N_BANKS-1];
 
         assign bank_sel = addr[11];
-        assign sub_addr = addr[10:0];
+        assign sub_addr = addr[BANK_ABITS-1:0];
 
         genvar i;
         for (i = 0; i < N_BANKS; i++) begin : g_bank
@@ -172,6 +172,8 @@ endmodule
 // the instantiated macro name, but the implementation is provided by the
 // OpenRAM LEF/GDS/Liberty views during physical design.
 // ---------------------------------------------------------------------------
+/* verilator lint_off UNUSEDSIGNAL */
+/* verilator lint_off UNDRIVEN */
 (* blackbox *)
 module sram_1rw_2048x32 (
     input  logic        clk0,
@@ -183,3 +185,5 @@ module sram_1rw_2048x32 (
     output logic [31:0] dout0
 );
 endmodule
+/* verilator lint_on UNDRIVEN */
+/* verilator lint_on UNUSEDSIGNAL */

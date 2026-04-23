@@ -397,8 +397,10 @@ module jv32_top #(
 
     slv_e        iram_slv_state;
     slv_e        dram_slv_state;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] iram_slv_addr;
     logic [31:0] dram_slv_addr;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] iram_slv_wdata;
     logic [31:0] dram_slv_wdata;
     logic [ 3:0] iram_slv_wstrb;
@@ -594,9 +596,11 @@ module jv32_top #(
     logic        iram_used_by_core_i_d;    // IRAM was accessed by I-fetch last cycle
     logic        iram_used_by_core_d_d;    // IRAM was accessed by D-path last cycle
     logic        dram_used_by_core_d_d;    // DRAM was accessed by D-path last cycle
-    logic        dmem_was_write_d;         // D-path access last cycle was a write
-    logic        imem_flush_d;             // flush was asserted last cycle
-    logic [31:0] imem_req_addr_d;          // I-fetch address from last cycle (for resp_pc)
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic        dmem_was_write_d;  // D-path access last cycle was a write
+    /* verilator lint_on UNUSEDSIGNAL */
+    logic        imem_flush_d;     // flush was asserted last cycle
+    logic [31:0] imem_req_addr_d;  // I-fetch address from last cycle (for resp_pc)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -690,7 +694,9 @@ module jv32_top #(
     logic [31:0] dbus_addr_r;  // registered D-bus address
     logic [31:0] dbus_wdata_r;
     logic [ 3:0] dbus_wstrb_r;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic        dbus_write_r;
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // Register D/I miss addresses on first detection (before stall freezes them)
     // In practice the core already holds them stable during stall, but

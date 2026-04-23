@@ -636,7 +636,9 @@ module jv32_core #(
     assign store_data_ex = fwd_rs2;
 
     // Store byte enable
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [3:0] wstrb_ex;
+    /* verilator lint_on UNUSEDSIGNAL */
     always_comb begin
         case (dec_mem_op)
             MEM_BYTE: wstrb_ex = 4'b0001 << mem_addr_ex[1:0];
@@ -719,6 +721,7 @@ module jv32_core #(
     logic [N_TRIGGERS-1:0] trigger_match_vec;  // per-trigger: which trigger(s) matched
 
     // Address-match helper: supports exact (match=0) and NAPOT (match=1)
+    /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic trig_addr_match(input logic [31:0] addr, input logic [31:0] tdata1,
                                              input logic [31:0] tdata2);
         logic [31:0] napot_p, napot_rmask;
@@ -730,6 +733,7 @@ module jv32_core #(
             default: return (addr == tdata2);
         endcase
     endfunction
+    /* verilator lint_on UNUSEDSIGNAL */
 
     always_comb begin
         trigger_match     = 1'b0;
@@ -1197,9 +1201,15 @@ module jv32_core #(
     assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
 
     logic [31:0] trace_mem_data_c;
-    assign trace_mem_data_c = ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
-                              ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
-                                                           ex_wb_r.store_data;
+    // For AMO: use amo_store_val (the value actually written to memory).
+    // For LR specifically: amo_load_data is not used; the loaded value is
+    // dmem_resp_data (valid when LR retires with dmem_resp_valid=1).
+    assign trace_mem_data_c =
+        (ex_wb_r.is_amo && ex_wb_r.amo_op == AMO_LR) ? dmem_resp_data :
+        ex_wb_r.is_amo                               ? amo_store_val  :
+        ex_wb_r.mem_op == MEM_BYTE ? {24'h0, ex_wb_r.store_data[7:0]} :
+        ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
+                                     ex_wb_r.store_data;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -1217,8 +1227,12 @@ module jv32_core #(
         else if (trace_en) begin
             trace_valid    <= trace_retire;
             trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
-            trace_mem_we   <= trace_retire && ex_wb_r.mem_write;
-            trace_mem_re   <= trace_retire && ex_wb_r.mem_read;
+            // AMO instructions are logged as memory writes (matching jv32sim which
+            // emits trace_is_store=true for all AMO/LR/SC). The write data is
+            // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
+            // for LR (jv32sim writes the loaded value back and logs it as a store).
+            trace_mem_we   <= trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo);
+            trace_mem_re   <= trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo;
             trace_pc       <= ex_wb_r.pc;
             trace_rd       <= ex_wb_r.rd_addr;
             trace_rd_data  <= rf_wdata;
