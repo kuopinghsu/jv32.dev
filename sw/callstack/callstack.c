@@ -65,10 +65,13 @@ static void _putdec(int v)
 /* ── call-stack limits (guard against corrupt frames) ─────────────────── */
 
 /* Stack grows down from __stack_top toward __stack_bottom.
- * We define a guard: frame pointers must lie within RAM. */
+ * We define guards: frame pointers must be on the stack (DRAM);
+ * return addresses must be in IRAM or DRAM (both are valid code regions). */
 extern char _stack_top[];
-#define BT_FP_MIN  ((uintptr_t)JV_DRAM_BASE)
-#define BT_FP_MAX  ((uintptr_t)(uintptr_t)_stack_top)
+#define BT_FP_MIN   ((uintptr_t)JV_DRAM_BASE)
+#define BT_FP_MAX   ((uintptr_t)(uintptr_t)_stack_top)
+#define BT_RA_MIN   ((uintptr_t)JV_IRAM_BASE)
+#define BT_RA_MAX   ((uintptr_t)_stack_top)
 #define BT_MAX_FRAMES 16
 
 /* ── flag so main() knows the trap fired ─────────────────────────────── */
@@ -112,8 +115,8 @@ static void illegal_insn_handler(jv_trap_frame_t *frame)
         uintptr_t saved_ra = *((uint32_t *)fp - 1);  /* fp - 4 */
         uintptr_t saved_fp = *((uint32_t *)fp - 2);  /* fp - 8 */
 
-        /* A saved_ra of 0 or outside RAM means we've walked off the stack. */
-        if (saved_ra < BT_FP_MIN || saved_ra > BT_FP_MAX)
+        /* A saved_ra of 0 or outside code range means we've walked off the stack. */
+        if (saved_ra < BT_RA_MIN || saved_ra > BT_RA_MAX)
             break;
 
         _puts_raw("[BT#");

@@ -20,9 +20,7 @@
 `define DBG_GRP_PIPE   1   // Pipeline stalls and flushes
 `define DBG_GRP_EX     2   // Execute stage (ALU, branch, forward)
 `define DBG_GRP_MEM    3   // Memory stage (load/store)
-`define DBG_GRP_CSR    4   //
-
- CSR read/write
+`define DBG_GRP_CSR    4   // CSR read/write
 `define DBG_GRP_IRQ    5   // Interrupts and exceptions
 `define DBG_GRP_UART   6   // UART peripheral
 `define DBG_GRP_CLIC   7   // CLIC interrupt controller
