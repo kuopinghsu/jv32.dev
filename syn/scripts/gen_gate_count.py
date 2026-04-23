@@ -100,6 +100,47 @@ def compute_inclusive(
     cache[mod] = area
     return area
 
+def count_icg_dff_direct(
+    modules: dict,
+    lib_cells: Set[str],
+) -> Dict[str, Tuple[int, int]]:
+    """Return {clean_module_name: (icg_count, dff_count)} for direct cells only.
+
+    ICG cells : names containing 'CLKGATE' (CLKGATE_X1, CLKGATETST_X1, …)
+    DFF cells : names starting with 'DFF' (DFF_X1, DFFR_X1, DFFS_X1, …)
+    """
+    result: Dict[str, Tuple[int, int]] = {}
+    for raw_name, mod in modules.items():
+        cname = clean_name(raw_name)
+        icg = dff = 0
+        for cell_type, cnt in mod.get("num_cells_by_type", {}).items():
+            ct = clean_name(cell_type)
+            if ct not in lib_cells:
+                continue  # skip sub-module instances
+            if "CLKGATE" in ct.upper():
+                icg += int(cnt)
+            elif ct.upper().startswith("DFF"):
+                dff += int(cnt)
+        result[cname] = (icg, dff)
+    return result
+
+def compute_inclusive_counts(
+    mod: str,
+    children: Dict[str, List[Tuple[str, int]]],
+    direct_counts: Dict[str, Tuple[int, int]],
+    cache: Dict[str, Tuple[int, int]],
+) -> Tuple[int, int]:
+    """Recursively sum ICG and DFF counts for mod and all its submodules."""
+    if mod in cache:
+        return cache[mod]
+    icg, dff = direct_counts.get(mod, (0, 0))
+    for child, cnt in children.get(mod, []):
+        c_icg, c_dff = compute_inclusive_counts(child, children, direct_counts, cache)
+        icg += c_icg * cnt
+        dff += c_dff * cnt
+    cache[mod] = (icg, dff)
+    return (icg, dff)
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Report NAND2-equivalent gate counts with module hierarchy."
@@ -146,6 +187,12 @@ def main() -> None:
     cache: Dict[str, float] = {}
     for m in design_modules:
         compute_inclusive(m, children, direct_area, cache)
+
+    # ── compute inclusive ICG + DFF counts ───────────────────────────────────
+    direct_counts = count_icg_dff_direct(modules, lib_cells)
+    count_cache: Dict[str, Tuple[int, int]] = {}
+    for m in design_modules:
+        compute_inclusive_counts(m, children, direct_counts, count_cache)
 
     # ── format report ────────────────────────────────────────────────────────
     SEP  = "=" * 74
@@ -204,6 +251,61 @@ def main() -> None:
         "      and their area is not included in the NAND2 equivalent count.",
         SEP,
     ]
+
+    # ── Clock gating section (only when ICG cells are present) ───────────────
+    total_icg = sum(count_cache.get(t, (0, 0))[0] for t in top_modules)
+    if total_icg > 0:
+        lines += [
+            "",
+            SEP,
+            "  Clock Gating Summary",
+            "  ICG cell : CLKGATE_X1 / CLKGATETST_X1 (Nangate 45nm)",
+            "  Gated%   = ICG / (ICG + DFF)  — per-module inclusive counts",
+            SEP,
+            "",
+            f"  {'Module':<40}  {'DFF total':>9}  {'ICG cells':>9}  {'Gated%':>7}",
+            f"  {'-'*40}  {'-'*9}  {'-'*9}  {'-'*7}",
+        ]
+
+        cg_visited: Set[str] = set()
+
+        def add_cg_rows(mod: str, depth: int = 0) -> None:
+            if mod in cg_visited:
+                return
+            cg_visited.add(mod)
+            icg, dff = count_cache.get(mod, (0, 0))
+            total_ff = icg + dff
+            pct = (100.0 * icg / total_ff) if total_ff > 0 else 0.0
+            indent = "  " * depth
+            label  = indent + mod
+            lines.append(
+                f"  {label:<40}  {total_ff:>9,}  {icg:>9,}  {pct:>6.1f}%"
+            )
+            kids_sorted = sorted(
+                children.get(mod, []),
+                key=lambda kc: -cache.get(kc[0], 0.0),
+            )
+            for child, _ in kids_sorted:
+                if child in design_modules:
+                    add_cg_rows(child, depth + 1)
+
+        for top in top_modules:
+            add_cg_rows(top)
+
+        total_dff_all = sum(count_cache.get(t, (0, 0))[1] for t in top_modules)
+        total_ff_all  = total_icg + total_dff_all
+        total_pct     = (100.0 * total_icg / total_ff_all) if total_ff_all > 0 else 0.0
+        lines += [
+            f"  {'-'*40}  {'-'*9}  {'-'*9}  {'-'*7}",
+            f"  {'TOTAL':<40}  {total_ff_all:>9,}  {total_icg:>9,}  {total_pct:>6.1f}%",
+            SEP,
+            "",
+            "  Notes:",
+            "    - Gated% = ICG / (ICG + DFF): fraction of FFs with a hardware clock gate.",
+            "    - Only $_DFFE_PP_ cells (enabled FF, no reset) are clock-gated.",
+            "    - FFs with async reset use data-path enable muxes (not counted as gated).",
+            SEP,
+        ]
 
     report = "\n".join(lines)
 

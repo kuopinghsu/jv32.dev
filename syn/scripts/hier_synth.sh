@@ -36,6 +36,7 @@ set -euo pipefail
 : "${JTAG_EN:=1}"
 : "${TRACE_EN:=1}"
 : "${AMO_EN:=1}"
+: "${CG_EN:=1}"        # 1=insert CLKGATE_X1 clock gating before dfflibmap (default); 0=data-path enable mux
 
 STAT_DIR="$(dirname "$STAT_JSON")"
 mkdir -p "$STAT_DIR"
@@ -91,7 +92,29 @@ YOSYS_EOF
     printf '\n'
 } >> "$YS_SCRIPT"
 
-cat >> "$YS_SCRIPT" << YOSYS_EOF
+# ─────────────────────────────────────────────────────────────────────────────
+# Synthesis + technology mapping  (clock gating optional)
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "${CG_EN}" = "1" ]; then
+    echo "[hier_synth] Clock gating ENABLED (CLKGATE_X1)"
+    cat >> "$YS_SCRIPT" << YOSYS_EOF
+
+# ── Synthesise (stop before DFF library mapping) ─────────────────────────────
+# -run begin:map runs all stages up to (but not including) dfflibmap+abc.
+synth -top jv32_soc -run begin:map
+
+# ── Clock gating techmap ──────────────────────────────────────────────────────
+# Maps \$_DFFE_PP_ (pos-edge, pos-enable, no reset) to CLKGATE_X1 + \$_DFF_P_.
+# FFs with async reset stay as \$_DFF_PN0_ + \$_MUX_ (data-path enable mux).
+techmap -map ${LIB_DIR}/clockgate_map.v
+
+# ── DFF and combinational technology mapping ──────────────────────────────────
+dfflibmap -liberty ${NANGATE_LIB}
+abc -liberty ${NANGATE_LIB}
+clean
+YOSYS_EOF
+else
+    cat >> "$YS_SCRIPT" << YOSYS_EOF
 
 # ── Synthesise without flattening ────────────────────────────────────────────
 # 'synth -top' does NOT flatten module hierarchy by default.
@@ -101,6 +124,10 @@ synth -top jv32_soc
 dfflibmap -liberty ${NANGATE_LIB}
 abc -liberty ${NANGATE_LIB}
 clean
+YOSYS_EOF
+fi
+
+cat >> "$YS_SCRIPT" << YOSYS_EOF
 
 # ── Hierarchical gate statistics ─────────────────────────────────────────────
 tee -o ${STAT_JSON} stat -json -liberty ${NANGATE_LIB}
@@ -108,6 +135,7 @@ YOSYS_EOF
 
 echo "========================================================"
 echo " Yosys hierarchical synthesis (no flatten)"
+[ "${CG_EN}" = "1" ] && echo "  Clock gating: ENABLED (CLKGATE_X1)" || echo "  Clock gating: disabled"
 echo "  Liberty : ${NANGATE_LIB}"
 echo "  Output  : ${STAT_JSON}"
 echo "========================================================"

@@ -110,6 +110,10 @@ endif
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
 OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
 
+# Clock gating: 1=insert CLKGATE_X1 ICG cells before dfflibmap in gate-count
+# synthesis (default).  0=data-path enable muxes (disable for comparison).
+CG_EN        ?= 1
+
 # OpenRAM optimisation: speed (words_per_row=1, TT+FF+SS) or area (auto, TT)
 OPENRAM_OPTIMIZE ?= speed
 
@@ -422,6 +426,7 @@ gate-count: check $(BUILD_DIR)
 	    export FAST_DIV="$(FAST_DIV)"; \
 	    export FAST_SHIFT="$(FAST_SHIFT)"; \
 	    export BP_EN="$(BP_EN)"; \
+	    export CG_EN="$(CG_EN)"; \
 	    $(NIX_SHELL) $(OPENLANE)/shell.nix \
 	        --run "bash $(SYN_DIR)/scripts/hier_synth.sh"; \
 	)
