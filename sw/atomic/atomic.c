@@ -26,6 +26,22 @@
 #define TEST_PASS 0
 #define TEST_FAIL 1
 
+#ifndef __riscv_a
+// ============================================================================
+// Atomic (A) extension not present in this build configuration (AMO_EN=0).
+// Emit a skip message and return immediately so simulation does not hang.
+// ============================================================================
+int main(void) {
+    printf("========================================\n");
+    printf("  RISC-V Atomic (A) Extension Test\n");
+    printf("  SKIPPED: AMO_EN=0 (not compiled with -march=rv32i*a*)\n");
+    printf("  __riscv_a is not defined\n");
+    printf("========================================\n");
+    printf("[RESULT] SKIPPED\n");
+    return 0;
+}
+#else /* __riscv_a defined — full test below */
+
 // Counters for test statistics
 static uint32_t tests_run = 0;
 static uint32_t tests_passed = 0;
@@ -797,3 +813,5 @@ int main(void) {
         return TEST_PASS;
     }
 }
+
+#endif /* __riscv_a */

@@ -7,7 +7,9 @@
 // Synchronous write, asynchronous read with write-through forwarding.
 // ============================================================================
 
-module jv32_regfile (
+module jv32_regfile #(
+    parameter bit RV32E_EN = 1'b0  // 1=RV32E (16 GPRs), 0=RV32I/M/A (32 GPRs)
+) (
     input logic clk,
     input logic rst_n,
 
@@ -29,7 +31,12 @@ module jv32_regfile (
     output logic [31:0] dbg_rdata
 );
 
-    logic [31:0] regs[31:1];  // x0 is hardwired to 0
+    // RV32E: 16 registers (x1-x15); RV32I: 32 registers (x1-x31).
+    // Accesses to x16-x31 from RV32E code are caught by the decoder (illegal=1).
+    // The debug port may still read x16-x31; they return 0 safely in RV32E mode.
+    localparam int NREGS = RV32E_EN ? 16 : 32;
+
+    logic [31:0] regs[NREGS-1:1];  // x0 is hardwired to 0
 
     // Pipeline read ports: pure registered reads, no write-through.
     //
@@ -44,18 +51,19 @@ module jv32_regfile (
     // For load results, the load-use stall guarantees that regs[] is
     // updated one full cycle before the dependent instruction enters EX,
     // so a registered read is always correct.
-    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : regs[rs1_addr];
-    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
+    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs1_addr[4]) ? 32'd0 : regs[rs1_addr];
+    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs2_addr[4]) ? 32'd0 : regs[rs2_addr];
 
-    assign dbg_rdata = (dbg_addr == 5'd0)                         ? 32'd0     :
-                       (dbg_we)                                   ? dbg_wdata :
-                       (we && (dbg_addr == rd_addr))              ? rd_data   :
+    assign dbg_rdata = (dbg_addr == 5'd0)                    ? 32'd0     :
+                       (RV32E_EN && dbg_addr[4])             ? 32'd0     :
+                       (dbg_we)                              ? dbg_wdata :
+                       (we && (dbg_addr == rd_addr))         ? rd_data   :
                        regs[dbg_addr];
 
     // Synchronous write
     always_ff @(posedge clk) begin
-        if (dbg_we && (dbg_addr != 5'd0)) regs[dbg_addr] <= dbg_wdata;
-        else if (we && (rd_addr != 5'd0)) regs[rd_addr] <= rd_data;
+        if (dbg_we && (dbg_addr != 5'd0) && !(RV32E_EN && dbg_addr[4])) regs[dbg_addr] <= dbg_wdata;
+        else if (we && (rd_addr != 5'd0) && !(RV32E_EN && rd_addr[4])) regs[rd_addr] <= rd_data;
     end
 
     // unused rst_n (purely combinational read, synchronous write without reset)

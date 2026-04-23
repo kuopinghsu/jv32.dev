@@ -17,6 +17,7 @@
 // ============================================================================
 
 module jv32_alu #(
+    parameter bit RV32M_EN   = 1'b1,  // 1=M-extension (mul/div); 0=no multiply/divide hardware
     parameter bit FAST_MUL   = 1'b1,
     parameter bit MUL_MC     = 1'b1,  // 1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)
     parameter bit FAST_DIV   = 1'b0,
@@ -136,7 +137,14 @@ module jv32_alu #(
     logic mul_ready;
 
     generate
-        if (FAST_MUL == 1 && MUL_MC == 1) begin : gen_fast_mul_pipe
+        if (!RV32M_EN) begin : gen_no_mul
+            assign result_mul_lo    = 32'h0;
+            assign result_mulh_hi   = 32'h0;
+            assign result_mulhsu_hi = 32'h0;
+            assign result_mulhu_hi  = 32'h0;
+            assign mul_ready        = 1'b1;
+        end
+        else if (FAST_MUL == 1 && MUL_MC == 1) begin : gen_fast_mul_pipe
             // ----------------------------------------------------------------
             // 2-stage pipelined multiplier.
             // Stage 1 (dispatch cycle): compute four unsigned 16×16 partial
@@ -312,7 +320,14 @@ module jv32_alu #(
     logic div_ready;
 
     generate
-        if (FAST_DIV == 1) begin : gen_fast_div
+        if (!RV32M_EN) begin : gen_no_div
+            assign result_div  = 32'h0;
+            assign result_divu = 32'h0;
+            assign result_rem  = 32'h0;
+            assign result_remu = 32'h0;
+            assign div_ready   = 1'b1;
+        end
+        else if (FAST_DIV == 1) begin : gen_fast_div
             assign result_div  = (operand_b==32'h0) ? 32'hffffffff :
                                  ((operand_a==32'h80000000)&&(operand_b==32'hffffffff)) ? 32'h80000000 :
                                  $signed(

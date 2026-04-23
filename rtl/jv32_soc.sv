@@ -30,6 +30,10 @@ module jv32_soc #(
     parameter int unsigned        CLK_FREQ        = 100_000_000,
     parameter int unsigned        BAUD_RATE       = 115_200,
     parameter int unsigned        UART_FIFO_DEPTH = 16,          // TX/RX FIFO depth (power of 2)
+    parameter bit                 RV32E_EN        = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit                 RV32M_EN        = 1'b1,        // 1=M-extension; 0=MUL/DIV illegal
+    parameter bit                 JTAG_EN         = 1'b1,        // 1=JTAG debug port; 0=no JTAG
+    parameter bit                 TRACE_EN        = 1'b1,        // 1=trace outputs active; 0=tied to 0
     parameter bit                 USE_CJTAG       = 1'b0,        // 0=4-wire JTAG, 1=2-wire cJTAG
     parameter bit          [31:0] JTAG_IDCODE     = 32'h1DEAD3FF,
     parameter int                 N_TRIGGERS      = 2,           // hardware breakpoints (0..4)
@@ -294,51 +298,90 @@ module jv32_soc #(
     assign dbg_mem_error = dbg_mem_error_r;
 
     // JTAG top-level interface + RISC-V debug transport module
-    jtag_top #(
-        .USE_CJTAG (USE_CJTAG),
-        .IDCODE    (JTAG_IDCODE),
-        .N_TRIGGERS(N_TRIGGERS)
-    ) u_jtag (
-        .clk_i           (clk),
-        .rst_n_i         (rst_n),
-        .ntrst_i         (jtag_ntrst_i),
-        .pin0_tck_i      (jtag_pin0_tck_i),
-        .pin1_tms_i      (jtag_pin1_tms_i),
-        .pin1_tms_o      (jtag_pin1_tms_o),
-        .pin1_tms_oe     (jtag_pin1_tms_oe),
-        .pin2_tdi_i      (jtag_pin2_tdi_i),
-        .pin3_tdo_o      (jtag_pin3_tdo_o),
-        .pin3_tdo_oe     (jtag_pin3_tdo_oe),
-        .halt_req_o      (dbg_halt_req),
-        .halted_i        (dbg_halted),
-        .resume_req_o    (dbg_resume_req),
-        .resumeack_i     (dbg_resumeack),
-        .dbg_reg_addr_o  (dbg_reg_addr),
-        .dbg_reg_wdata_o (dbg_reg_wdata),
-        .dbg_reg_we_o    (dbg_reg_we),
-        .dbg_reg_rdata_i (dbg_reg_rdata),
-        .dbg_pc_wdata_o  (dbg_pc_wdata),
-        .dbg_pc_we_o     (dbg_pc_we),
-        .dbg_pc_i        (dbg_pc),
-        .dbg_mem_req_o   (dbg_mem_req),
-        .dbg_mem_addr_o  (dbg_mem_addr),
-        .dbg_mem_we_o    (dbg_mem_we),
-        .dbg_mem_wdata_o (dbg_mem_wdata),
-        .dbg_mem_ready_i (dbg_mem_ready),
-        .dbg_mem_error_i (dbg_mem_error),
-        .dbg_mem_rdata_i (dbg_mem_rdata),
-        .dbg_ndmreset_o  (dbg_ndmreset),
-        .dbg_hartreset_o (dbg_hartreset),
-        .dbg_singlestep_o(dbg_singlestep),
-        .dbg_ebreakm_o   (dbg_ebreakm),
-        .progbuf0_o      (progbuf0),
-        .progbuf1_o      (progbuf1),
-        // Trigger interface
-        .trigger_halt_i  (dbg_trigger_halt),
-        .trigger_hit_i   (dbg_trigger_hit),
-        .tdata1_o        (dbg_tdata1),
-        .tdata2_o        (dbg_tdata2)
-    );
+    generate
+        if (JTAG_EN) begin : gen_jtag
+            jtag_top #(
+                .USE_CJTAG (USE_CJTAG),
+                .IDCODE    (JTAG_IDCODE),
+                .N_TRIGGERS(N_TRIGGERS)
+            ) u_jtag (
+                .clk_i           (clk),
+                .rst_n_i         (rst_n),
+                .ntrst_i         (jtag_ntrst_i),
+                .pin0_tck_i      (jtag_pin0_tck_i),
+                .pin1_tms_i      (jtag_pin1_tms_i),
+                .pin1_tms_o      (jtag_pin1_tms_o),
+                .pin1_tms_oe     (jtag_pin1_tms_oe),
+                .pin2_tdi_i      (jtag_pin2_tdi_i),
+                .pin3_tdo_o      (jtag_pin3_tdo_o),
+                .pin3_tdo_oe     (jtag_pin3_tdo_oe),
+                .halt_req_o      (dbg_halt_req),
+                .halted_i        (dbg_halted),
+                .resume_req_o    (dbg_resume_req),
+                .resumeack_i     (dbg_resumeack),
+                .dbg_reg_addr_o  (dbg_reg_addr),
+                .dbg_reg_wdata_o (dbg_reg_wdata),
+                .dbg_reg_we_o    (dbg_reg_we),
+                .dbg_reg_rdata_i (dbg_reg_rdata),
+                .dbg_pc_wdata_o  (dbg_pc_wdata),
+                .dbg_pc_we_o     (dbg_pc_we),
+                .dbg_pc_i        (dbg_pc),
+                .dbg_mem_req_o   (dbg_mem_req),
+                .dbg_mem_addr_o  (dbg_mem_addr),
+                .dbg_mem_we_o    (dbg_mem_we),
+                .dbg_mem_wdata_o (dbg_mem_wdata),
+                .dbg_mem_ready_i (dbg_mem_ready),
+                .dbg_mem_error_i (dbg_mem_error),
+                .dbg_mem_rdata_i (dbg_mem_rdata),
+                .dbg_ndmreset_o  (dbg_ndmreset),
+                .dbg_hartreset_o (dbg_hartreset),
+                .dbg_singlestep_o(dbg_singlestep),
+                .dbg_ebreakm_o   (dbg_ebreakm),
+                .progbuf0_o      (progbuf0),
+                .progbuf1_o      (progbuf1),
+                // Trigger interface
+                .trigger_halt_i  (dbg_trigger_halt),
+                .trigger_hit_i   (dbg_trigger_hit),
+                .tdata1_o        (dbg_tdata1),
+                .tdata2_o        (dbg_tdata2)
+            );
+        end
+        else begin : gen_no_jtag
+            // No JTAG: tie all debug master outputs to safe quiescent values.
+            assign dbg_halt_req     = 1'b0;
+            assign dbg_resume_req   = 1'b0;
+            assign dbg_reg_we       = 1'b0;
+            assign dbg_reg_addr     = 5'd0;
+            assign dbg_reg_wdata    = 32'd0;
+            assign dbg_pc_we        = 1'b0;
+            assign dbg_pc_wdata     = 32'd0;
+            assign dbg_mem_req      = 1'b0;
+            assign dbg_mem_addr     = 32'd0;
+            assign dbg_mem_we       = 4'd0;
+            assign dbg_mem_wdata    = 32'd0;
+            assign dbg_ndmreset     = 1'b0;
+            assign dbg_hartreset    = 1'b0;
+            assign dbg_singlestep   = 1'b0;
+            assign dbg_ebreakm      = 1'b0;
+            assign progbuf0         = 32'h0010_0073;  // EBREAK
+            assign progbuf1         = 32'h0010_0073;  // EBREAK
+            assign dbg_tdata1       = '0;
+            assign dbg_tdata2       = '0;
+            // Tie JTAG output pins to safe levels
+            assign jtag_pin1_tms_o  = 1'b1;
+            assign jtag_pin1_tms_oe = 1'b0;
+            assign jtag_pin3_tdo_o  = 1'b1;
+            assign jtag_pin3_tdo_oe = 1'b0;
+            /* verilator lint_off UNUSEDSIGNAL */
+            logic _unused_jtag_pins;
+            assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
+                                         jtag_pin1_tms_i, jtag_pin2_tdi_i,
+                                         dbg_halted, dbg_resumeack, dbg_reg_rdata,
+                                         dbg_pc, dbg_mem_ready, dbg_mem_error, dbg_mem_rdata,
+                                         dbg_trigger_halt, dbg_trigger_hit};
+            /* verilator lint_on UNUSEDSIGNAL */
+        end
+    endgenerate
 
     // Pass external IRAM/DRAM TCM AXI masters through unless JTAG DM
     // is actively performing an in-TCM debug memory access on that bank.
@@ -499,6 +542,9 @@ module jv32_soc #(
     // JV32 Core + TCM
     // =====================================================================
     jv32_top #(
+        .RV32E_EN  (RV32E_EN),
+        .RV32M_EN  (RV32M_EN),
+        .TRACE_EN  (TRACE_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),

@@ -18,6 +18,9 @@
 // ============================================================================
 
 module jv32_core #(
+    parameter bit        RV32E_EN   = 1'b0,  // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit        RV32M_EN   = 1'b1,  // 1=M-extension; 0=illegal for MUL/DIV
+    parameter bit        TRACE_EN   = 1'b1,  // 1=trace outputs active; 0=tied to 0
     parameter bit        FAST_MUL   = 1'b1,
     parameter bit        MUL_MC     = 1'b1,
     parameter bit        FAST_DIV   = 1'b0,
@@ -170,7 +173,9 @@ module jv32_core #(
     assign trigger_halt_o = trigger_halt_r;
     assign trigger_hit_o  = trigger_hit_r;
 
-    jv32_regfile u_regfile (
+    jv32_regfile #(
+        .RV32E_EN(RV32E_EN)
+    ) u_regfile (
         .clk      (clk),
         .rst_n    (rst_n),
         .rs1_addr (rs1_addr_d),
@@ -204,6 +209,7 @@ module jv32_core #(
     logic        alu_stall;
 
     jv32_alu #(
+        .RV32M_EN  (RV32M_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
@@ -247,7 +253,9 @@ module jv32_core #(
     logic dec_is_wfi;
 
     jv32_decoder #(
-        .AMO_EN(AMO_EN)
+        .AMO_EN  (AMO_EN),
+        .RV32E_EN(RV32E_EN),
+        .RV32M_EN(RV32M_EN)
     ) u_decoder (
         .instr     (if_ex_r.instr),
         .valid     (if_ex_r.valid),
@@ -294,14 +302,19 @@ module jv32_core #(
     logic              wb_exception;
     exc_cause_e        wb_exc_cause;
     logic       [31:0] wb_exc_tval;
-    // irq_cancel declared here (defined in Trace output section below)
+    // Forward declarations — defined/driven in the Trace output section below
     logic              irq_cancel;
+    logic              trace_valid_r;
     logic              wb_retire;
 
     // EX→WB pipeline register
     ex_wb_t            ex_wb_r;
 
-    jv32_csr u_csr (
+    jv32_csr #(
+        .RV32E_EN(RV32E_EN),
+        .RV32M_EN(RV32M_EN),
+        .AMO_EN  (AMO_EN)
+    ) u_csr (
         .clk            (clk),
         .rst_n          (rst_n),
         .csr_addr       (dec_csr_addr),
@@ -331,7 +344,7 @@ module jv32_core #(
         .irq_pending    (csr_irq_pending),
         .irq_cause      (csr_irq_cause),
         .irq_pc         (csr_irq_pc),
-        .instret_inc    (trace_valid),
+        .instret_inc    (trace_valid_r),
         .mtime_i        (mtime_i)
     );
 
@@ -354,7 +367,7 @@ module jv32_core #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) dbg_halt_pc_r <= BOOT_ADDR;
         else if (dbg_pc_we_i) dbg_halt_pc_r <= dbg_pc_wdata_i;  // PC write from debugger
-        else if (dbg_step_pending_r && trace_valid)
+        else if (dbg_step_pending_r && trace_valid_r)
             // For single-step, DPC must point to the next instruction.
             dbg_halt_pc_r <= ex_wb_r.pc + ((ex_wb_r.orig_instr[1:0] == 2'b11) ? 32'd4 : 32'd2);
         else if ((dbg_enter_debug || trigger_match || (halt_req_i && !dbg_halted_r)) && if_ex_r.valid)
@@ -787,14 +800,14 @@ module jv32_core #(
             end
             else if (dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
-                      || (dbg_step_pending_r && trace_valid)) begin
+                      || (dbg_step_pending_r && trace_valid_r)) begin
                 dbg_halted_r       <= 1'b1;
                 trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
                 trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
                 // resumeack stays 1 (sticky) — TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
                 // After a single-step halt, block re-resume until resumereq deasserts
-                if (dbg_step_pending_r && trace_valid) dbg_step_served_r <= 1'b1;
+                if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
             end
         end
     end
@@ -1196,6 +1209,8 @@ module jv32_core #(
     // Trace output registers
     // All trace outputs are registered.  trace_en gates the clock enable so
     // that when trace_en=0 the flops never toggle, saving dynamic power.
+    // When TRACE_EN=0 at compile time, all trace output flops are removed from
+    // synthesis; only trace_valid_r is kept (used for instret and debug single-step).
     // =====================================================================
     logic trace_retire;  // one-cycle retire pulse (combinational, not output)
     assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
@@ -1211,71 +1226,109 @@ module jv32_core #(
         ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
                                      ex_wb_r.store_data;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            trace_valid    <= 1'b0;
-            trace_reg_we   <= 1'b0;
-            trace_mem_we   <= 1'b0;
-            trace_mem_re   <= 1'b0;
-            trace_pc       <= 32'h0;
-            trace_rd       <= 5'h0;
-            trace_rd_data  <= 32'h0;
-            trace_instr    <= 32'h0;
-            trace_mem_addr <= 32'h0;
-            trace_mem_data <= 32'h0;
-        end
-        else if (trace_en) begin
-            trace_valid    <= trace_retire;
-            trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
-            // AMO instructions are logged as memory writes (matching jv32sim which
-            // emits trace_is_store=true for all AMO/LR/SC). The write data is
-            // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
-            // for LR (jv32sim writes the loaded value back and logs it as a store).
-            trace_mem_we   <= trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo);
-            trace_mem_re   <= trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo;
-            trace_pc       <= ex_wb_r.pc;
-            trace_rd       <= ex_wb_r.rd_addr;
-            trace_rd_data  <= rf_wdata;
-            trace_instr    <= ex_wb_r.orig_instr;
-            trace_mem_addr <= ex_wb_r.mem_addr;
-            trace_mem_data <= trace_mem_data_c;
-        end
-        else begin
-            // trace_en=0: clear valid/we flags so no spurious events appear;
-            // data registers are not clocked (CE=0) to save power.
-            trace_valid  <= 1'b0;
-            trace_reg_we <= 1'b0;
-            trace_mem_we <= 1'b0;
-            trace_mem_re <= 1'b0;
-        end
-    end
+    generate
+        if (TRACE_EN) begin : gen_trace_outputs
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    trace_valid_r  <= 1'b0;
+                    trace_reg_we   <= 1'b0;
+                    trace_mem_we   <= 1'b0;
+                    trace_mem_re   <= 1'b0;
+                    trace_pc       <= 32'h0;
+                    trace_rd       <= 5'h0;
+                    trace_rd_data  <= 32'h0;
+                    trace_instr    <= 32'h0;
+                    trace_mem_addr <= 32'h0;
+                    trace_mem_data <= 32'h0;
+                end
+                else if (trace_en) begin
+                    trace_valid_r  <= trace_retire;
+                    trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
+                    // AMO instructions are logged as memory writes (matching jv32sim which
+                    // emits trace_is_store=true for all AMO/LR/SC). The write data is
+                    // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
+                    // for LR (jv32sim writes the loaded value back and logs it as a store).
+                    trace_mem_we   <= trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo);
+                    trace_mem_re   <= trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo;
+                    trace_pc       <= ex_wb_r.pc;
+                    trace_rd       <= ex_wb_r.rd_addr;
+                    trace_rd_data  <= rf_wdata;
+                    trace_instr    <= ex_wb_r.orig_instr;
+                    trace_mem_addr <= ex_wb_r.mem_addr;
+                    trace_mem_data <= trace_mem_data_c;
+                end
+                else begin
+                    // trace_en=0: clear valid/we flags so no spurious events appear;
+                    // data registers are not clocked (CE=0) to save power.
+                    trace_valid_r <= 1'b0;
+                    trace_reg_we  <= 1'b0;
+                    trace_mem_we  <= 1'b0;
+                    trace_mem_re  <= 1'b0;
+                end
+            end
 
-    // IRQ-taken trace: fires for one cycle (registered) when the core accepts
-    // an interrupt and squashes the instruction currently in WB.
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            trace_irq_taken      <= 1'b0;
-            trace_irq_cause      <= 32'h0;
-            trace_irq_epc        <= 32'h0;
-            trace_irq_store_we   <= 1'b0;
-            trace_irq_store_addr <= 32'h0;
-            trace_irq_store_data <= 32'h0;
+            assign trace_valid = trace_valid_r;
+
+            // IRQ-taken trace: fires for one cycle (registered) when the core accepts
+            // an interrupt and squashes the instruction currently in WB.
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    trace_irq_taken      <= 1'b0;
+                    trace_irq_cause      <= 32'h0;
+                    trace_irq_epc        <= 32'h0;
+                    trace_irq_store_we   <= 1'b0;
+                    trace_irq_store_addr <= 32'h0;
+                    trace_irq_store_data <= 32'h0;
+                end
+                else if (trace_en) begin
+                    trace_irq_taken      <= irq_cancel && ex_wb_r.valid;
+                    trace_irq_cause      <= csr_irq_cause;
+                    trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
+                    // squashed-store: the interrupt fires in the 2nd WB cycle of a
+                    // store (dmem_resp_valid=1 means the DRAM write already committed)
+                    trace_irq_store_we   <= irq_cancel && ex_wb_r.valid && ex_wb_r.mem_write && dmem_resp_valid;
+                    trace_irq_store_addr <= ex_wb_r.mem_addr;
+                    trace_irq_store_data <= trace_mem_data_c;
+                end
+                else begin
+                    trace_irq_taken    <= 1'b0;
+                    trace_irq_store_we <= 1'b0;
+                end
+            end
+
         end
-        else if (trace_en) begin
-            trace_irq_taken      <= irq_cancel && ex_wb_r.valid;
-            trace_irq_cause      <= csr_irq_cause;
-            trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
-            // squashed-store: the interrupt fires in the 2nd WB cycle of a
-            // store (dmem_resp_valid=1 means the DRAM write already committed)
-            trace_irq_store_we   <= irq_cancel && ex_wb_r.valid && ex_wb_r.mem_write && dmem_resp_valid;
-            trace_irq_store_addr <= ex_wb_r.mem_addr;
-            trace_irq_store_data <= trace_mem_data_c;
+        else begin : gen_no_trace
+
+            // TRACE_EN=0: keep trace_valid_r for instret/debug-step, tie all outputs to 0.
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) trace_valid_r <= 1'b0;
+                else trace_valid_r <= trace_retire;
+            end
+
+            assign trace_valid          = 1'b0;
+            assign trace_reg_we         = 1'b0;
+            assign trace_pc             = 32'd0;
+            assign trace_rd             = 5'd0;
+            assign trace_rd_data        = 32'd0;
+            assign trace_instr          = 32'd0;
+            assign trace_mem_we         = 1'b0;
+            assign trace_mem_re         = 1'b0;
+            assign trace_mem_addr       = 32'd0;
+            assign trace_mem_data       = 32'd0;
+            assign trace_irq_taken      = 1'b0;
+            assign trace_irq_cause      = 32'd0;
+            assign trace_irq_epc        = 32'd0;
+            assign trace_irq_store_we   = 1'b0;
+            assign trace_irq_store_addr = 32'd0;
+            assign trace_irq_store_data = 32'd0;
+
+            /* verilator lint_off UNUSEDSIGNAL */
+            logic _unused_trace_no;
+            assign _unused_trace_no = &{1'b0, trace_en, trace_mem_data_c};
+            /* verilator lint_on UNUSEDSIGNAL */
+
         end
-        else begin
-            trace_irq_taken    <= 1'b0;
-            trace_irq_store_we <= 1'b0;
-        end
-    end
+    endgenerate
 
     // Suppress unused warnings for WFI/fence/fence_i (treated as NOPs here)
     logic _unused;

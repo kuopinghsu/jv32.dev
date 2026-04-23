@@ -106,31 +106,38 @@ _exit:
     .size _exit, . - _exit
 
 /* ============================================================================
- * Trap entry: full M-mode trap handler
- * Saves all 32 registers + mepc/mstatus/mcause/mtval to a 144-byte frame,
+ * Trap entry: M-mode trap handler
+ * Saves all GPRs + mepc/mstatus/mcause/mtval to a frame on the stack,
  * then calls trap_handler(jv_trap_frame_t *frame).
  *
- * Frame layout (144 bytes, matches jv_trap_frame_t in jv_irq.h):
- *   [sp+0]   unused (x0 placeholder)
- *   [sp+4]   x1  (ra)       [sp+8]   x2  (sp, pre-adjust)
- *   [sp+12]  x3  (gp)       [sp+16]  x4  (tp)
- *   [sp+20]  x5  (t0)       [sp+24]  x6  (t1)
- *   [sp+28]  x7  (t2)       [sp+32]  x8  (s0/fp)
- *   [sp+36]  x9  (s1)       [sp+40]  x10 (a0)
- *   ...
- *   [sp+124] x31 (t6)
- *   [sp+128] mepc     <- handlers may update to redirect return PC
- *   [sp+132] mstatus  <- handlers may update; restored via csrw before mret
- *   [sp+136] mcause   <- read-only for handlers
- *   [sp+140] mtval    <- read-only for handlers
+ * RV32I frame (144 bytes):  [sp+0] x0 pad, [sp+4..124] x1-x31,
+ *                            [sp+128] mepc, [sp+132] mstatus,
+ *                            [sp+136] mcause, [sp+140] mtval
+ * RV32E frame (80 bytes):   [sp+0] x0 pad, [sp+4..60] x1-x15,
+ *                            [sp+64] mepc,  [sp+68] mstatus,
+ *                            [sp+72] mcause,[sp+76] mtval
  * ============================================================================ */
+#ifdef __riscv_e
+# define TRAP_FRAME_SIZE  80
+# define TRAP_MEPC_OFF    64
+# define TRAP_MSTAT_OFF   68
+# define TRAP_MCAUSE_OFF  72
+# define TRAP_MTVAL_OFF   76
+#else
+# define TRAP_FRAME_SIZE  144
+# define TRAP_MEPC_OFF    128
+# define TRAP_MSTAT_OFF   132
+# define TRAP_MCAUSE_OFF  136
+# define TRAP_MTVAL_OFF   140
+#endif
+
     .section .text.trap, "ax", @progbits
     .global  trap_entry
     .type    trap_entry, @function
     .align   2
 
 trap_entry:
-    addi    sp, sp, -144
+    addi    sp, sp, -TRAP_FRAME_SIZE
 
     sw      x1,   4(sp)
     sw      x2,   8(sp)
@@ -147,6 +154,7 @@ trap_entry:
     sw      x13, 52(sp)
     sw      x14, 56(sp)
     sw      x15, 60(sp)
+#ifndef __riscv_e
     sw      x16, 64(sp)
     sw      x17, 68(sp)
     sw      x18, 72(sp)
@@ -163,15 +171,16 @@ trap_entry:
     sw      x29, 116(sp)
     sw      x30, 120(sp)
     sw      x31, 124(sp)
+#endif /* !__riscv_e */
 
     csrr    x1, mepc
-    sw      x1,  128(sp)
+    sw      x1,  TRAP_MEPC_OFF(sp)
     csrr    x1, mstatus
-    sw      x1,  132(sp)
+    sw      x1,  TRAP_MSTAT_OFF(sp)
     csrr    x1, mcause
-    sw      x1,  136(sp)
+    sw      x1,  TRAP_MCAUSE_OFF(sp)
     csrr    x1, mtval
-    sw      x1,  140(sp)
+    sw      x1,  TRAP_MTVAL_OFF(sp)
 
     /* Restore ra (used as scratch above) from saved copy */
     lw      x1, 4(sp)
@@ -182,9 +191,9 @@ trap_entry:
 
     /* Restore mstatus and mepc from frame (authoritative — handlers may have
      * modified them to redirect return PC or update interrupt-enable state). */
-    lw      x1, 132(sp)
+    lw      x1, TRAP_MSTAT_OFF(sp)
     csrw    mstatus, x1
-    lw      x1, 128(sp)
+    lw      x1, TRAP_MEPC_OFF(sp)
     csrw    mepc, x1
 
     /* Restore all general-purpose registers */
@@ -203,6 +212,7 @@ trap_entry:
     lw      x13, 52(sp)
     lw      x14, 56(sp)
     lw      x15, 60(sp)
+#ifndef __riscv_e
     lw      x16, 64(sp)
     lw      x17, 68(sp)
     lw      x18, 72(sp)
@@ -219,8 +229,9 @@ trap_entry:
     lw      x29, 116(sp)
     lw      x30, 120(sp)
     lw      x31, 124(sp)
+#endif /* !__riscv_e */
 
-    addi    sp, sp, 144
+    addi    sp, sp, TRAP_FRAME_SIZE
     mret
 
     .size trap_entry, . - trap_entry

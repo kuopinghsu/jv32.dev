@@ -1,6 +1,7 @@
 # FreeRTOS framework build-only targets.
 
 -include ../../env.config
+-include ../../Makefile.cfg
 
 export RISCV_PREFIX
 
@@ -68,6 +69,15 @@ help:
 list-tests:
 	@for t in $(SAMPLE_NAMES); do echo $$t; done
 
+ifeq ($(RV32E_EN),1)
+build:
+	@echo "========================================================"
+	@echo "  FreeRTOS build SKIPPED"
+	@echo "  RV32E_EN=1: FreeRTOS portASM.S saves x28-x31"
+	@echo "  which do not exist in the RV32E register file."
+	@echo "  FreeRTOS is not supported for RV32EC targets."
+	@echo "========================================================"
+else
 build:
 	@if [ -z "$(TEST)" ]; then \
 		echo "Error: TEST is required"; exit 1; \
@@ -93,6 +103,8 @@ build:
 		-o $(BUILD_DIR)/freertos-$(TEST).elf
 	@$(OBJDUMP) -D $(BUILD_DIR)/freertos-$(TEST).elf > $(BUILD_DIR)/freertos-$(TEST).dis
 	@$(READELF) -a $(BUILD_DIR)/freertos-$(TEST).elf > $(BUILD_DIR)/freertos-$(TEST).readelf
+
+endif # RV32E_EN != 1
 
 clean:
 	@rm -f $(BUILD_DIR)/freertos-*.elf

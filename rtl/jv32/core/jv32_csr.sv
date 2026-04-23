@@ -8,7 +8,11 @@
 // plus read-only mvendorid/marchid/mimpid/mhartid.
 // ============================================================================
 
-module jv32_csr (
+module jv32_csr #(
+    parameter bit RV32E_EN = 1'b0,  // 1=RV32E (E-bit in MISA, I-bit cleared)
+    parameter bit RV32M_EN = 1'b1,  // 1=M-extension (M-bit in MISA)
+    parameter bit AMO_EN   = 1'b1   // 1=A-extension (A-bit in MISA)
+) (
     input logic clk,
     input logic rst_n,
 
@@ -68,9 +72,24 @@ module jv32_csr (
 );
     import jv32_pkg::*;
 
-    // =====================================================================
-    // CSR registers
-    // =====================================================================
+    // MISA value derived from compile-time parameters.
+    // Bit assignments: [31:30]=MXL(01=RV32), [12]=M, [8]=I, [4]=E, [2]=C, [0]=A
+    // E and I are mutually exclusive: E-mode clears I, sets E.
+    localparam bit [31:0] MISA_VAL = {
+        2'b01,      // [31:30] MXL = 1 (RV32)
+        4'b0,       // [29:26]
+        13'b0,      // [25:13]
+        RV32M_EN,   // [12] M
+        3'b0,       // [11:9]
+        ~RV32E_EN,  // [8]  I (cleared when E-mode)
+        3'b0,       // [7:5]
+        RV32E_EN,   // [4]  E
+        1'b0,       // [3]
+        1'b1,       // [2]  C (always: compressed support is always present)
+        1'b0,       // [1]
+        AMO_EN      // [0]  A
+    };
+
     // mstatus: MIE(3), MPIE(7), MPP(12:11)=11 always (M-only system)
     logic        mstatus_mie;
     logic        mstatus_mpie;
@@ -136,8 +155,8 @@ module jv32_csr (
         csr_rdata = 32'd0;
         case (csr_addr)
             CSR_MSTATUS: csr_rdata = {19'd0, 2'b11, 3'd0, mstatus_mpie, 3'd0, mstatus_mie, 3'd0};
-            CSR_MSTATUSH: csr_rdata = 32'h0;      // RV32 little-endian M-mode: MBE=0, all bits 0
-            CSR_MISA: csr_rdata = 32'h4000_1105;  // RV32IMAC
+            CSR_MSTATUSH: csr_rdata = 32'h0;  // RV32 little-endian M-mode: MBE=0, all bits 0
+            CSR_MISA: csr_rdata = MISA_VAL;   // computed from RV32E_EN/RV32M_EN/AMO_EN
             CSR_MIE: csr_rdata = mie_reg;
             CSR_MTVEC: csr_rdata = mtvec_reg;
             CSR_MSCRATCH: csr_rdata = mscratch_reg;

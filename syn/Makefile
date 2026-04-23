@@ -88,6 +88,25 @@ DRAM_SIZE    := $(shell echo $$(( $(DRAM_BANKS) * $(MACRO_BYTES) )))
 #         0=1-cycle combinatorial 32x32 multiply.  Requires FAST_MUL=1.  Default 1.
 MUL_MC       ?= 1
 
+# ── ISA / Feature flags ─────────────────────────────────────────────────────
+# RV32EC=1 enables a minimum-area preset that forces all flags below.
+RV32EC       ?= 0
+ifeq ($(RV32EC),1)
+  RV32E_EN   := 1
+  RV32M_EN   := 0
+  JTAG_EN    := 0
+  TRACE_EN   := 0
+  FAST_SHIFT := 0
+  BP_EN      := 0
+  AMO_EN     := 0
+else
+  RV32E_EN   ?= 0
+  RV32M_EN   ?= 1
+  JTAG_EN    ?= 1
+  TRACE_EN   ?= 1
+  AMO_EN     ?= 1
+endif
+
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
 OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
 
@@ -263,8 +282,8 @@ synth: check $(BUILD_DIR)
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
-	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
+	@printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32EC=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - TRACE_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32EC) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(TRACE_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
 	@# Since tcm_params.yaml lives in BUILD_DIR, copy the path-referenced
 	@# files there so OpenLane finds them.
@@ -327,6 +346,12 @@ synth: check $(BUILD_DIR)
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_report.py \
 	    $(OPENLANE_RUN_DIR) \
 	    $(SYN_DIR)/REPORT.md \
+	    --rv32ec     $(RV32EC)     \
+	    --rv32e-en   $(RV32E_EN)   \
+	    --rv32m-en   $(RV32M_EN)   \
+	    --jtag-en    $(JTAG_EN)    \
+	    --trace-en   $(TRACE_EN)   \
+	    --amo-en     $(AMO_EN)     \
 	    --fast-mul   $(FAST_MUL)   \
 	    --fast-div   $(FAST_DIV)   \
 	    --fast-shift $(FAST_SHIFT) \
@@ -387,6 +412,11 @@ gate-count: check $(BUILD_DIR)
 	    export LIB_DIR="$(SYN_DIR)/lib"; \
 	    export IRAM_SIZE="$(IRAM_SIZE)"; \
 	    export DRAM_SIZE="$(DRAM_SIZE)"; \
+	    export RV32E_EN="$(RV32E_EN)"; \
+	    export RV32M_EN="$(RV32M_EN)"; \
+	    export JTAG_EN="$(JTAG_EN)"; \
+	    export TRACE_EN="$(TRACE_EN)"; \
+	    export AMO_EN="$(AMO_EN)"; \
 	    export FAST_MUL="$(FAST_MUL)"; \
 	    export MUL_MC="$(MUL_MC)"; \
 	    export FAST_DIV="$(FAST_DIV)"; \

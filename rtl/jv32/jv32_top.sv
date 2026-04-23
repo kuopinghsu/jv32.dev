@@ -43,6 +43,9 @@
 // ============================================================================
 
 module jv32_top #(
+    parameter bit                 RV32E_EN   = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit                 RV32M_EN   = 1'b1,        // 1=M-extension; 0=illegal for MUL/DIV
+    parameter bit                 TRACE_EN   = 1'b1,        // 1=trace outputs active; 0=tied to 0
     parameter bit                 FAST_MUL   = 1'b1,
     parameter bit                 MUL_MC     = 1'b1,
     parameter bit                 FAST_DIV   = 1'b0,
@@ -239,6 +242,9 @@ module jv32_top #(
     assign core_rst_n = rst_n & ~dbg_hartreset_i;
 
     jv32_core #(
+        .RV32E_EN  (RV32E_EN),
+        .RV32M_EN  (RV32M_EN),
+        .TRACE_EN  (TRACE_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),

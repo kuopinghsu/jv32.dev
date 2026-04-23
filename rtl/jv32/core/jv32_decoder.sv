@@ -8,7 +8,9 @@
 // ============================================================================
 
 module jv32_decoder #(
-    parameter bit AMO_EN = 1'b1  // 1=full A-extension; 0=AMO ops decode as illegal
+    parameter bit AMO_EN   = 1'b1,  // 1=full A-extension; 0=AMO ops decode as illegal
+    parameter bit RV32E_EN = 1'b0,  // 1=RV32E (16 GPRs): rs/rd[4] → illegal
+    parameter bit RV32M_EN = 1'b1   // 1=M-extension; 0=MUL/DIV opcodes → illegal
 ) (
     input logic [31:0] instr,
     input logic        valid,
@@ -139,17 +141,19 @@ module jv32_decoder #(
                 OPCODE_OP: begin
                     reg_we = 1'b1;
                     if (funct7 == 7'h01) begin  // M extension
-                        case (funct3)
-                            3'b000:  alu_op = ALU_MUL;
-                            3'b001:  alu_op = ALU_MULH;
-                            3'b010:  alu_op = ALU_MULHSU;
-                            3'b011:  alu_op = ALU_MULHU;
-                            3'b100:  alu_op = ALU_DIV;
-                            3'b101:  alu_op = ALU_DIVU;
-                            3'b110:  alu_op = ALU_REM;
-                            3'b111:  alu_op = ALU_REMU;
-                            default: ;
-                        endcase
+                        if (!RV32M_EN) illegal = 1'b1;
+                        else
+                            case (funct3)
+                                3'b000:  alu_op = ALU_MUL;
+                                3'b001:  alu_op = ALU_MULH;
+                                3'b010:  alu_op = ALU_MULHSU;
+                                3'b011:  alu_op = ALU_MULHU;
+                                3'b100:  alu_op = ALU_DIV;
+                                3'b101:  alu_op = ALU_DIVU;
+                                3'b110:  alu_op = ALU_REM;
+                                3'b111:  alu_op = ALU_REMU;
+                                default: ;
+                            endcase
                     end
                     else begin
                         case ({
@@ -296,6 +300,9 @@ module jv32_decoder #(
 
                 default: illegal = 1'b1;
             endcase
+
+            // RV32E: any instruction using registers x16-x31 is illegal
+            if (RV32E_EN && (rs1_addr[4] | rs2_addr[4] | rd_addr[4])) illegal = 1'b1;
         end
     end
 

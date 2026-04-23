@@ -120,7 +120,9 @@ static inline void jv_irq_source_disable(uint32_t mask)
 /* ============================================================================
  * Trap frame — mirrors the register save layout in startup.S
  *
- * startup.S allocates 144 bytes on entry (addi sp, sp, -144):
+ * RV32I: startup.S allocates 144 bytes on entry (addi sp, sp, -144):
+ * RV32E: startup.S allocates  80 bytes on entry (addi sp, sp, -80);
+ *        only x0-x15 exist; mepc/mstatus/mcause/mtval follow at +64..+76.
  *
  *   offset   field      register / CSR
  *   ------   --------   ---------------
@@ -183,6 +185,7 @@ typedef struct jv_trap_frame {
     uint32_t a3;        /* +52  x13 */
     uint32_t a4;        /* +56  x14 */
     uint32_t a5;        /* +60  x15 */
+#ifndef __riscv_e
     uint32_t a6;        /* +64  x16 */
     uint32_t a7;        /* +68  x17 */
     uint32_t s2;        /* +72  x18 */
@@ -203,6 +206,12 @@ typedef struct jv_trap_frame {
     uint32_t mstatus;   /* +132 (writable; restored before mret) */
     uint32_t mcause;    /* +136 (read-only for handlers) */
     uint32_t mtval;     /* +140 (read-only for handlers) */
+#else  /* __riscv_e: x0-x15 only, 80-byte frame */
+    uint32_t mepc;      /* +64  return PC (writable by exception handlers) */
+    uint32_t mstatus;   /* +68  (writable; restored before mret) */
+    uint32_t mcause;    /* +72  (read-only for handlers) */
+    uint32_t mtval;     /* +76  (read-only for handlers) */
+#endif /* __riscv_e */
 } jv_trap_frame_t;
 
 /* ============================================================================

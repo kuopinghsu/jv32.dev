@@ -811,6 +811,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir", help="Path to openlane_run directory")
     ap.add_argument("output",  help="Output REPORT.md path")
+    ap.add_argument("--rv32ec",      default="0")
+    ap.add_argument("--rv32e-en",    default="?")
+    ap.add_argument("--rv32m-en",    default="?")
+    ap.add_argument("--jtag-en",     default="?")
+    ap.add_argument("--trace-en",    default="?")
+    ap.add_argument("--amo-en",      default="?")
     ap.add_argument("--fast-mul",    default="?")
     ap.add_argument("--fast-div",    default="?")
     ap.add_argument("--fast-shift",  default="?")
@@ -872,6 +878,12 @@ def main():
 | Clock | {args.clock_mhz} MHz (`core_clk`, period = {f"{1000/float(args.clock_mhz):.1f}" if args.clock_mhz not in ("?","") else "?"} ns) |
 | IRAM | {args.iram_kb} KB |
 | DRAM | {args.dram_kb} KB |
+| `RV32EC` | {args.rv32ec} |
+| `RV32E_EN` | {args.rv32e_en} |
+| `RV32M_EN` | {args.rv32m_en} |
+| `JTAG_EN` | {args.jtag_en} |
+| `TRACE_EN` | {args.trace_en} |
+| `AMO_EN` | {args.amo_en} |
 | `FAST_MUL` | {args.fast_mul} |
 | `FAST_DIV` | {args.fast_div} |
 | `FAST_SHIFT` | {args.fast_shift} |

@@ -21,11 +21,34 @@ endif
 # Load hardware/simulation configuration (can override on command line)
 -include Makefile.cfg
 
-# Export so sub-makes (sw/Makefile) inherit
+# Export so sub-makes (sw/Makefile, rtos/freertos/Makefile) inherit
 export RISCV_PREFIX
 export VERILATOR
 export VERIBLE
 export VERIBLE_FORMAT
+export RV32E_EN
+export RV32M_EN
+export AMO_EN
+
+# Compute ARCH/ABI from feature flags and export so all sub-makes agree.
+# sw/Makefile and rtos/freertos/Makefile both use ARCH ?= / ABI ?= guards,
+# so exporting here overrides their defaults consistently.
+ifeq ($(RV32E_EN),1)
+  # GCC 15 maps rv32ec_zicsr to the rv32ec/ilp32e multilib while allowing
+  # CSR instructions (zicsr) — no separate -Wa workaround needed.
+  export ARCH := rv32ec_zicsr
+  export ABI  := ilp32e
+else
+  _SW_EXTS :=
+  ifneq ($(RV32M_EN),0)
+    _SW_EXTS := $(_SW_EXTS)m
+  endif
+  ifneq ($(AMO_EN),0)
+    _SW_EXTS := $(_SW_EXTS)a
+  endif
+  export ARCH := rv32i$(_SW_EXTS)c_zicsr
+  export ABI  := ilp32
+endif
 
 # Append additional tool paths if specified
 ifdef PATH_APPEND
@@ -97,6 +120,21 @@ LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL -Wno-DECLFILE
 LINT_MOD_FLAGS += -I$(CORE_DIR) -I$(JV32_DIR) -I$(AXI_DIR) -I$(RTL_DIR)
 
 # Simulation parameters (override on command line, e.g. make build-rtl FAST_MUL=0)
+ifdef RV32E_EN
+  VERILATOR_FLAGS += -pvalue+RV32E_EN=$(RV32E_EN)
+endif
+ifdef RV32M_EN
+  VERILATOR_FLAGS += -pvalue+RV32M_EN=$(RV32M_EN)
+endif
+ifdef JTAG_EN
+  VERILATOR_FLAGS += -pvalue+JTAG_EN=$(JTAG_EN)
+endif
+ifdef TRACE_EN
+  VERILATOR_FLAGS += -pvalue+TRACE_EN=$(TRACE_EN)
+endif
+ifdef AMO_EN
+  VERILATOR_FLAGS += -pvalue+AMO_EN=$(AMO_EN)
+endif
 ifdef FAST_MUL
   VERILATOR_FLAGS += -pvalue+FAST_MUL=$(FAST_MUL)
 endif
@@ -191,7 +229,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -682,6 +720,12 @@ freertos-list-tests:
 # Internal helper used by rtl-freertos-% and rtl-freertos-all
 .PHONY: __rtl-freertos-run
 __rtl-freertos-run: build-rtl
+	@if [ "$(RV32E_EN)" = "1" ]; then \
+		echo "=========================================================="; \
+		echo "  FreeRTOS SKIPPED (RV32E_EN=1, not supported for RV32EC)"; \
+		echo "=========================================================="; \
+		exit 0; \
+	fi
 	@if [ -z "$(TEST)" ]; then \
 		echo "ERROR: TEST is required (e.g. make __rtl-freertos-run TEST=perf)"; \
 		exit 1; \
@@ -930,6 +974,12 @@ help:
 	@echo "  RISCV_PREFIX=<pfx>   RISC-V toolchain prefix"
 	@echo ""
 	@echo "RTL parameters (override on command line):"
+	@echo "  RV32EC=1             Minimum-area RV32EC preset (sets all flags below)"
+	@echo "  RV32E_EN=0|1         0=RV32I 32 GPRs, 1=RV32E 16 GPRs"
+	@echo "  RV32M_EN=0|1         M-extension (MUL/DIV) enable"
+	@echo "  JTAG_EN=0|1          JTAG debug interface enable"
+	@echo "  TRACE_EN=0|1         Trace output registers enable"
+	@echo "  AMO_EN=0|1           A-extension (atomic ops) enable"
 	@echo "  FAST_MUL=0|1         Serial/combinatorial multiplier"
 	@echo "  MUL_MC=0|1           1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)"
 	@echo "  FAST_DIV=0|1         Serial/combinatorial divider"

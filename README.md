@@ -87,6 +87,36 @@ make synth
 
 Hardware parameters are set in `Makefile.cfg` and can be overridden on the command line, e.g. `make FAST_MUL=0 rtl-hello`.
 
+### ISA / Extensions
+
+#### RV32EC minimum-area preset
+
+Setting `RV32EC=1` activates the minimum-area configuration. It overrides all individual extension flags below with the following fixed values:
+
+| Condition | Value | Effect |
+|---|:---:|---|
+| `RV32E_EN` | `1` | 16 GPRs (E-class register file) instead of 32 |
+| `RV32M_EN` | `0` | M-extension disabled; MUL/DIV trap as illegal instruction |
+| `AMO_EN` | `0` | A-extension disabled; all AMO instructions trap as illegal |
+| `JTAG_EN` | `0` | JTAG debug transport removed from synthesis |
+| `TRACE_EN` | `0` | Trace output registers removed (outputs tied to 0) |
+| `BP_EN` | `0` | Branch predictor disabled; always-not-taken prediction |
+| `FAST_SHIFT` | `0` | 1-bit-per-cycle serial barrel shifter (area-minimal) |
+
+Use `make RV32EC=1 build-rtl` or set `RV32EC=1` in `Makefile.cfg`.
+
+#### Individual extension flags
+
+When `RV32EC=0` (the default), each flag can be set independently:
+
+| Parameter | Default | Description |
+|---|:---:|---|
+| `RV32E_EN` | `0` | `1` = RV32E (16 GPRs); `0` = RV32I (32 GPRs) |
+| `RV32M_EN` | `1` | `1` = include M-extension (MUL/DIV); `0` = illegal trap on MUL/DIV |
+| `AMO_EN` | `1` | `1` = include A-extension (atomic ops); `0` = illegal trap on AMO |
+| `JTAG_EN` | `1` | `1` = include JTAG debug interface; `0` = remove from synthesis |
+| `TRACE_EN` | `1` | `1` = trace output registers present; `0` = outputs tied to 0 |
+
 ### Pipeline
 
 | Parameter | Default | Description |
@@ -135,6 +165,66 @@ The multiplier has three modes, selectable via `FAST_MUL` and `MUL_MC`:
 | `TRACE` | _(none)_ | `1` = print RTL instruction trace to stdout |
 | `DEBUG` | _(none)_ | `1` = level-1 messages; `2` = per-group messages |
 | `DEBUG_GROUP` | _(none)_ | Bitmask of module groups to print (used with `DEBUG=2`) |
+
+## Area Reference
+
+Gate counts use hierarchical (non-flattening) synthesis on **Nangate 45 nm Open Cell Library (FreePDK45)**.
+Reference cell: NAND2\_X1 = 0.7980 µm².
+SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from the NAND2 equivalent count.
+
+> Each module is optimised independently; cross-module sharing (as in a flat synthesis) may differ by ±5–10%.
+
+### RV32EC=1 (minimum configuration)
+
+`RV32E_EN=1, RV32M_EN=0, AMO_EN=0, JTAG_EN=0, TRACE_EN=0, BP_EN=0, FAST_SHIFT=0`
+
+| Module | NAND2 eq | Area (µm²) |
+|---|---:|---:|
+| `jv32_soc` | 41,207 | 32,882.92 |
+| ↳ `jv32_top` | 30,470 | 24,314.79 |
+| &nbsp;&nbsp;↳ `jv32_core` | 26,206 | 20,912.12 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 6,928 | 5,528.54 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,391 | 4,302.28 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,412 | 1,924.51 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 1,770 | 1,412.73 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 307 | 245.25 |
+| &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
+| ↳ `axi_clic` | 5,713 | 4,559.24 |
+| ↳ `axi_uart` | 4,321 | 3,448.16 |
+| ↳ `axi_xbar` | 689 | 550.09 |
+| ↳ `axi_magic` | 0 | 0.00 |
+| **TOTAL** (logic, excl. SRAM macros) | **41,207** | **32,882.92** |
+
+> The ~9,400 NAND2 gap between `jv32_core` (26,206) and the sum of its submodules (16,808) is pipeline logic
+> instantiated directly in `jv32_core.sv`: pipeline registers (`if_ex_r`, `ex_wb_r`), PC control, forwarding
+> muxes, branch evaluation/redirect, hazard control, load/store alignment, exception detection, and debug FSM.
+
+### RV32EC=0 (full / default configuration)
+
+`RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1, N_TRIGGERS=2`
+
+| Module | NAND2 eq | Area (µm²) |
+|---|---:|---:|
+| `jv32_soc` | 84,635 | 67,538.46 |
+| ↳ `jv32_top` | 54,460 | 43,459.08 |
+| &nbsp;&nbsp;↳ `jv32_core` | 50,168 | 40,034.33 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 14,288 | 11,402.09 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 15,999 | 12,766.94 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,451 | 4,349.90 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,410 | 1,922.91 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 293 | 233.55 |
+| &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
+| ↳ `jtag_top` | 17,295 | 13,801.41 |
+| &nbsp;&nbsp;↳ `jv32_dtm` | 17,088 | 13,636.22 |
+| ↳ `axi_clic` | 5,699 | 4,547.80 |
+| ↳ `axi_uart` | 4,315 | 3,443.37 |
+| ↳ `axi_xbar` | 689 | 550.09 |
+| ↳ `axi_magic` | 0 | 0.00 |
+| **TOTAL** (logic, excl. SRAM macros) | **84,635** | **67,538.46** |
+
+> Compared to RV32EC=1 (41,207 NAND2), the full configuration is ~2× larger, with the main contributors being:
+> `jv32_regfile` (+7,360, 32 vs 16 GPRs), `jv32_alu` (+14,229, M+A extensions + barrel shifter),
+> `jv32_dtm` (+17,088, JTAG debug module).
 
 ## Documentation
 

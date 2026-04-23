@@ -27,9 +27,11 @@ OBJCOPY := $(CROSS)-objcopy
 OBJDUMP := $(CROSS)-objdump
 SIZE    := $(CROSS)-size
 
-# Architecture flags: RV32IMAC + Zicsr
-ARCH    := rv32imac_zicsr
-ABI     := ilp32
+# Architecture flags: ARCH and ABI are computed and exported by the root Makefile
+# based on RV32E_EN / RV32M_EN / AMO_EN.  Defaults below apply when sw/Makefile
+# is invoked standalone (e.g. make -C sw build TEST=hello).
+ARCH    ?= rv32imac_zicsr
+ABI     ?= ilp32
 
 CFLAGS  := -march=$(ARCH) -mabi=$(ABI)
 CFLAGS  += -O2 -g
@@ -37,6 +39,11 @@ CFLAGS  += -Wall -Wextra
 CFLAGS  += -nostartfiles -ffreestanding
 CFLAGS  += -ffunction-sections -fdata-sections
 CFLAGS  += -Iinclude
+# Disable double-precision float in printf.c for RV32E: the rv32ec libgcc
+# has no soft-float routines for double (df-mode not supported for rv32e).
+ifeq ($(ABI),ilp32e)
+  CFLAGS  += -DPRINTF_DISABLE_FLOAT
+endif
 
 CXXFLAGS := $(CFLAGS)
 
