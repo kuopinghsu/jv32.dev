@@ -17,6 +17,8 @@
 #   DRAM_SIZE    — DRAM bytes (e.g. 16384)
 #   FAST_MUL, MUL_MC, FAST_DIV, FAST_SHIFT, BP_EN  — pipeline feature bits
 #   RV32E_EN, RV32M_EN, JTAG_EN, TRACE_EN, AMO_EN  — ISA / feature enable bits
+#   CG_EN                                           — 1=insert CLKGATE_X1 ICG cells
+#   DFT_EN                                          — 1=DFT mode: CLKGATETST_X1 + scan FFs
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -37,6 +39,7 @@ set -euo pipefail
 : "${TRACE_EN:=1}"
 : "${AMO_EN:=1}"
 : "${CG_EN:=1}"        # 1=insert CLKGATE_X1 clock gating before dfflibmap (default); 0=data-path enable mux
+: "${DFT_EN:=0}"       # 1=DFT mode: CLKGATETST_X1 + SDFF_X1/SDFFR_X1 scan FFs; implies CG
 
 STAT_DIR="$(dirname "$STAT_JSON")"
 mkdir -p "$STAT_DIR"
@@ -93,9 +96,30 @@ YOSYS_EOF
 } >> "$YS_SCRIPT"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Synthesis + technology mapping  (clock gating optional)
+# Synthesis + technology mapping  (DFT / clock gating / baseline)
 # ─────────────────────────────────────────────────────────────────────────────
-if [ "${CG_EN}" = "1" ]; then
+if [ "${DFT_EN}" = "1" ]; then
+    echo "[hier_synth] DFT mode ENABLED (CLKGATETST_X1 + SDFF_X1)"
+    cat >> "$YS_SCRIPT" << YOSYS_EOF
+
+# ── Synthesise (stop before DFF library mapping) ─────────────────────────────
+synth -top jv32_soc -run begin:map
+
+# ── DFT clock gating techmap ──────────────────────────────────────────────────
+# Maps \$_DFFE_PP_ → CLKGATETST_X1 (test-mode SE bypass pin) + \$_DFF_P_.
+techmap -map ${LIB_DIR}/clockgate_dft_map.v
+
+# ── Scan flip-flop techmap ────────────────────────────────────────────────────
+# Maps \$_DFF_P_   → SDFF_X1  (SI/SE tied 0 for area analysis).
+# Maps \$_DFF_PN0_ → SDFFR_X1 (active-low async reset + scan).
+techmap -map ${LIB_DIR}/scan_map.v
+
+# ── Combinational + residual DFF technology mapping ──────────────────────────
+dfflibmap -liberty ${NANGATE_LIB}
+abc -liberty ${NANGATE_LIB}
+clean
+YOSYS_EOF
+elif [ "${CG_EN}" = "1" ]; then
     echo "[hier_synth] Clock gating ENABLED (CLKGATE_X1)"
     cat >> "$YS_SCRIPT" << YOSYS_EOF
 
@@ -135,7 +159,13 @@ YOSYS_EOF
 
 echo "========================================================"
 echo " Yosys hierarchical synthesis (no flatten)"
-[ "${CG_EN}" = "1" ] && echo "  Clock gating: ENABLED (CLKGATE_X1)" || echo "  Clock gating: disabled"
+if [ "${DFT_EN}" = "1" ]; then
+    echo "  DFT mode    : ENABLED (CLKGATETST_X1 + SDFF_X1/SDFFR_X1)"
+elif [ "${CG_EN}" = "1" ]; then
+    echo "  Clock gating: ENABLED (CLKGATE_X1)"
+else
+    echo "  Clock gating: disabled"
+fi
 echo "  Liberty : ${NANGATE_LIB}"
 echo "  Output  : ${STAT_JSON}"
 echo "========================================================"

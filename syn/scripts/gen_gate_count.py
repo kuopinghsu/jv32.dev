@@ -103,43 +103,48 @@ def compute_inclusive(
 def count_icg_dff_direct(
     modules: dict,
     lib_cells: Set[str],
-) -> Dict[str, Tuple[int, int]]:
-    """Return {clean_module_name: (icg_count, dff_count)} for direct cells only.
+) -> Dict[str, Tuple[int, int, int]]:
+    """Return {clean_module_name: (icg_count, dff_count, sdff_count)} for direct cells only.
 
-    ICG cells : names containing 'CLKGATE' (CLKGATE_X1, CLKGATETST_X1, …)
-    DFF cells : names starting with 'DFF' (DFF_X1, DFFR_X1, DFFS_X1, …)
+    ICG cells  : names containing 'CLKGATE' (CLKGATE_X1, CLKGATETST_X1, …)
+    DFF cells  : names starting with 'DFF'  (DFF_X1, DFFR_X1, DFFS_X1, …)
+    SDFF cells : names starting with 'SDFF' (SDFF_X1, SDFFR_X1, …) — scan FFs
     """
-    result: Dict[str, Tuple[int, int]] = {}
+    result: Dict[str, Tuple[int, int, int]] = {}
     for raw_name, mod in modules.items():
         cname = clean_name(raw_name)
-        icg = dff = 0
+        icg = dff = sdff = 0
         for cell_type, cnt in mod.get("num_cells_by_type", {}).items():
             ct = clean_name(cell_type)
             if ct not in lib_cells:
                 continue  # skip sub-module instances
-            if "CLKGATE" in ct.upper():
+            ctu = ct.upper()
+            if "CLKGATE" in ctu:
                 icg += int(cnt)
-            elif ct.upper().startswith("DFF"):
+            elif ctu.startswith("SDFF"):
+                sdff += int(cnt)
+            elif ctu.startswith("DFF"):
                 dff += int(cnt)
-        result[cname] = (icg, dff)
+        result[cname] = (icg, dff, sdff)
     return result
 
 def compute_inclusive_counts(
     mod: str,
     children: Dict[str, List[Tuple[str, int]]],
-    direct_counts: Dict[str, Tuple[int, int]],
-    cache: Dict[str, Tuple[int, int]],
-) -> Tuple[int, int]:
-    """Recursively sum ICG and DFF counts for mod and all its submodules."""
+    direct_counts: Dict[str, Tuple[int, int, int]],
+    cache: Dict[str, Tuple[int, int, int]],
+) -> Tuple[int, int, int]:
+    """Recursively sum ICG, DFF, and SDFF counts for mod and all its submodules."""
     if mod in cache:
         return cache[mod]
-    icg, dff = direct_counts.get(mod, (0, 0))
+    icg, dff, sdff = direct_counts.get(mod, (0, 0, 0))
     for child, cnt in children.get(mod, []):
-        c_icg, c_dff = compute_inclusive_counts(child, children, direct_counts, cache)
-        icg += c_icg * cnt
-        dff += c_dff * cnt
-    cache[mod] = (icg, dff)
-    return (icg, dff)
+        c_icg, c_dff, c_sdff = compute_inclusive_counts(child, children, direct_counts, cache)
+        icg  += c_icg  * cnt
+        dff  += c_dff  * cnt
+        sdff += c_sdff * cnt
+    cache[mod] = (icg, dff, sdff)
+    return (icg, dff, sdff)
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -188,9 +193,9 @@ def main() -> None:
     for m in design_modules:
         compute_inclusive(m, children, direct_area, cache)
 
-    # ── compute inclusive ICG + DFF counts ───────────────────────────────────
+    # ── compute inclusive ICG + DFF + SDFF counts ──────────────────────────
     direct_counts = count_icg_dff_direct(modules, lib_cells)
-    count_cache: Dict[str, Tuple[int, int]] = {}
+    count_cache: Dict[str, Tuple[int, int, int]] = {}
     for m in design_modules:
         compute_inclusive_counts(m, children, direct_counts, count_cache)
 
@@ -253,7 +258,7 @@ def main() -> None:
     ]
 
     # ── Clock gating section (only when ICG cells are present) ───────────────
-    total_icg = sum(count_cache.get(t, (0, 0))[0] for t in top_modules)
+    total_icg = sum(count_cache.get(t, (0, 0, 0))[0] for t in top_modules)
     if total_icg > 0:
         lines += [
             "",
@@ -273,7 +278,7 @@ def main() -> None:
             if mod in cg_visited:
                 return
             cg_visited.add(mod)
-            icg, dff = count_cache.get(mod, (0, 0))
+            icg, dff, _sdff = count_cache.get(mod, (0, 0, 0))
             total_ff = icg + dff
             pct = (100.0 * icg / total_ff) if total_ff > 0 else 0.0
             indent = "  " * depth
@@ -292,7 +297,7 @@ def main() -> None:
         for top in top_modules:
             add_cg_rows(top)
 
-        total_dff_all = sum(count_cache.get(t, (0, 0))[1] for t in top_modules)
+        total_dff_all = sum(count_cache.get(t, (0, 0, 0))[1] for t in top_modules)
         total_ff_all  = total_icg + total_dff_all
         total_pct     = (100.0 * total_icg / total_ff_all) if total_ff_all > 0 else 0.0
         lines += [
@@ -304,6 +309,63 @@ def main() -> None:
             "    - Gated% = ICG / (ICG + DFF): fraction of FFs with a hardware clock gate.",
             "    - Only $_DFFE_PP_ cells (enabled FF, no reset) are clock-gated.",
             "    - FFs with async reset use data-path enable muxes (not counted as gated).",
+            SEP,
+        ]
+
+    # ── Scan coverage section (only when SDFF cells are present) ─────────────
+    total_sdff = sum(count_cache.get(t, (0, 0, 0))[2] for t in top_modules)
+    if total_sdff > 0:
+        lines += [
+            "",
+            SEP,
+            "  DFT Scan Coverage Summary",
+            "  Scan cells : SDFF_X1 (no reset) / SDFFR_X1 (async reset)",
+            "  Coverage%  = SDFF / (SDFF + DFF)  — per-module inclusive counts",
+            SEP,
+            "",
+            f"  {'Module':<40}  {'All FFs':>7}  {'SDFF':>7}  {'DFF':>7}  {'Cover%':>7}",
+            f"  {'-'*40}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}",
+        ]
+
+        sc_visited: Set[str] = set()
+
+        def add_sc_rows(mod: str, depth: int = 0) -> None:
+            if mod in sc_visited:
+                return
+            sc_visited.add(mod)
+            _icg, dff, sdff = count_cache.get(mod, (0, 0, 0))
+            total_ff = sdff + dff
+            pct = (100.0 * sdff / total_ff) if total_ff > 0 else 0.0
+            indent = "  " * depth
+            label  = indent + mod
+            lines.append(
+                f"  {label:<40}  {total_ff:>7,}  {sdff:>7,}  {dff:>7,}  {pct:>6.1f}%"
+            )
+            kids_sorted = sorted(
+                children.get(mod, []),
+                key=lambda kc: -cache.get(kc[0], 0.0),
+            )
+            for child, _ in kids_sorted:
+                if child in design_modules:
+                    add_sc_rows(child, depth + 1)
+
+        for top in top_modules:
+            add_sc_rows(top)
+
+        total_dff_noscan = sum(count_cache.get(t, (0, 0, 0))[1] for t in top_modules)
+        total_all_ff     = total_sdff + total_dff_noscan
+        total_cov        = (100.0 * total_sdff / total_all_ff) if total_all_ff > 0 else 0.0
+        lines += [
+            f"  {'-'*40}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}",
+            f"  {'TOTAL':<40}  {total_all_ff:>7,}  {total_sdff:>7,}  {total_dff_noscan:>7,}  {total_cov:>6.1f}%",
+            SEP,
+            "",
+            "  Notes:",
+            "    - Coverage% = SDFF / (SDFF + DFF): fraction of FFs replaced by scan cells.",
+            "    - SDFF_X1 maps $_DFF_P_ (ICG output FFs + direct enabled FFs).",
+            "    - SDFFR_X1 maps $_DFF_PN0_ (active-low async-reset FFs).",
+            "    - SI/SE are tied to 0 for area analysis; scan chain stitching",
+            "      (connecting SI/Q) is performed by OpenROAD ScanInsert during P&R.",
             SEP,
         ]
 

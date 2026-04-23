@@ -114,6 +114,10 @@ OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
 # synthesis (default).  0=data-path enable muxes (disable for comparison).
 CG_EN        ?= 1
 
+# DFT: 1=DFT mode — uses CLKGATETST_X1 (scan test bypass) + SDFF_X1/SDFFR_X1
+# scan FFs instead of DFF_X1/DFFR_X1.  Implies clock gating.  Default off.
+DFT_EN       ?= 0
+
 # OpenRAM optimisation: speed (words_per_row=1, TT+FF+SS) or area (auto, TT)
 OPENRAM_OPTIMIZE ?= speed
 
@@ -427,6 +431,7 @@ gate-count: check $(BUILD_DIR)
 	    export FAST_SHIFT="$(FAST_SHIFT)"; \
 	    export BP_EN="$(BP_EN)"; \
 	    export CG_EN="$(CG_EN)"; \
+	    export DFT_EN="$(DFT_EN)"; \
 	    $(NIX_SHELL) $(OPENLANE)/shell.nix \
 	        --run "bash $(SYN_DIR)/scripts/hier_synth.sh"; \
 	)
