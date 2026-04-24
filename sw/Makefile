@@ -39,11 +39,6 @@ CFLAGS  += -Wall -Wextra
 CFLAGS  += -nostartfiles -ffreestanding
 CFLAGS  += -ffunction-sections -fdata-sections
 CFLAGS  += -Iinclude
-# Disable double-precision float in printf.c for RV32E: the rv32ec libgcc
-# has no soft-float routines for double (df-mode not supported for rv32e).
-ifeq ($(ABI),ilp32e)
-  CFLAGS  += -DPRINTF_DISABLE_FLOAT
-endif
 
 CXXFLAGS := $(CFLAGS)
 

@@ -4,7 +4,7 @@
 // Description: RV32IMAC Core Package
 //
 // Defines types, enums, top-level parameters, and pipeline register structs
-// used by the JV32 3-stage (IF→EX→WB) RV32IMAC processor core.
+// used by the JV32 3-stage (IF->EX->WB) RV32IMAC processor core.
 // ============================================================================
 
 // Macros are defined in jv32_dbgmsg.svh (Vivado global include).
@@ -76,7 +76,7 @@ package jv32_pkg;
     } opcode_e;
 
     // ========================================================================
-    // ALU operations — RV32IM subset (no B-ext, no FPU)
+    // ALU operations - RV32IM subset (no B-ext, no FPU)
     // ========================================================================
     typedef enum logic [4:0] {
         ALU_ADD,
@@ -161,47 +161,52 @@ package jv32_pkg;
     typedef enum logic [11:0] {
         // Unprivileged floating-point (not used, kept for completeness)
         // Machine Trap Setup
-        CSR_MSTATUS       = 12'h300,
-        CSR_MISA          = 12'h301,
-        CSR_MIE           = 12'h304,
-        CSR_MTVEC         = 12'h305,
-        CSR_MSTATUSH      = 12'h310,  // RV32 high bits of mstatus (MBE=0, all others 0)
+        CSR_MSTATUS  = 12'h300,
+        CSR_MISA     = 12'h301,
+        CSR_MIE      = 12'h304,
+        CSR_MTVEC    = 12'h305,
+        CSR_MSTATUSH = 12'h310,  // RV32 high bits of mstatus (MBE=0, all others 0)
+
         // Machine Trap Handling
-        CSR_MSCRATCH      = 12'h340,
-        CSR_MEPC          = 12'h341,
-        CSR_MCAUSE        = 12'h342,
-        CSR_MTVAL         = 12'h343,
-        CSR_MIP           = 12'h344,
+        CSR_MSCRATCH = 12'h340,
+        CSR_MEPC     = 12'h341,
+        CSR_MCAUSE   = 12'h342,
+        CSR_MTVAL    = 12'h343,
+        CSR_MIP      = 12'h344,
+
         // CLIC extensions (RVM23)
-        CSR_MTVT          = 12'h307,  // CLIC vector table base
-        CSR_MNXTI         = 12'h345,  // CLIC next-interrupt CSR
-        CSR_MINTSTATUS    = 12'hFB1,  // CLIC interrupt status (current level)
-        CSR_MINTTHRESH    = 12'h347,  // CLIC interrupt threshold
+        CSR_MTVT       = 12'h307,  // CLIC vector table base
+        CSR_MNXTI      = 12'h345,  // CLIC next-interrupt CSR
+        CSR_MINTSTATUS = 12'hFB1,  // CLIC interrupt status (current level)
+        CSR_MINTTHRESH = 12'h347,  // CLIC interrupt threshold
+
         // Machine Counters/Timers
         CSR_MCOUNTINHIBIT = 12'h320,  // counter-inhibit: bit0=CY, bit2=IR
         CSR_MCYCLE        = 12'hB00,
         CSR_MINSTRET      = 12'hB02,
         CSR_MCYCLEH       = 12'hB80,
         CSR_MINSTRETH     = 12'hB82,
+
         // User-mode read-only shadows
-        CSR_CYCLE         = 12'hC00,
-        CSR_TIME          = 12'hC01,
-        CSR_INSTRET       = 12'hC02,
-        CSR_CYCLEH        = 12'hC80,
-        CSR_TIMEH         = 12'hC81,
-        CSR_INSTRETH      = 12'hC82,
+        CSR_CYCLE    = 12'hC00,
+        CSR_TIME     = 12'hC01,
+        CSR_INSTRET  = 12'hC02,
+        CSR_CYCLEH   = 12'hC80,
+        CSR_TIMEH    = 12'hC81,
+        CSR_INSTRETH = 12'hC82,
+
         // Machine information (read-only)
-        CSR_MVENDORID     = 12'hF11,
-        CSR_MARCHID       = 12'hF12,
-        CSR_MIMPID        = 12'hF13,
-        CSR_MHARTID       = 12'hF14
+        CSR_MVENDORID = 12'hF11,
+        CSR_MARCHID   = 12'hF12,
+        CSR_MIMPID    = 12'hF13,
+        CSR_MHARTID   = 12'hF14
     } csr_addr_e;
 
     // ========================================================================
     // Pipeline Register Structs
     // ========================================================================
 
-    // IF → EX pipeline register
+    // IF -> EX pipeline register
     typedef struct packed {
         logic        valid;          // instruction is valid (not a bubble)
         logic [31:0] pc;             // PC of this instruction
@@ -209,37 +214,43 @@ package jv32_pkg;
         logic [31:0] orig_instr;     // original encoding (16-bit zero-ext for RVC)
         logic        is_compressed;  // was originally 16-bit RVC
         logic        bp_taken;       // branch was predicted taken by BTFNT predictor
-        logic        ifetch_fault;   // AXI DECERR on I-fetch → EXC_INSTR_ACCESS_FAULT
+        logic        ifetch_fault;   // AXI DECERR on I-fetch -> EXC_INSTR_ACCESS_FAULT
     } if_ex_t;
 
-    // EX → WB pipeline register
+    // EX -> WB pipeline register
     typedef struct packed {
         logic        valid;       // slot is valid
         logic [31:0] pc;          // PC of this instruction (for trace & mepc)
         logic [31:0] orig_instr;  // original encoding (for trace)
+
         // Writeback
         logic [4:0]  rd_addr;  // destination register address
         logic        reg_we;   // register write enable
         logic [31:0] rd_data;  // result (ALU / LUI / AUIPC / JAL(R) link)
+
         // Memory
         logic        mem_read;    // load in flight
         logic        mem_write;   // store in flight
         mem_size_e   mem_op;      // access size/sign  (mem_size_e)
         logic [31:0] mem_addr;    // effective address
         logic [31:0] store_data;  // data to write (stores)
+
         // AMO
-        logic        is_amo;  // AMO in flight
-        amo_op_e     amo_op;  // AMO operation
+        logic    is_amo;  // AMO in flight
+        amo_op_e amo_op;  // AMO operation
+
         // CSR
         logic [2:0]  csr_op;     // CSR operation (3'b0 = no CSR access)
         logic [11:0] csr_addr;   // CSR address
         logic [31:0] csr_wdata;  // CSR write value
         logic [4:0]  csr_zimm;   // CSR immediate (CSRRWI/CSRRSI/CSRRCI)
+
         // Control
         logic        exception;  // synchronous exception in EX
         exc_cause_e  exc_cause;  // exception cause code
         logic [31:0] exc_tval;   // trap value (bad PC/addr or instr)
         logic        mret;       // MRET instruction
+
         // Redirect (branches/jumps resolved in EX)
         logic        redirect;     // EX computed a new PC
         logic [31:0] redirect_pc;  // target PC for branch/jump

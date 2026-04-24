@@ -16,6 +16,7 @@
 #   IRAM_SIZE    — IRAM bytes (e.g. 16384)
 #   DRAM_SIZE    — DRAM bytes (e.g. 16384)
 #   FAST_MUL, MUL_MC, FAST_DIV, FAST_SHIFT, BP_EN  — pipeline feature bits
+#   IFETCH_PREADVANCE                               — 1=combinatorial next-PC preadvance
 #   RV32E_EN, RV32M_EN, JTAG_EN, TRACE_EN, AMO_EN  — ISA / feature enable bits
 #   CG_EN                                           — 1=insert CLKGATE_X1 ICG cells
 #   DFT_EN                                          — 1=DFT mode: CLKGATETST_X1 + scan FFs
@@ -33,6 +34,7 @@ set -euo pipefail
 : "${FAST_DIV:=0}"
 : "${FAST_SHIFT:=1}"
 : "${BP_EN:=1}"
+: "${IFETCH_PREADVANCE:=1}"  # 1=pre-advance fetch address combinatorially (lower CPI, longer comb path)
 : "${RV32E_EN:=0}"
 : "${RV32M_EN:=1}"
 : "${JTAG_EN:=1}"
@@ -65,6 +67,7 @@ YOSYS_EOF
 {
     printf 'read_systemverilog -sverilog -top jv32_soc'
     printf ' -DSYNTHESIS -DNO_ASSERTION -DGENERIC_SRAM'
+    if [ "${IFETCH_PREADVANCE}" = "1" ]; then printf ' -DIFETCH_PREADVANCE'; fi
     printf ' -I%s' "${RTL_DIR}/jv32"
     printf ' -PIRAM_SIZE=%s -PDRAM_SIZE=%s' "${IRAM_SIZE}" "${DRAM_SIZE}"
     printf ' -PFAST_MUL=%s -PMUL_MC=%s -PFAST_DIV=%s -PFAST_SHIFT=%s -PBP_EN=%s' \
@@ -102,11 +105,34 @@ if [ "${DFT_EN}" = "1" ]; then
     echo "[hier_synth] DFT mode ENABLED (CLKGATETST_X1 + SDFF_X1)"
     cat >> "$YS_SCRIPT" << YOSYS_EOF
 
-# ── Synthesise (stop before DFF library mapping) ─────────────────────────────
-synth -top jv32_soc -run begin:map
+# ── Synthesise coarse stages; stop before fine (which contains dfflegalize) ──
+# -run begin:fine runs begin+coarse but NOT fine (to-label is exclusive).
+# We then run the fine stage manually so we can insert hierarchical clock
+# gating at the abstract-cell level (before dfflegalize bit-blasts to
+# primitives), giving ONE CLKGATETST_X1 per logical register rather than
+# one per bit.
+synth -top jv32_soc -run begin:fine
 
-# ── DFT clock gating techmap ──────────────────────────────────────────────────
-# Maps \$_DFFE_PP_ → CLKGATETST_X1 (test-mode SE bypass pin) + \$_DFF_P_.
+# ── Fine stage (manual) ───────────────────────────────────────────────────────
+opt -fast -mux_undef -undriven -fine
+memory_map
+opt -full
+
+# ── Hierarchical (multi-bit) DFT clock gating ────────────────────────────────
+# Maps \$dffe  (no reset, pos enable)       → CLKGATETST_X1 + \$dff
+# Maps \$adffe (async reset, pos enable)    → CLKGATETST_X1 + \$adff
+# One ICG per logical register group (not one per bit).
+# Must run BEFORE techmap/dfflegalize which decompose multi-bit cells.
+techmap -map ${LIB_DIR}/clockgate_hier_dft_map.v
+
+# Map remaining abstract cells (\$dff, \$adff, any unmatched \$dffe) to
+# Yosys primitives (\$_DFF_P_, \$_DFF_PN0_, \$_DFFE_PP_, \$_DFFE_PN0P_).
+techmap
+opt -fast
+# Declare DFFE primitives legal as fallback for patterns not caught above.
+dfflegalize -cell \$_DFFE_PP_ 0 -cell \$_DFFE_PN0P_ 0 -cell \$_DFF_P_ 0 -cell \$_DFF_PN0_ 0
+
+# Fallback primitive-level DFT clock gating for any residual DFFE primitives.
 techmap -map ${LIB_DIR}/clockgate_dft_map.v
 
 # ── Scan flip-flop techmap ────────────────────────────────────────────────────
@@ -123,13 +149,35 @@ elif [ "${CG_EN}" = "1" ]; then
     echo "[hier_synth] Clock gating ENABLED (CLKGATE_X1)"
     cat >> "$YS_SCRIPT" << YOSYS_EOF
 
-# ── Synthesise (stop before DFF library mapping) ─────────────────────────────
-# -run begin:map runs all stages up to (but not including) dfflibmap+abc.
-synth -top jv32_soc -run begin:map
+# ── Synthesise coarse stages; stop before fine (which contains dfflegalize) ──
+# -run begin:fine runs begin+coarse but NOT fine (to-label is exclusive).
+# We then run the fine stage manually so we can insert hierarchical clock
+# gating at the abstract-cell level (before dfflegalize bit-blasts to
+# primitives), giving ONE CLKGATE_X1 per logical register rather than
+# one per bit.
+synth -top jv32_soc -run begin:fine
 
-# ── Clock gating techmap ──────────────────────────────────────────────────────
-# Maps \$_DFFE_PP_ (pos-edge, pos-enable, no reset) to CLKGATE_X1 + \$_DFF_P_.
-# FFs with async reset stay as \$_DFF_PN0_ + \$_MUX_ (data-path enable mux).
+# ── Fine stage (manual) ───────────────────────────────────────────────────────
+opt -fast -mux_undef -undriven -fine
+memory_map
+opt -full
+
+# ── Hierarchical (multi-bit) clock gating ────────────────────────────────────
+# Maps \$dffe  (no reset, pos enable)       → CLKGATE_X1 + \$dff
+# Maps \$adffe (async reset, pos enable)    → CLKGATE_X1 + \$adff
+# One ICG per logical register group (not one per bit).
+# Must run BEFORE techmap/dfflegalize which decompose multi-bit cells.
+techmap -map ${LIB_DIR}/clockgate_hier_map.v
+
+# Map remaining abstract cells (\$dff, \$adff, any unmatched \$dffe) to
+# Yosys primitives (\$_DFF_P_, \$_DFF_PN0_, \$_DFFE_PP_, \$_DFFE_PN0P_).
+techmap
+opt -fast
+# Declare DFFE primitives legal as fallback for patterns not caught above.
+# (Handles unusual polarities or \$sdffe that were not caught above.)
+dfflegalize -cell \$_DFFE_PP_ 0 -cell \$_DFFE_PN0P_ 0 -cell \$_DFF_P_ 0 -cell \$_DFF_PN0_ 0
+
+# Fallback primitive-level clock gating for any residual DFFE primitives.
 techmap -map ${LIB_DIR}/clockgate_map.v
 
 # ── DFF and combinational technology mapping ──────────────────────────────────
@@ -152,6 +200,11 @@ YOSYS_EOF
 fi
 
 cat >> "$YS_SCRIPT" << YOSYS_EOF
+
+# ── Full netlist (for connectivity-based gated-FF counting) ──────────────────
+# write_json preserves per-module cell connections so gen_gate_count.py can
+# trace which DFF cells are driven by a CLKGATE GCK output vs the raw clock.
+write_json ${STAT_JSON%.json}_netlist.json
 
 # ── Hierarchical gate statistics ─────────────────────────────────────────────
 tee -o ${STAT_JSON} stat -json -liberty ${NANGATE_LIB}

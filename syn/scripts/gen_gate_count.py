@@ -146,6 +146,52 @@ def compute_inclusive_counts(
     cache[mod] = (icg, dff, sdff)
     return (icg, dff, sdff)
 
+def count_gated_dff_from_netlist(
+    netlist_path: str,
+) -> Dict[str, Tuple[int, int]]:
+    """Parse a Yosys write_json netlist and return per-module gated/total DFF counts.
+
+    For each module, identify DFF cells (DFF_X1, DFFR_X1, …) whose clock (CK)
+    is driven by the GCK output of a CLKGATE_X1 / CLKGATETST_X1 cell.
+    Returns {clean_module_name: (gated_dff_count, total_dff_count)}.
+    """
+    try:
+        with open(netlist_path) as f:
+            netlist = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARNING: cannot read netlist JSON: {exc}; falling back to ICG count",
+              file=sys.stderr)
+        return {}
+
+    result: Dict[str, Tuple[int, int]] = {}
+    for raw_mod, mod_data in netlist.get("modules", {}).items():
+        cells = mod_data.get("cells", {})
+
+        # Collect all signal IDs that come from a CLKGATE GCK output.
+        gck_signals: Set[int] = set()
+        for cell in cells.values():
+            ctype = cell.get("type", "").upper()
+            if "CLKGATE" in ctype:
+                for sig in cell.get("connections", {}).get("GCK", []):
+                    if isinstance(sig, int):
+                        gck_signals.add(sig)
+
+        gated = 0
+        total = 0
+        for cell in cells.values():
+            ctype = cell.get("type", "").upper()
+            # Match DFF_X1, DFFR_X1, DFFS_X1 but not SDFF_X1 / CLKGATE_X1
+            if not (ctype.startswith("DFF") and not ctype.startswith("SDFF")):
+                continue
+            total += 1
+            ck_sigs = cell.get("connections", {}).get("CK", [])
+            if any(isinstance(s, int) and s in gck_signals for s in ck_sigs):
+                gated += 1
+
+        cname = clean_name(raw_mod)
+        result[cname] = (gated, total)
+    return result
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Report NAND2-equivalent gate counts with module hierarchy."
@@ -154,6 +200,8 @@ def main() -> None:
     ap.add_argument("liberty_lib", help="Nangate liberty .lib file (for NAND2_X1 area)")
     ap.add_argument("--output", "-o", default=None,
                     help="Output file path (default: stdout)")
+    ap.add_argument("--netlist", default=None,
+                    help="Yosys write_json netlist (enables connectivity-based gated-FF counting)")
     args = ap.parse_args()
 
     # ── load data ────────────────────────────────────────────────────────────
@@ -173,6 +221,12 @@ def main() -> None:
 
     modules = stat.get("modules", {})
     lib_cells: Set[str] = set(cell_areas.keys())
+
+    # Optional netlist-based gated-DFF counts (connectivity analysis).
+    # Populated after hierarchy is built (needs children + design_modules).
+    netlist_cg_direct: Dict[str, Tuple[int, int]] = {}  # {module: (gated_dff, total_dff)} direct only
+    if args.netlist:
+        netlist_cg_direct = count_gated_dff_from_netlist(args.netlist)
 
     children, direct_area = build_hierarchy(modules, lib_cells)
 
@@ -198,6 +252,25 @@ def main() -> None:
     count_cache: Dict[str, Tuple[int, int, int]] = {}
     for m in design_modules:
         compute_inclusive_counts(m, children, direct_counts, count_cache)
+
+    # ── build inclusive netlist-based gated-DFF counts ───────────────────────
+    netlist_cg: Dict[str, Tuple[int, int]] = {}   # inclusive
+
+    def _inclusive_cg(mod: str) -> Tuple[int, int]:
+        if mod in netlist_cg:
+            return netlist_cg[mod]
+        gated, total = netlist_cg_direct.get(mod, (0, 0))
+        for child, cnt in children.get(mod, []):
+            if child in design_modules:
+                cg, ct = _inclusive_cg(child)
+                gated += cg * cnt
+                total += ct * cnt
+        netlist_cg[mod] = (gated, total)
+        return (gated, total)
+
+    if netlist_cg_direct:
+        for m in design_modules:
+            _inclusive_cg(m)
 
     # ── format report ────────────────────────────────────────────────────────
     SEP  = "=" * 74
@@ -260,15 +333,21 @@ def main() -> None:
     # ── Clock gating section (only when ICG cells are present) ───────────────
     total_icg = sum(count_cache.get(t, (0, 0, 0))[0] for t in top_modules)
     if total_icg > 0:
+        use_netlist = bool(netlist_cg_direct)
+        if use_netlist:
+            method_note = "  Method   : connectivity analysis (gated FF = CK driven by CLKGATE GCK)"
+        else:
+            method_note = "  Method   : ICG cell count (fallback — no netlist provided)"
         lines += [
             "",
             SEP,
             "  Clock Gating Summary",
             "  ICG cell : CLKGATE_X1 / CLKGATETST_X1 (Nangate 45nm)",
-            "  Gated%   = ICG / (ICG + DFF)  — per-module inclusive counts",
+            "  Gated%   = Gated_FFs / Total_FFs",
+            method_note,
             SEP,
             "",
-            f"  {'Module':<40}  {'DFF total':>9}  {'ICG cells':>9}  {'Gated%':>7}",
+            f"  {'Module':<40}  {'Total FFs':>9}  {'Gated FFs':>9}  {'Gated%':>7}",
             f"  {'-'*40}  {'-'*9}  {'-'*9}  {'-'*7}",
         ]
 
@@ -279,12 +358,17 @@ def main() -> None:
                 return
             cg_visited.add(mod)
             icg, dff, _sdff = count_cache.get(mod, (0, 0, 0))
-            total_ff = icg + dff
-            pct = (100.0 * icg / total_ff) if total_ff > 0 else 0.0
+            if use_netlist:
+                gated, total_ff = netlist_cg.get(mod, (0, dff))
+            else:
+                # Fallback: old 1-ICG-per-bit era; ICG count == gated FF count
+                gated    = icg
+                total_ff = dff
+            pct = (100.0 * gated / total_ff) if total_ff > 0 else 0.0
             indent = "  " * depth
             label  = indent + mod
             lines.append(
-                f"  {label:<40}  {total_ff:>9,}  {icg:>9,}  {pct:>6.1f}%"
+                f"  {label:<40}  {total_ff:>9,}  {gated:>9,}  {pct:>6.1f}%"
             )
             kids_sorted = sorted(
                 children.get(mod, []),
@@ -297,18 +381,25 @@ def main() -> None:
         for top in top_modules:
             add_cg_rows(top)
 
-        total_dff_all = sum(count_cache.get(t, (0, 0, 0))[1] for t in top_modules)
-        total_ff_all  = total_icg + total_dff_all
-        total_pct     = (100.0 * total_icg / total_ff_all) if total_ff_all > 0 else 0.0
+        if use_netlist:
+            total_gated_all = sum(netlist_cg.get(t, (0, 0))[0] for t in top_modules)
+            total_dff_all   = sum(netlist_cg.get(t, (0, 0))[1] for t in top_modules)
+        else:
+            total_gated_all = total_icg
+            total_dff_all   = sum(count_cache.get(t, (0, 0, 0))[1] for t in top_modules)
+        total_pct = (100.0 * total_gated_all / total_dff_all) if total_dff_all > 0 else 0.0
         lines += [
             f"  {'-'*40}  {'-'*9}  {'-'*9}  {'-'*7}",
-            f"  {'TOTAL':<40}  {total_ff_all:>9,}  {total_icg:>9,}  {total_pct:>6.1f}%",
+            f"  {'TOTAL':<40}  {total_dff_all:>9,}  {total_gated_all:>9,}  {total_pct:>6.1f}%",
             SEP,
             "",
             "  Notes:",
-            "    - Gated% = ICG / (ICG + DFF): fraction of FFs with a hardware clock gate.",
-            "    - Only $_DFFE_PP_ cells (enabled FF, no reset) are clock-gated.",
-            "    - FFs with async reset use data-path enable muxes (not counted as gated).",
+            "    - Gated% = Gated_FFs / Total_FFs, where Gated_FFs = DFF cells whose",
+            "      clock (CK) is driven by a CLKGATE_X1/CLKGATETST_X1 GCK output.",
+            "    - Clock gating uses multi-bit techmap (clockgate_hier_map.v): one ICG",
+            "      per logical register group ($dffe/$adffe before dfflegalize).",
+            "    - FFs with async reset but NO enable stay as $_DFF_PN0_ → DFFR_X1;",
+            "      no enable signal exists so a clock gate cannot be inserted.",
             SEP,
         ]
 

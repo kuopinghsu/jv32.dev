@@ -7,9 +7,9 @@
 // Handles: (1) two compressed per word, (2) split 32-bit across words,
 // (3) halfword-aligned fetch targets.
 //
-// hold[1:0]==11 → case_d (split 32-bit lower half buffered)
-// hold[1:0]!=11 → case_c (compressed instruction buffered)
-// init_offset   → skip lower halfword on first post-flush fetch
+// hold[1:0]==11 -> case_d (split 32-bit lower half buffered)
+// hold[1:0]!=11 -> case_c (compressed instruction buffered)
+// init_offset   -> skip lower halfword on first post-flush fetch
 // ============================================================================
 
 module jv32_rvc #(
@@ -249,6 +249,7 @@ module jv32_rvc #(
             default: expand_c = 32'h0;
         endcase
     endfunction
+
     // Effective memory response
     // Gate imem_resp_valid with !stale_rsp so the stale SRAM echo (one cycle after
     // mem_ready=1 advances pc_if) is invisible to all downstream decode logic.
@@ -288,7 +289,7 @@ module jv32_rvc #(
                     is_compressed = 1'b0;
                     mem_ready     = 1'b1;
                 end
-                // else: eff_valid=0 or stale_rsp active — mem_ready stays 0
+                // else: eff_valid=0 or stale_rsp active - mem_ready stays 0
             end
             else if (hold_valid) begin
                 instr_valid   = 1'b1;
@@ -361,7 +362,14 @@ module jv32_rvc #(
         end
         else begin
             // Advance stale_rsp: set when mem_ready fired last cycle (SRAM echo incoming).
+            // Not needed under IFETCH_PREADVANCE because the SRAM already sees the
+            // next address at the same posedge mem_ready fires - the response one
+            // cycle later carries the correct new data, not a stale echo.
+`ifdef IFETCH_PREADVANCE
+            stale_rsp <= 1'b0;
+`else
             stale_rsp <= mem_ready && !stall;
+`endif
 
             if (!stall) begin
                 if (split32 && eff_valid) begin
@@ -395,7 +403,7 @@ module jv32_rvc #(
                         hold_pc         <= eff_pc + 32'd2;
                         hold_from_split <= 1'b0;
                     end
-                    // else: full 32-bit — nothing to hold
+                    // else: full 32-bit - nothing to hold
                 end
             end
         end

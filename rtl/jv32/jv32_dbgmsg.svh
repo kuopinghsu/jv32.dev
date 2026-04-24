@@ -36,25 +36,25 @@
 
 // ----------------------------------------------------------------------------
 // Debug display macros
-//   DEBUG1(msg)          – print always when DEBUG_LEVEL_1 or DEBUG_LEVEL_2
-//   DEBUG2(grp, msg)     – print per-group when DEBUG_LEVEL_2
+//   DEBUG1(msg)          - print always when DEBUG_LEVEL_1 or DEBUG_LEVEL_2
+//   DEBUG2(grp, msg)     - print per-group when DEBUG_LEVEL_2
 // Use double parentheses for msg: DEBUG1(("val=%0d", x))
 // ----------------------------------------------------------------------------
 `ifdef SYNTHESIS
-`define DEBUG1(msg)
-`define DEBUG2(grp, msg)
+`define DEBUG1(msg) begin if (1'b0) $display("%s", $sformatf msg); end
+`define DEBUG2(grp, msg) begin if (1'b0) $display("[%0d] %s", (grp), $sformatf msg); end
 `else
 `ifdef DEBUG_LEVEL_1
 `define DEBUG1(msg) $display("[DBG1] %s", $sformatf msg)
 `else
-`define DEBUG1(msg)
+`define DEBUG1(msg) begin if (1'b0) $display("%s", $sformatf msg); end
 `endif
 `ifdef DEBUG_LEVEL_2
 `define DEBUG2(grp, msg) \
         if (|((`DEBUG_GROUP >> (grp)) & 32'h1)) \
             $display("[%s] %s", jv32_pkg::dbg_grp_name(grp), $sformatf msg)
 `else
-`define DEBUG2(grp, msg)
+`define DEBUG2(grp, msg) begin if (1'b0) $display("[%0d] %s", (grp), $sformatf msg); end
 `endif
 `endif
 

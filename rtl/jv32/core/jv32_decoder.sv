@@ -9,8 +9,8 @@
 
 module jv32_decoder #(
     parameter bit AMO_EN   = 1'b1,  // 1=full A-extension; 0=AMO ops decode as illegal
-    parameter bit RV32E_EN = 1'b0,  // 1=RV32E (16 GPRs): rs/rd[4] → illegal
-    parameter bit RV32M_EN = 1'b1   // 1=M-extension; 0=MUL/DIV opcodes → illegal
+    parameter bit RV32E_EN = 1'b0,  // 1=RV32E (16 GPRs): rs/rd[4] -> illegal
+    parameter bit RV32M_EN = 1'b1   // 1=M-extension; 0=MUL/DIV opcodes -> illegal
 ) (
     input logic [31:0] instr,
     input logic        valid,
@@ -240,7 +240,7 @@ module jv32_decoder #(
                         reg_we = 1'b1;
                         // Write to read-only CSR is illegal
                         if (instr[31:30] == 2'b11 && (funct3[1:0] == 2'b01 || rs1_addr != 5'd0)) illegal = 1'b1;
-                        // Unknown CSR → illegal
+                        // Unknown CSR -> illegal
                         if (instr[31:20] != CSR_MSTATUS    &&
                             instr[31:20] != CSR_MSTATUSH   &&
                             instr[31:20] != CSR_MISA       &&
@@ -301,8 +301,20 @@ module jv32_decoder #(
                 default: illegal = 1'b1;
             endcase
 
-            // RV32E: any instruction using registers x16-x31 is illegal
-            if (RV32E_EN && (rs1_addr[4] | rs2_addr[4] | rd_addr[4])) illegal = 1'b1;
+            // RV32E: any instruction using registers x16-x31 is illegal.
+            // Gate each check on whether the field actually encodes a register for
+            // this instruction format - other formats reuse those bits for immediates:
+            //   rs1 (bits[19:15]): used by all formats except U-type (LUI/AUIPC) and J-type (JAL)
+            //   rs2 (bits[24:20]): used only by R-type (OP), S-type (STORE), B-type (BRANCH), AMO
+            //   rd  (bits[11:7]) : used only when the instruction writes to the register file
+            if (RV32E_EN) begin
+                if ((opcode != OPCODE_LUI) && (opcode != OPCODE_AUIPC) && (opcode != OPCODE_JAL) && rs1_addr[4])
+                    illegal = 1'b1;
+                if (((opcode == OPCODE_OP)     || (opcode == OPCODE_STORE) ||
+                     (opcode == OPCODE_BRANCH) || (opcode == OPCODE_AMO)) && rs2_addr[4])
+                    illegal = 1'b1;
+                if (reg_we && rd_addr[4]) illegal = 1'b1;
+            end
         end
     end
 

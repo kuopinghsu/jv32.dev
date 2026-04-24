@@ -81,7 +81,7 @@ module jtag_top #(
     output logic                        dbg_hartreset_o,  // Hart reset
     // Debug control signals from dcsr
     output logic                        dbg_singlestep_o,  // dcsr[2]: single-step mode
-    output logic                        dbg_ebreakm_o,     // dcsr[15]: ebreak→debug mode
+    output logic                        dbg_ebreakm_o,     // dcsr[15]: ebreak->debug mode
     output logic [          31:0]       progbuf0_o,        // Program buffer 0
     output logic [          31:0]       progbuf1_o,        // Program buffer 1
     // Trigger interface

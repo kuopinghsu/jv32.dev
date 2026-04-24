@@ -598,13 +598,26 @@ int vprintf(const char *format, va_list args) {
                 case 'e':
                 case 'E':
                 case 'g':
-                case 'G':
+                case 'G': {
                     // Simplified: treat as %f for now
-                    {
-                        double value = va_arg(args, double);
-                        printf_print_float(value, &spec);
-                    }
+                    double value = va_arg(args, double);
+                    printf_print_float(value, &spec);
                     break;
+                }
+#else
+                case 'f':
+                case 'F':
+                case 'e':
+                case 'E':
+                case 'g':
+                case 'G': {
+                    // Float disabled: consume the double argument to keep
+                    // va_list synchronised, then print the specifier literally.
+                    (void)va_arg(args, double);
+                    printf_putchar('%');
+                    printf_putchar(spec.specifier);
+                    break;
+                }
 #endif
 
                 default:

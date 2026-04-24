@@ -15,7 +15,7 @@
 //
 // Non-Cacheable Memory (NCM):
 //   Base:  0x4000_1000  (NCM_BASE_ADDR)
-//   Size:  512 B  (128 × 32-bit words)
+//   Size:  512 B  (128 x 32-bit words)
 //
 //   The NCM region lives below bit[31]=0, which falls outside the main DRAM
 //   window (0x8000_0000+) and therefore hits neither the I-cache PMA range
@@ -75,13 +75,13 @@ module axi_magic (
     // Magic addresses
     localparam CONSOLE_MAGIC_ADDR = 32'h40000000;
     localparam EXIT_MAGIC_ADDR    = 32'h40000004;
-    // Non-Cacheable Memory (NCM): 512 B (128×32-bit words) at offset 0x1000.
+    // Non-Cacheable Memory (NCM): 512 B (128x32-bit words) at offset 0x1000.
     // Bit[31]=0 of every NCM address forces PMA-bypass in kv32_icache.
     // Firmware writes machine-code here and calls it via function pointer to
     // exercise and verify truly uncached instruction execution.
     localparam NCM_BASE_ADDR = 32'h40001000;
 
-    // 128×32-bit instruction RAM (simulation/testbench only – not synthesised)
+    // 128x32-bit instruction RAM (simulation/testbench only - not synthesised)
     logic [31:0] ncm[0:127];
 
     // State machine for write transactions

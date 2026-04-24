@@ -5,27 +5,30 @@
 //
 // Architecture
 // ============
-//  ┌──────────────────────────────────────────────────────────────────────┐
-//  │                           jv32_top                                   │
-//  │  ┌──────────┐  I-fetch   ╔══════════╗                                │
-//  │  │          ├───────────►║ IRAM TCM ║◄─┐ D-access (IRAM range)       │
-//  │  │ jv32_core│            ╚══════════╝  │                             │
-//  │  │          ├─── D-access ─────────────┤                             │
-//  │  │          │                          └►╔══════════╗                │
-//  │  │          │                            ║ DRAM TCM ║ (DRAM range)   │
-//  │  │          │             out-of-TCM     ╚══════════╝                │
-//  │  │          ├─────────────── miss ──────►┌──────────┐                │
-//  │  └──────────┘                            │ AXI Mstr ├─────────────── │► m_axi
-//  │                                          └──────────┘  D > I priority│
-//  │  s_axi ◄──── AXI Slave (ext. access to TCM, core has priority) ───── │◄ s_axi
-//  └──────────────────────────────────────────────────────────────────────┘
+//  +------------------------------------------------------------------------+
+//  |                               jv32_top                                 |
+//  |                                                                        |
+//  |  +-----------+   I-fetch    +----------+                               |
+//  |  |           | -----------> | IRAM TCM |                               |
+//  |  | jv32_core |              +----------+                               |
+//  |  |           |                    ^                                    |
+//  |  |           | -- D-access -------+----- (IRAM range)                  |
+//  |  |           | -- D-access ------------> +----------+                  |
+//  |  |           |                           | DRAM TCM | (DRAM range)     |
+//  |  |           |                           +----------+                  |
+//  |  |           | -- out-of-TCM miss ---> +----------+ ---------> m_axi   |
+//  |  +-----------+                         | AXI Mstr | (D > I priority)   |
+//  |                                        +----------+                    |
+//  |                                                                        |
+//  |  s_axi <----- AXI Slave (ext. access to TCM, core has priority)        |
+//  +------------------------------------------------------------------------+
 //
 // TCM Timing
 // ----------
 //  sram_1rw has 1-cycle registered read latency.
-//  I-fetch : addr presented cycle N → instruction valid cycle N+1.
-//  D-read  : addr presented cycle N → data valid cycle N+1 (1-cycle stall).
-//  D-write : written at clk edge of cycle N → ack cycle N+1.
+//  I-fetch : addr presented cycle N -> instruction valid cycle N+1.
+//  D-read  : addr presented cycle N -> data valid cycle N+1 (1-cycle stall).
+//  D-write : written at clk edge of cycle N -> ack cycle N+1.
 //  When D-path and I-path both target IRAM, D-path wins (I-fetch stalls 1 cycle).
 //
 // AXI Master (merged)
@@ -63,7 +66,7 @@ module jv32_top #(
     input logic rst_n,
 
     // =========================================================================
-    // AXI4-Lite Master — merged I+D bus for out-of-TCM accesses (D-bus priority)
+    // AXI4-Lite Master - merged I+D bus for out-of-TCM accesses (D-bus priority)
     // =========================================================================
     output logic [31:0] m_axi_araddr,
     output logic        m_axi_arvalid,
@@ -85,7 +88,7 @@ module jv32_top #(
     output logic        m_axi_bready,
 
     // =========================================================================
-    // AXI4-Lite Slave (IRAM TCM) — address uses low bits only
+    // AXI4-Lite Slave (IRAM TCM) - address uses low bits only
     // =========================================================================
     input  logic [31:0] s_iram_axi_araddr,
     input  logic        s_iram_axi_arvalid,
@@ -107,7 +110,7 @@ module jv32_top #(
     input  logic        s_iram_axi_bready,
 
     // =========================================================================
-    // AXI4-Lite Slave (DRAM TCM) — address uses low bits only
+    // AXI4-Lite Slave (DRAM TCM) - address uses low bits only
     // =========================================================================
     input  logic [31:0] s_dram_axi_araddr,
     input  logic        s_dram_axi_arvalid,
@@ -160,7 +163,7 @@ module jv32_top #(
     input  logic [31:0] progbuf0_i,
     input  logic [31:0] progbuf1_i,
 
-    // Trigger interface (Debug Spec 0.13 §5.2)
+    // Trigger interface (Debug Spec 0.13 Sec.5.2)
     output logic                        dbg_trigger_halt_o,
     output logic [N_TRIGGERS-1:0]       dbg_trigger_hit_o,   // per-trigger hit bits (set by HW, cleared on resume)
     input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata1_i,
@@ -324,7 +327,7 @@ module jv32_top #(
     //   u_iram.mem[word_index]
     //   u_dram.mem[word_index]
     // DEPTH = SIZE/4 (32-bit word-addressed);
-    // synthesis wrapper maps each to 16 × sram_1rw_2048x32 sub-banks.
+    // synthesis wrapper maps each to 16 x sram_1rw_2048x32 sub-banks.
     // =========================================================================
     logic [IRAM_ABITS-1:0] iram_addr;
     logic [           3:0] iram_wbe;
@@ -368,14 +371,14 @@ module jv32_top #(
     // I-path: always fetching (imem_req_valid=1), but only IRAM is TCM for I
     logic core_if_dbgrom;  // I-fetch hits the debug ROM/program buffer window
     logic core_if_iram;    // I-fetch hits IRAM
-    logic core_if_axi;     // I-fetch misses TCM → needs AXI
+    logic core_if_axi;     // I-fetch misses TCM -> needs AXI
 
     // D-path
     logic core_d_iram_re;  // D-read inside IRAM
     logic core_d_iram_we;  // D-write inside IRAM
     logic core_d_dram_re;  // D-read inside DRAM
     logic core_d_dram_we;  // D-write inside DRAM
-    logic core_d_axi;      // D-access misses TCM → needs AXI
+    logic core_d_axi;      // D-access misses TCM -> needs AXI
 
     assign core_if_dbgrom = imem_req_valid
                             && (imem_req_addr[31:4] == DEBUG_ROM_BASE[31:4])
@@ -623,14 +626,17 @@ module jv32_top #(
         else begin
             dbgrom_used_by_core_i_d <= core_if_dbgrom;
             dbgrom_pc_d             <= imem_req_addr;
+
             case (imem_req_addr[3:2])
                 2'd0:    dbgrom_data_d <= progbuf0_i;
                 2'd1:    dbgrom_data_d <= progbuf1_i;
                 default: dbgrom_data_d <= DEBUG_ROM_EBREAK;
             endcase
+
             // Core I-fetch used IRAM this cycle only if neither D-path nor
             // slave access preempted IRAM in the mux arbitration.
             iram_used_by_core_i_d <= core_if_iram & ~(core_d_iram_re | core_d_iram_we) & ~slave_iram_grant;
+
             // Core D-path used IRAM this cycle.
             // Gate out the spurious re-assertion that occurs on the response cycle:
             // when iram_used_by_core_d_d is already high (TCM response in flight),
@@ -638,6 +644,7 @@ module jv32_top #(
             // core_d_iram_re/we with the same old address, causing the SRAM to
             // capture the old address again and return stale data to the next load.
             iram_used_by_core_d_d <= (core_d_iram_re | core_d_iram_we) & ~iram_used_by_core_d_d;
+
             // Core D-path used DRAM this cycle.
             // Gate out the spurious re-assertion that occurs on the response cycle:
             // when dram_used_by_core_d_d is already high (TCM response in flight),
@@ -645,10 +652,13 @@ module jv32_top #(
             // core_d_dram_re/we with the same old address, causing the SRAM to
             // capture the old address again and return stale data to the next load.
             dram_used_by_core_d_d <= (core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d;
+
             // Was the D-path a write?
             dmem_was_write_d      <= dmem_req_write;
+
             // Flush invalidates in-flight I-fetch response
             imem_flush_d          <= imem_flush_core;
+
             // Register I-fetch address for imem_resp_pc
             imem_req_addr_d       <= imem_req_addr;
         end
@@ -821,6 +831,7 @@ module jv32_top #(
 
     assign dmem_resp_valid = dmem_resp_valid_tcm | dmem_resp_valid_axi;
     assign dmem_resp_data = dmem_resp_valid_tcm ? dmem_resp_data_tcm : dmem_resp_data_axi;
+
     // Fault only possible on AXI path (TCM/DRAM never returns DECERR)
     assign dmem_resp_fault = dmem_resp_fault_axi;
 

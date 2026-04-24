@@ -27,7 +27,7 @@
 //   - Integrated UART TX and RX state machines
 //
 // Clock Requirements:
-//   UART Baud Divisor: CLKS_PER_BIT ≥ 4 (absolute minimum)
+//   UART Baud Divisor: CLKS_PER_BIT >= 4 (absolute minimum)
 //
 //   The UART RX receiver requires a minimum of 4 clock cycles per bit for
 //   reliable sampling at the bit center. This is a hardware timing constraint
@@ -37,15 +37,15 @@
 //   Formula: CLKS_PER_BIT = CLK_FREQ / BAUD_RATE
 //   Baud Rate = CLK_FREQ / CLKS_PER_BIT
 //
-//   Hardware Constraint: CLKS_PER_BIT ≥ 4
+//   Hardware Constraint: CLKS_PER_BIT >= 4
 //   Maximum Theoretical Baud Rate = CLK_FREQ / 4
 //
-//   Recommended: CLKS_PER_BIT ≥ 8 for production use
+//   Recommended: CLKS_PER_BIT >= 8 for production use
 //   (Provides margin for clock tolerance, jitter, and asynchronous timing)
 //
 //   Example at 50 MHz clock:
-//     - Absolute minimum: CLKS_PER_BIT = 4 → Max = 12.5 Mbaud (lab only)
-//     - Recommended min: CLKS_PER_BIT = 8 → Max = 6.25 Mbaud
+//     - Absolute minimum: CLKS_PER_BIT = 4 -> Max = 12.5 Mbaud (lab only)
+//     - Recommended min: CLKS_PER_BIT = 8 -> Max = 6.25 Mbaud
 //     - Common 115200 baud: CLKS_PER_BIT = 434 (plenty of margin)
 //     - Common 921600 baud: CLKS_PER_BIT = 54 (good for most cases)
 //
@@ -120,8 +120,8 @@ module axi_uart #(
     localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
 
     // Runtime baud-rate divisor register (write to offset 0x10, default = CLKS_PER_BIT-1)
-    // baud_div_r  = CLKS_PER_BIT - 1  →  bit period = baud_div_r + 1 clocks
-    // baud_half_r = baud_div_r >> 1   →  mid-bit sample point
+    // baud_div_r  = CLKS_PER_BIT - 1  ->  bit period = baud_div_r + 1 clocks
+    // baud_half_r = baud_div_r >> 1   ->  mid-bit sample point
     logic [15:0] baud_div_r;  // forward declaration (used in TX/RX state machines)
     logic [15:0] baud_half_r;
     assign baud_half_r = baud_div_r >> 1;
@@ -130,8 +130,8 @@ module axi_uart #(
     localparam logic [15:0] UART_VERSION   = 16'h0001;
     localparam logic [31:0] CAPABILITY_REG = {UART_VERSION, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)};
 
-    // Register address space: offsets 0x00–0x18 (7 word-aligned registers)
-    // Any access with byte-offset > 0x18 is out-of-range → AXI SLVERR (2'b10)
+    // Register address space: offsets 0x00-0x18 (7 word-aligned registers)
+    // Any access with byte-offset > 0x18 is out-of-range -> AXI SLVERR (2'b10)
     localparam logic [5:0] ADDR_MAX = 6'h06;  // 0x18 >> 2
     // AW-pending latch: captures write address when AW fires without W (sequential AXI4)
     logic       aw_pend_r;
@@ -437,7 +437,7 @@ module axi_uart #(
 
     // loopback_en: declared earlier as forward declaration
 
-    // ── Write Response + IE/CTRL registers ───────────────────────────────────
+    // -- Write Response + IE/CTRL registers -----------------------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             axi_bvalid     <= 1'b0;
@@ -471,7 +471,7 @@ module axi_uart #(
         end
     end
 
-    // ── Read Response ─────────────────────────────────────────────────────────
+    // -- Read Response ---------------------------------------------------------
     logic [31:0] read_data;
     always_comb begin
         case (axi_araddr[7:0])

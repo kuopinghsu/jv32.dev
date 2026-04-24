@@ -15,7 +15,7 @@
 //   * 8+ TMSC toggles (TCKC high): Reset to OFFLINE
 //
 // CLOCK RATIO REQUIREMENTS:
-// 1. Synchronizer requirement: f_sys >= 6 × f_tckc
+// 1. Synchronizer requirement: f_sys >= 6 x f_tckc
 //    - 2-stage synchronizer needs 2 clocks to capture signal
 //    - Edge detection needs 1 additional clock
 //    - Each TCKC phase (high/low) must be stable for >= 3 system clocks

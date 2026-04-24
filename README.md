@@ -201,7 +201,11 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 ### RV32EC=0 (full / default configuration)
 
-`RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1, N_TRIGGERS=2`
+`RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1, IFETCH_PREADVANCE=1`
+
+> Numbers below are from pre-P&R hierarchical synthesis (`make gate-count`).
+> The post-P&R flat-optimised count is **80,372 NAND2-eq** (OpenLane2 run, 2026-04-24).
+> The hierarchy table will be updated after re-running `make gate-count RV32EC=0`.
 
 | Module | NAND2 eq | Area (µm²) |
 |---|---:|---:|
@@ -222,9 +226,62 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 | ↳ `axi_magic` | 0 | 0.00 |
 | **TOTAL** (logic, excl. SRAM macros) | **84,635** | **67,538.46** |
 
-> Compared to RV32EC=1 (41,207 NAND2), the full configuration is ~2× larger, with the main contributors being:
+> Compared to RV32EC=1 (41,207 NAND2-eq pre-P&R hierarchical), the full configuration is ~2× larger.
+> Post-P&R flat synthesis gives 80,372 NAND2-eq for RV32EC=0 vs ~38,000 NAND2-eq for RV32EC=1 (estimated).
+> Main area contributors relative to RV32EC=1:
 > `jv32_regfile` (+7,360, 32 vs 16 GPRs), `jv32_alu` (+14,229, M+A extensions + barrel shifter),
 > `jv32_dtm` (+17,088, JTAG debug module).
+
+### Clock Gating — RV32EC=0
+
+Clock gating uses `CLKGATE_X1` (Nangate 45 nm ICG cell).
+The synthesis flow applies **multi-bit hierarchical clock gating**: one ICG cell per logical register group (`$adffe`/`$dffe` at the abstract-cell level, before bit-blasting), so a 32-bit pipeline register maps to 1 ICG + 32 DFFs rather than 32 ICG + 32 DFFs.
+
+**Gated%** = Gated FFs / Total FFs, where Gated FFs are flip-flop cells whose clock is driven by a CLKGATE GCK output.
+
+| Module | Total FFs | Gated FFs | Gated% |
+|---|---:|---:|---:|
+| `jv32_soc` | 5,494 | 4,496 | **81.8%** |
+| ↳ `jv32_regfile` | 992 | 992 | 100.0% |
+| ↳ `jv32_alu` | 403 | 402 | 99.8% |
+| ↳ `axi_uart` | 396 | 393 | 99.2% |
+| ↳ `axi_xbar` | 69 | 67 | 97.1% |
+| ↳ `jv32_rvc` | 52 | 51 | 98.1% |
+| ↳ `axi_clic` | 361 | 297 | 82.3% |
+| ↳ `jv32_csr` | 336 | 208 | 61.9% |
+| ↳ `jv32_dtm` | 1,751 | 1,048 | 59.9% |
+
+The overall 81.8% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
+
+#### Why `jv32_csr` is lower (~62%)
+
+The two performance counters — `mcycle_cnt` (64-bit) and `minstret_cnt` (64-bit) — account for the 128 ungated bits.  Their "enable" signal (`!mcountinhibit_cy` / `instret_inc`) is asserted almost every cycle during normal program execution, so the clock gate is perpetually open and synthesis may omit it:
+
+```systemverilog
+if (!mcountinhibit_cy) mcycle_cnt   <= mcycle_cnt + 64'd1;  // 64 ungated FFs
+if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;  // 64 ungated FFs
+```
+
+All other CSR registers (`mepc`, `mtvec`, `mstatus`, `mie`, etc.) are gated under `exception || irq_pending || mret || csr_we`.  This is **architecturally correct** — a continuously-incrementing cycle counter is inherently always-active.
+
+#### Why `jv32_dtm` is lower (~60%)
+
+The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`).  CDC multi-stage synchronizer chains **must sample on every clock edge** to guarantee metastability resolution; gating their clock would defeat their purpose.  The ~703 ungated bits are entirely synchronizer pipeline stages:
+
+| Synchronizer | Dir | Bits | Purpose |
+|---|---|---:|---|
+| `halt_req_sync_chain[3]`, `resume_req_sync_chain[3]` | TCK→CLK | 6 | JTAG halt/resume requests |
+| `halted_tck_chain[3]`, `resumeack_tck_chain[3]` | CLK→TCK | 6 | core status back to JTAG |
+| `sba_busy_tck_chain[3]`, `busy_tck_chain[3]` | CLK→TCK | 6 | SBA / cmd-busy back to JTAG |
+| `sb_err_tck_chain[3×3]` | CLK→TCK | 9 | SBA error bits |
+| `data0_result_sync[3]` (×32 b) | CLK→TCK | 96 | Abstract-command read-back |
+| `sbdata0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA read-data result |
+| `sbaddress0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA address result |
+| Various `_valid_sync[3]` + `_r` | CLK→TCK | ~12 | handshake valid bits |
+
+These ~327 bits toggle continuously during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.
+
+> **RV32EC=1 note:** With `JTAG_EN=0` the `jv32_dtm` block is removed entirely, eliminating all CDC synchronizer FFs and raising the overall gating rate above 90%.  Clock gating figures for RV32EC=1 will be added after re-running `make gate-count` with that configuration.
 
 ## Documentation
 

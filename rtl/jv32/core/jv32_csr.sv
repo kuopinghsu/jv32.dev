@@ -219,7 +219,7 @@ module jv32_csr #(
         end
         else begin
             // ---- performance counters ----
-            // mcycle counts clock cycles (spec §3.1.11); minstret counts retired instructions.
+            // mcycle counts clock cycles (spec Sec.3.1.11); minstret counts retired instructions.
             if (!mcountinhibit_cy) mcycle_cnt <= mcycle_cnt + 64'd1;
             if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;
 

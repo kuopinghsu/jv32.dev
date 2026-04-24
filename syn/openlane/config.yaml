@@ -81,6 +81,13 @@ MACROS:
 # Force direct macro GDS loading in Magic to avoid bbox extraction.
 MAGIC_MACRO_STD_CELL_SOURCE: PDK
 
+# SPICE extraction: treat the SRAM macro as an abstract black box so Magic does
+# not recurse into OpenRAM transistor cells that use GDS layers (239, 6) absent
+# from the Nangate45 magic.tech cifinput table.  Without this, Magic emits
+# "device missing 1 terminal" feedback which OpenLane flags as a fatal error.
+MAGIC_EXT_ABSTRACT_CELLS:
+  - sram_1rw_2048x32
+
 # The Classic flow does not auto-place hard macros; provide fixed locations for
 # all 32 SRAM banks so tap insertion and PDN generation can proceed.
 MACRO_PLACEMENT_CFG: dir::macro_placement.cfg

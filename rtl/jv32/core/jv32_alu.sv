@@ -1,14 +1,14 @@
 // ============================================================================
 // File: jv32_alu.sv
 // Project: JV32 RISC-V Processor
-// Description: RISC-V 32-bit ALU — RV32IM subset
+// Description: RISC-V 32-bit ALU - RV32IM subset
 //
 // Supports RV32I base + M extension (multiply/divide).
 // No B-extension.  FAST_SHIFT adds optional barrel shifter.
 //
-// FAST_MUL=1, MUL_MC=1 : 2-stage pipelined multiply — stage 1 computes four unsigned 16×16
+// FAST_MUL=1, MUL_MC=1 : 2-stage pipelined multiply - stage 1 computes four unsigned 16x16
 //                         partial products; stage 2 accumulates + sign-corrects; 2 cycles.
-// FAST_MUL=1, MUL_MC=0 : 1-cycle combinatorial 32×32 multiply (no pipeline stall).
+// FAST_MUL=1, MUL_MC=0 : 1-cycle combinatorial 32x32 multiply (no pipeline stall).
 // FAST_MUL=0            : serial shift-and-add, variable latency
 // FAST_DIV=1            : combinatorial divide (1 cycle)
 // FAST_DIV=0            : serial restoring divider, variable latency
@@ -122,6 +122,7 @@ module jv32_alu #(
             assign result_sll  = sh_valid ? sh_result : sh_val;
             assign result_srl  = sh_valid ? sh_result : sh_val;
             assign result_sra  = sh_valid ? sh_result : sh_val;
+
             // shift_ready is only asserted once sh_valid is set.
             // The operand_b==0 shortcut was removed: it caused shift_ready to
             // fire one cycle early (before the FF latches sh_result), producing
@@ -147,33 +148,33 @@ module jv32_alu #(
         else if (FAST_MUL == 1 && MUL_MC == 1) begin : gen_fast_mul_pipe
             // ----------------------------------------------------------------
             // 2-stage pipelined multiplier.
-            // Stage 1 (dispatch cycle): compute four unsigned 16×16 partial
+            // Stage 1 (dispatch cycle): compute four unsigned 16x16 partial
             //   products and register them.  Pipeline stalls (mul_ready=0).
             // Stage 2 (result cycle):   accumulate partial products into a
             //   64-bit unsigned product, then subtract sign-correction terms
             //   for MULH / MULHSU variants.  Pipeline released (mul_ready=1).
             //
-            // Breaking the 32×32 multiply into four 16×16 multiplications
+            // Breaking the 32x32 multiply into four 16x16 multiplications
             // halves the combinatorial depth of the critical path and
             // eliminates the need for any STA multicycle-path constraint.
             //
             // Sign-correction identity (upper 32 bits only):
-            //   signed_a × signed_b = unsigned_a × unsigned_b
-            //                       − op_a_r[31] × op_b_r × 2^32   (a<0)
-            //                       − op_b_r[31] × op_a_r × 2^32   (b<0)
+            //   signed_a x signed_b = unsigned_a x unsigned_b
+            //                           op_a_r[31] x op_b_r x 2^32   (a<0)
+            //                           op_b_r[31] x op_a_r x 2^32   (b<0)
             //   For MULHSU only the first correction applies.
             // ----------------------------------------------------------------
             logic is_mul_op;
             assign is_mul_op = (alu_op == ALU_MUL || alu_op == ALU_MULH || alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
 
-            // Stage-1 combinatorial partial products (unsigned 16×16 → 32-bit)
+            // Stage-1 combinatorial partial products (unsigned 16x16 -> 32-bit)
             logic [31:0] pp_ll, pp_lh, pp_hl, pp_hh;
             assign pp_ll = {16'b0, operand_a[15:0]} * {16'b0, operand_b[15:0]};
             assign pp_lh = {16'b0, operand_a[15:0]} * {16'b0, operand_b[31:16]};
             assign pp_hl = {16'b0, operand_a[31:16]} * {16'b0, operand_b[15:0]};
             assign pp_hh = {16'b0, operand_a[31:16]} * {16'b0, operand_b[31:16]};
 
-            // Stage-1 → Stage-2 pipeline registers
+            // Stage-1 -> Stage-2 pipeline registers
             logic [31:0] pp_ll_r, pp_lh_r, pp_hl_r, pp_hh_r;
             logic [31:0] op_a_r, op_b_r;  // latched operands for sign correction
             logic s1_valid;               // stage-1 partial products are ready
@@ -221,7 +222,7 @@ module jv32_alu #(
         end
         else if (FAST_MUL == 1 && MUL_MC == 0) begin : gen_fast_mul_1c
             // ----------------------------------------------------------------
-            // 1-cycle combinatorial 32×32 multiplier.  No pipeline stall.
+            // 1-cycle combinatorial 32x32 multiplier.  No pipeline stall.
             // ----------------------------------------------------------------
             logic [63:0] result_mul, result_mulu, result_mulsu;
             assign result_mul = $signed({{32{operand_a[31]}}, operand_a}) * $signed({{32{operand_b[31]}}, operand_b});
@@ -368,13 +369,16 @@ module jv32_alu #(
             end
 
             logic div_by_zero, signed_ovf;
+
             assign div_by_zero = (operand_b == 32'h0);
+
             // DIV overflow special case applies only to signed DIV/REM.
             assign signed_ovf  = is_signed_div && (operand_a == 32'h80000000) && (operand_b == 32'hffffffff);
 
             logic [32:0] r_trial;
             logic        q_bit;
             logic [31:0] next_q, next_r;
+
             assign r_trial = {div_r[31:0], div_q[31]};
             assign q_bit   = (r_trial >= {1'b0, div_abs_b});
             assign next_q  = {div_q[30:0], q_bit};
@@ -398,7 +402,10 @@ module jv32_alu #(
                     div_result_r       <= 32'd0;
                 end
                 else begin
-                    if (div_valid && !result_hold) div_valid <= 1'b0;
+                    if (div_valid && !result_hold) begin
+                        div_valid <= 1'b0;
+                    end
+
                     if (is_div_op && !div_active && !div_valid && !operand_stall) begin
                         if (!div_by_zero && !signed_ovf) begin
                             div_total          <= 6'd32 - clz_a;
@@ -416,7 +423,9 @@ module jv32_alu #(
                                 div_result_r <= 32'd0;
                                 div_valid    <= 1'b1;
                             end
-                            else div_active <= 1'b1;
+                            else begin
+                                div_active <= 1'b1;
+                            end
                         end
                     end
                     else if (div_active) begin
@@ -428,15 +437,20 @@ module jv32_alu #(
                             div_valid    <= 1'b1;
                             div_active   <= 1'b0;
                         end
-                        else div_count <= div_count + 1;
+                        else begin
+                            div_count <= div_count + 1;
+                        end
                     end
                 end
             end
 
             logic use_latched;
+
             assign use_latched = div_active || div_valid;
+
             logic eff_by_zero, eff_signed_ovf;
             logic [31:0] eff_operand_a;
+
             assign eff_by_zero = use_latched ? div_by_zero_lat : div_by_zero;
             assign eff_signed_ovf = use_latched ? div_signed_ovf_lat : signed_ovf;
             assign eff_operand_a = use_latched ? div_operand_a_lat : operand_a;

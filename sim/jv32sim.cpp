@@ -1632,12 +1632,14 @@ int main(int argc, char **argv) {
     double eff_hz = (elapsed_seconds > 0.0) ? ((double)csr_mcycle / elapsed_seconds) : 0.0;
     double eff_mhz = eff_hz / 1.0e6;
 
+    double cpi = (insn_count > 0) ? ((double)csr_mcycle / (double)insn_count) : 0.0;
     DBG(1, "%llu instructions retired\n",
         (unsigned long long)insn_count);
-    fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz\n",
+    fprintf(stderr, "[SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz, CPI=%.3f\n",
         elapsed_seconds,
         (unsigned long long)csr_mcycle,
-        eff_mhz);
+        eff_mhz,
+        cpi);
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);
     return exit_code;

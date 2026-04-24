@@ -3,7 +3,7 @@
 // Project: JV32 RISC-V Processor
 // Description: RV32 Integer Register File
 //
-// 32×32-bit GPRs (x0 hardwired to 0), 2 read ports, 1 write port.
+// 32x32-bit GPRs (x0 hardwired to 0), 2 read ports, 1 write port.
 // Synchronous write, asynchronous read with write-through forwarding.
 // ============================================================================
 
@@ -40,11 +40,11 @@ module jv32_regfile #(
 
     // Pipeline read ports: pure registered reads, no write-through.
     //
-    // WB→EX forwarding for non-load results is handled entirely by the
+    // WB->EX forwarding for non-load results is handled entirely by the
     // fwd_rs1/fwd_rs2 mux in jv32_core.sv, which uses only FF outputs
     // (ex_wb_r.*) and therefore carries no combinatorial dependency on
     // dbg_halted_r.  Providing a duplicate write-through mux here would
-    // route dbg_halted_r (via rf_we → wb_retire → ex_stall) into
+    // route dbg_halted_r (via rf_we -> wb_retire -> ex_stall) into
     // operand_a/operand_b, creating the large combinatorial loop that
     // Vivado flags as LUTLP-1.
     //

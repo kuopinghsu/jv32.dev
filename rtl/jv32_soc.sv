@@ -12,8 +12,8 @@
 //
 // Memory map
 // ----------
-//  0x8000_0000  IRAM (TCM, inside jv32_top, 128 KB)  — I-fetch + data read
-//  0xC000_0000  DRAM (TCM, inside jv32_top, 128 KB)  — data read/write
+//  0x8000_0000  IRAM (TCM, inside jv32_top, 128 KB)  - I-fetch + data read
+//  0xC000_0000  DRAM (TCM, inside jv32_top, 128 KB)  - data read/write
 //  0x2001_0000  UART
 //  0x0200_0000  CLIC / CLINT
 //  0x4000_0000  Magic exit + MMIO
@@ -203,7 +203,7 @@ module jv32_soc #(
     logic soc_rst_n;
     logic rst_n_pre, rst_sync_ff1, rst_sync_ff2;
 
-    // Trigger interface wires (DTM ↔ core)
+    // Trigger interface wires (DTM <-> core)
     logic                  dbg_trigger_halt;
     logic [N_TRIGGERS-1:0] dbg_trigger_hit;  // per-trigger hit bits
     logic [N_TRIGGERS-1:0][31:0] dbg_tdata1, dbg_tdata2;
@@ -339,11 +339,12 @@ module jv32_soc #(
                 .dbg_ebreakm_o   (dbg_ebreakm),
                 .progbuf0_o      (progbuf0),
                 .progbuf1_o      (progbuf1),
+
                 // Trigger interface
-                .trigger_halt_i  (dbg_trigger_halt),
-                .trigger_hit_i   (dbg_trigger_hit),
-                .tdata1_o        (dbg_tdata1),
-                .tdata2_o        (dbg_tdata2)
+                .trigger_halt_i(dbg_trigger_halt),
+                .trigger_hit_i (dbg_trigger_hit),
+                .tdata1_o      (dbg_tdata1),
+                .tdata2_o      (dbg_tdata2)
             );
         end
         else begin : gen_no_jtag
@@ -367,11 +368,13 @@ module jv32_soc #(
             assign progbuf1         = 32'h0010_0073;  // EBREAK
             assign dbg_tdata1       = '0;
             assign dbg_tdata2       = '0;
+
             // Tie JTAG output pins to safe levels
             assign jtag_pin1_tms_o  = 1'b1;
             assign jtag_pin1_tms_oe = 1'b0;
             assign jtag_pin3_tdo_o  = 1'b1;
             assign jtag_pin3_tdo_oe = 1'b0;
+
             /* verilator lint_off UNUSEDSIGNAL */
             logic _unused_jtag_pins;
             assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
@@ -386,24 +389,24 @@ module jv32_soc #(
     // Pass external IRAM/DRAM TCM AXI masters through unless JTAG DM
     // is actively performing an in-TCM debug memory access on that bank.
     assign iram_tcm_araddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_araddr;
-    assign iram_tcm_arvalid_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_iram_tcm_arvalid;
-    assign iram_tcm_rready_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_iram_tcm_rready;
+    assign iram_tcm_arvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_iram_tcm_arvalid;
+    assign iram_tcm_rready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_iram_tcm_rready;
     assign iram_tcm_awaddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_awaddr;
-    assign iram_tcm_awvalid_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_iram_tcm_awvalid;
+    assign iram_tcm_awvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_iram_tcm_awvalid;
     assign iram_tcm_wdata_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wdata_r : s_iram_tcm_wdata;
     assign iram_tcm_wstrb_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wstrb_r : s_iram_tcm_wstrb;
-    assign iram_tcm_wvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_iram_tcm_wvalid;
-    assign iram_tcm_bready_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_iram_tcm_bready;
+    assign iram_tcm_wvalid_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_iram_tcm_wvalid;
+    assign iram_tcm_bready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_iram_tcm_bready;
 
     assign dram_tcm_araddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_araddr;
-    assign dram_tcm_arvalid_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_dram_tcm_arvalid;
-    assign dram_tcm_rready_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_dram_tcm_rready;
+    assign dram_tcm_arvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_dram_tcm_arvalid;
+    assign dram_tcm_rready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_dram_tcm_rready;
     assign dram_tcm_awaddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_awaddr;
-    assign dram_tcm_awvalid_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_dram_tcm_awvalid;
+    assign dram_tcm_awvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_dram_tcm_awvalid;
     assign dram_tcm_wdata_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wdata_r : s_dram_tcm_wdata;
     assign dram_tcm_wstrb_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wstrb_r : s_dram_tcm_wstrb;
-    assign dram_tcm_wvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_dram_tcm_wvalid;
-    assign dram_tcm_bready_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_dram_tcm_bready;
+    assign dram_tcm_wvalid_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_dram_tcm_wvalid;
+    assign dram_tcm_bready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_dram_tcm_bready;
 
     assign s_iram_tcm_arready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_arready_int;
     assign s_iram_tcm_rdata = (dbg_tcm_select && dbg_tcm_is_iram) ? 32'h0 : iram_tcm_rdata_int;
@@ -557,9 +560,10 @@ module jv32_soc #(
         .BOOT_ADDR (BOOT_ADDR),
         .DRAM_BASE (DRAM_BASE)
     ) u_jv32 (
-        .clk          (clk),
-        .rst_n        (soc_rst_n),
-        // Merged AXI master → peripheral xbar
+        .clk  (clk),
+        .rst_n(soc_rst_n),
+
+        // Merged AXI master -> peripheral xbar
         .m_axi_araddr (core_mbus_araddr),
         .m_axi_arvalid(core_mbus_arvalid),
         .m_axi_arready(core_mbus_arready),
@@ -616,36 +620,39 @@ module jv32_soc #(
         .s_dram_axi_bready (dram_tcm_bready_mux),
 
         // Interrupts
-        .timer_irq           (timer_irq),
-        .software_irq        (software_irq),
-        .external_irq        (external_irq),
-        .clic_irq            (clic_irq),
-        .clic_level          (clic_level),
-        .clic_prio           (clic_prio),
-        .clic_id             (clic_id),
-        .clic_ack            (clic_ack),
+        .timer_irq   (timer_irq),
+        .software_irq(software_irq),
+        .external_irq(external_irq),
+        .clic_irq    (clic_irq),
+        .clic_level  (clic_level),
+        .clic_prio   (clic_prio),
+        .clic_id     (clic_id),
+        .clic_ack    (clic_ack),
+
         // Debug sideband from the JTAG DM
-        .dbg_hartreset_i     (dbg_hartreset),
-        .dbg_halt_req_i      (dbg_halt_req),
-        .dbg_halted_o        (dbg_halted),
-        .dbg_resume_req_i    (dbg_resume_req),
-        .dbg_resumeack_o     (dbg_resumeack),
-        .dbg_reg_addr_i      (dbg_reg_addr),
-        .dbg_reg_wdata_i     (dbg_reg_wdata),
-        .dbg_reg_we_i        (dbg_reg_we),
-        .dbg_reg_rdata_o     (dbg_reg_rdata),
-        .dbg_pc_wdata_i      (dbg_pc_wdata),
-        .dbg_pc_we_i         (dbg_pc_we),
-        .dbg_pc_o            (dbg_pc),
-        .dbg_singlestep_i    (dbg_singlestep),
-        .dbg_ebreakm_i       (dbg_ebreakm),
-        .progbuf0_i          (progbuf0),
-        .progbuf1_i          (progbuf1),
+        .dbg_hartreset_i (dbg_hartreset),
+        .dbg_halt_req_i  (dbg_halt_req),
+        .dbg_halted_o    (dbg_halted),
+        .dbg_resume_req_i(dbg_resume_req),
+        .dbg_resumeack_o (dbg_resumeack),
+        .dbg_reg_addr_i  (dbg_reg_addr),
+        .dbg_reg_wdata_i (dbg_reg_wdata),
+        .dbg_reg_we_i    (dbg_reg_we),
+        .dbg_reg_rdata_o (dbg_reg_rdata),
+        .dbg_pc_wdata_i  (dbg_pc_wdata),
+        .dbg_pc_we_i     (dbg_pc_we),
+        .dbg_pc_o        (dbg_pc),
+        .dbg_singlestep_i(dbg_singlestep),
+        .dbg_ebreakm_i   (dbg_ebreakm),
+        .progbuf0_i      (progbuf0),
+        .progbuf1_i      (progbuf1),
+
         // Trigger interface
-        .dbg_trigger_halt_o  (dbg_trigger_halt),
-        .dbg_trigger_hit_o   (dbg_trigger_hit),
-        .dbg_tdata1_i        (dbg_tdata1),
-        .dbg_tdata2_i        (dbg_tdata2),
+        .dbg_trigger_halt_o(dbg_trigger_halt),
+        .dbg_trigger_hit_o (dbg_trigger_hit),
+        .dbg_tdata1_i      (dbg_tdata1),
+        .dbg_tdata2_i      (dbg_tdata2),
+
         // Trace
         .trace_en            (trace_en),
         .trace_valid         (trace_valid),
@@ -668,7 +675,7 @@ module jv32_soc #(
     );
 
     // =====================================================================
-    // AXI crossbar: 1 master → 4 slaves
+    // AXI crossbar: 1 master -> 4 slaves
     //   Slave 0: UART   @ 0x2001_0000  mask 0xFFFF_FF00 (256 B)
     //   Slave 1: CLIC   @ 0x0200_0000  mask 0xFFE0_0000 (2 MB)
     //   Slave 2: Magic  @ 0x4000_0000  mask 0xF000_0000 (256 MB)
@@ -759,7 +766,7 @@ module jv32_soc #(
     assign ext_axi_rready  = xs_rready[3];
 
     // =====================================================================
-    // UART — slave 0
+    // UART - slave 0
     // =====================================================================
     axi_uart #(
         .CLK_FREQ  (CLK_FREQ),
@@ -793,7 +800,7 @@ module jv32_soc #(
     );
 
     // =====================================================================
-    // CLIC / CLINT — slave 1
+    // CLIC / CLINT - slave 1
     // =====================================================================
     axi_clic #(
         .CLK_FREQ(CLK_FREQ)
@@ -829,7 +836,7 @@ module jv32_soc #(
     assign external_irq = clic_irq;
 
     // =====================================================================
-    // Magic — slave 2
+    // Magic - slave 2
     // =====================================================================
     axi_magic u_magic (
         .clk        (clk),

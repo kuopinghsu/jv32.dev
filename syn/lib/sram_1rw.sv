@@ -1,5 +1,5 @@
 // ============================================================================
-// File: sram_1rw.sv  (syn/lib — synthesis black-box wrapper)
+// File: sram_1rw.sv  (syn/lib - synthesis black-box wrapper)
 // Project: JV32 RISC-V Processor
 //
 // Synthesis wrapper: maps the generic sram_1rw interface to OpenRAM hard
@@ -11,28 +11,28 @@
 //   WIDTH = 32
 //   wbe   = 4-bit byte write enables
 //
-// Each 4096×32 TCM is implemented as 2 × sram_1rw_2048x32 sub-banks:
+// Each 4096x32 TCM is implemented as 2 x sram_1rw_2048x32 sub-banks:
 //
-//   addr[11]    — selects one of 2 sub-banks (1 bit)
-//   addr[10:0]  — word address within the selected sub-bank (11-bit, 2048 rows)
+//   addr[11]    - selects one of 2 sub-banks (1 bit)
+//   addr[10:0]  - word address within the selected sub-bank (11-bit, 2048 rows)
 //
 // Macro choice rationale:
-//   • words_per_row = 1  → no column-mux DFF routing (avoids cyclic-VCG bug)
-//   • num_rows = 2048    → 11-bit row decoder, well within OpenRAM limits
-//   • write_size = 8     → wmask0[3:0] gives per-byte write granularity
+//   - words_per_row = 1  -> no column-mux DFF routing (avoids cyclic-VCG bug)
+//   - num_rows = 2048    -> 11-bit row decoder, well within OpenRAM limits
+//   - write_size = 8     -> wmask0[3:0] gives per-byte write granularity
 //
 // Total instances:
-//   2 sub-banks × IRAM = 2 macros
-//   2 sub-banks × DRAM = 2 macros  →  4 sram_1rw_2048x32 total
+//   2 sub-banks x IRAM = 2 macros
+//   2 sub-banks x DRAM = 2 macros  ->  4 sram_1rw_2048x32 total
 //
 // OpenRAM single-port (num_rw_ports=1, write_size=8) pin convention:
-//   clk0      – rising-edge clock
-//   csb0      – chip-select bar (active-low); idle banks driven csb0=1
-//   web0      – write-enable bar (active-low)
-//   wmask0[3:0] – byte write mask (active-high, bit i enables byte i)
-//   addr0[10:0] – word address (11 bits for 2048-word macro)
-//   din0[31:0]  – write data
-//   dout0[31:0] – read data (registered, valid 1 cycle after read access)
+//   clk0      - rising-edge clock
+//   csb0      - chip-select bar (active-low); idle banks driven csb0=1
+//   web0      - write-enable bar (active-low)
+//   wmask0[3:0] - byte write mask (active-high, bit i enables byte i)
+//   addr0[10:0] - word address (11 bits for 2048-word macro)
+//   din0[31:0]  - write data
+//   dout0[31:0] - read data (registered, valid 1 cycle after read access)
 //
 // If TCM sizes change, re-run:
 //   make gen-mem [IRAM_SIZE=N] [DRAM_SIZE=N]
@@ -57,8 +57,8 @@ module sram_1rw #(
 generate
 
     // -------------------------------------------------------------------------
-    // TCM 32-bit SRAM: 32768 words × 32 bits  (128 KB per TCM)
-    // Decomposed into 16 × sram_1rw_2048x32 sub-banks.
+    // TCM 32-bit SRAM: 32768 words x 32 bits  (128 KB per TCM)
+    // Decomposed into 16 x sram_1rw_2048x32 sub-banks.
     // Matches jv32_top with IRAM_SIZE = DRAM_SIZE = 128 KB:
     //   DEPTH = 128*1024/4 = 32768,  WIDTH = 32
     // -------------------------------------------------------------------------
@@ -98,8 +98,8 @@ generate
         assign rdata = dout[bank_sel_q];
 
     // -------------------------------------------------------------------------
-    // TCM 32-bit SRAM: 4096 words × 32 bits  (16 KB per TCM)  [evaluation]
-    // Decomposed into 2 × sram_1rw_2048x32 sub-banks.
+    // TCM 32-bit SRAM: 4096 words x 32 bits  (16 KB per TCM)  [evaluation]
+    // Decomposed into 2 x sram_1rw_2048x32 sub-banks.
     // Matches jv32_top with IRAM_SIZE = DRAM_SIZE = 16 KB:
     //   DEPTH = 16*1024/4 = 4096,  WIDTH = 32
     // -------------------------------------------------------------------------
@@ -140,11 +140,11 @@ generate
     // -------------------------------------------------------------------------
     // Fallback: behavioural model.
     // Synthesis will error here if a new SRAM size appears without a matching
-    // OpenRAM macro — run 'make gen-mem' and add a new generate branch above.
+    // OpenRAM macro - run 'make gen-mem' and add a new generate branch above.
     // -------------------------------------------------------------------------
     end else begin : g_fallback
 
-        initial $error("sram_1rw: no OpenRAM macro for DEPTH=%0d WIDTH=%0d – run 'make gen-mem'",
+        initial $error("sram_1rw: no OpenRAM macro for DEPTH=%0d WIDTH=%0d - run 'make gen-mem'",
                        DEPTH, WIDTH);
 
         logic [WIDTH-1:0] mem [0:DEPTH-1];
