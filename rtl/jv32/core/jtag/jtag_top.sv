@@ -1,7 +1,7 @@
 // ============================================================================
-// File: jtag_top.sv
-// Project: JV32 RISC-V Processor
-// Description: Top-level JTAG/cJTAG Interface Module with Pin Multiplexing
+// File        : jtag_top.sv
+// Project     : JV32 RISC-V Processor
+// Description : Top-level JTAG/cJTAG Interface Module with Pin Multiplexing
 //
 // Provides configurable JTAG or cJTAG interface support for RISC-V debug
 // - USE_CJTAG=0: Standard 4-wire JTAG (TCK, TMS, TDI, TDO)
@@ -21,6 +21,27 @@
 //   - JTAG mode: External 4-wire JTAG directly connects to jtag_tap
 //   - jtag_tap implements TAP state machine and instantiates jv32_dtm
 //   - jv32_dtm implements Debug Transport Module per RISC-V Debug Spec
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kuoping Hsu
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 // ============================================================================
 
 module jtag_top #(

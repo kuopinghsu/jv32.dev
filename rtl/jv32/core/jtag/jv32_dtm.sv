@@ -1,7 +1,7 @@
 // ============================================================================
-// File: jv32_dtm.sv
-// Project: JV32 RISC-V Processor
-// Description: RISC-V Debug Transport Module (DTM) with Debug Module
+// File        : jv32_dtm.sv
+// Project     : JV32 RISC-V Processor
+// Description : RISC-V Debug Transport Module (DTM) with Debug Module
 //
 // Implements the JTAG Debug Transport Module interface per RISC-V Debug Spec 0.13
 // Includes full Debug Module with register access, memory access, halt/resume control
@@ -22,6 +22,26 @@
 //   - 0x20-0x2f: progbuf0-progbuf15 (Program Buffer)
 //   - 0x40: haltsum0 (Halt Summary)
 //
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kuoping Hsu
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 // ============================================================================
 
 module jv32_dtm #(
@@ -170,6 +190,7 @@ module jv32_dtm #(
     logic       hartreset;  // Hart reset
     logic       ndmreset;   // Non-debug module reset
     logic       dmactive;   // Debug module active
+
     // Single-hart SoC: hartsello is kept to report anynonexistent when hart>=1 is selected.
     // hartselhi (selects harts 1024+) is hardwired to 0 - saving 10 FFs.
     logic [9:0] hartsello;  // Hart select lower bits [25:16] of dmcontrol
@@ -201,6 +222,7 @@ module jv32_dtm #(
     logic [2:0] cmderr;      // Command error (TCK domain)
     logic [2:0] cmderr_sys;  // Command error (system clock domain)
     logic       cmd_busy;    // Command busy (system clock domain)
+
     // W1C cmderr clear from TCK->CLK via toggle-sync
     logic [2:0] cmderr_clr_tck;                      // TCK domain clear mask
     logic       cmderr_clr_tog_tck;
@@ -228,6 +250,7 @@ module jv32_dtm #(
     logic [          31:0]       tselect_reg;  // CSR 0x7A0: trigger select
     logic [N_TRIGGERS-1:0][31:0] tdata1_reg;   // CSR 0x7A1: mcontrol config
     logic [N_TRIGGERS-1:0][31:0] tdata2_reg;   // CSR 0x7A2: match address
+
     // Per-trigger hit bits (tdata1[20]) maintained separately to avoid
     // tdata1_reg RMW conflicts.  Folded into CMD_CSR_READ result for 0x7A1.
     logic [N_TRIGGERS-1:0]       trigger_hit_latch;  // set on trigger halt; cleared by SW write
@@ -323,19 +346,23 @@ module jv32_dtm #(
     } cmd_state_t;
 
     cmd_state_t cmd_state, cmd_state_nx;
-    logic [15:0] cmd_regno;                               // Register number per debug spec: GPR=0x1000-0x101f, DPC CSR=0x7b1
-    logic [ 2:0] cmd_size;                                // Access size (0=byte, 1=half, 2=word, 3=double)
-    logic        cmd_write;                               // Command is write (vs read)
-    logic        cmd_postexec;                            // Execute progbuf after command
-    logic        exec_resume_req;                         // FSM-driven resume for progbuf execution
-    logic        exec_waiting_halt;                       // CMD_EXEC: waiting for CPU to re-halt
-    logic        exec_seen_running;                       // CMD_EXEC: hart observed running after resume
-    logic [23:0] exec_wait_cnt;                           // CMD_EXEC timeout while waiting for re-halt
-    logic        exec_halt_req;                           // CMD_EXEC: issue halt after fault/timeout
+    logic [15:0] cmd_regno;          // Register number per debug spec: GPR=0x1000-0x101f, DPC CSR=0x7b1
+    logic [ 2:0] cmd_size;           // Access size (0=byte, 1=half, 2=word, 3=double)
+    logic        cmd_write;          // Command is write (vs read)
+    logic        cmd_postexec;       // Execute progbuf after command
+    logic        exec_resume_req;    // FSM-driven resume for progbuf execution
+    logic        exec_waiting_halt;  // CMD_EXEC: waiting for CPU to re-halt
+    logic        exec_seen_running;  // CMD_EXEC: hart observed running after resume
+    logic [23:0] exec_wait_cnt;      // CMD_EXEC timeout while waiting for re-halt
+    logic        exec_halt_req;      // CMD_EXEC: issue halt after fault/timeout
+
     localparam [23:0] EXEC_TIMEOUT_CYCLES = 24'h00_FFFF;  // 65535 cycles (~655 us @100 MHz); fires before OpenOCD 10 s timeout in simulation
-    logic exec_fault_halting;                             // CMD_EXEC: waiting for halt after fault
-    localparam [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;     // Progbuf intercept address
-    logic cmd_transfer;                                   // Perform transfer
+
+    logic exec_fault_halting;                          // CMD_EXEC: waiting for halt after fault
+    logic read_after_exec;                             // CMD_EXEC runs before register read (read+postexec)
+    logic exec_phase_done;                             // exec phase done; CMD_WAIT → CMD_DONE, not CMD_EXEC
+    localparam [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;  // Progbuf intercept address
+    logic cmd_transfer;                                // Perform transfer
 
     // CPU Control Signals (TCK domain)
     logic halted_tck;     // dbg_halted_i synced to TCK domain
@@ -405,26 +432,30 @@ module jv32_dtm #(
 
     // CLK->TCK sync for cmd_busy (used to guard TCK-domain write checks)
     logic [2:0] busy_tck_chain;
-    logic       busy_tck;  // TCK-domain stable copy
+    logic busy_tck;                    // TCK-domain stable copy (lags CLK domain by sync latency)
+    logic cmd_busy_tck_pending;        // Assert busy immediately when COMMAND dispatched
+    logic [1:0] cmd_busy_holdoff_tck;  // Counts 3..0 after dispatch; prevents premature clear
 
     // CLK->TCK sync for sb_err (read in CAPTURE_DR for SBCS register)
-    logic [2:0] sb_err_tck_chain                      [2:0];  // 3 pipeline stages, each holding 3-bit error
-    logic [2:0] sb_err_tck;                                   // TCK-domain stable copy
+    logic [2:0] sb_err_tck_chain[2:0];  // 3 pipeline stages, each holding 3-bit error
+    logic [2:0] sb_err_tck;             // TCK-domain stable copy
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
-            halted_tck_chain    <= 3'b0;
-            resumeack_tck_chain <= 3'b0;
-            halted_tck          <= 1'b0;
-            resumeack_tck       <= 1'b0;
-            sba_busy_tck_chain  <= 3'b0;
-            sba_busy_tck        <= 1'b0;
-            busy_tck_chain      <= 3'b0;
-            busy_tck            <= 1'b0;
-            sb_err_tck_chain[0] <= 3'b0;
-            sb_err_tck_chain[1] <= 3'b0;
-            sb_err_tck_chain[2] <= 3'b0;
-            sb_err_tck          <= 3'b0;
+            halted_tck_chain     <= 3'b0;
+            resumeack_tck_chain  <= 3'b0;
+            halted_tck           <= 1'b0;
+            resumeack_tck        <= 1'b0;
+            sba_busy_tck_chain   <= 3'b0;
+            sba_busy_tck         <= 1'b0;
+            busy_tck_chain       <= 3'b0;
+            busy_tck             <= 1'b0;
+            cmd_busy_tck_pending <= 1'b0;
+            cmd_busy_holdoff_tck <= 2'd0;
+            sb_err_tck_chain[0]  <= 3'b0;
+            sb_err_tck_chain[1]  <= 3'b0;
+            sb_err_tck_chain[2]  <= 3'b0;
+            sb_err_tck           <= 3'b0;
         end
         else begin
             // Double-synchronize CPU status signals
@@ -441,6 +472,20 @@ module jv32_dtm #(
             // Sync cmd_busy from CLK domain to TCK domain
             busy_tck_chain      <= {busy_tck_chain[1:0], cmd_busy};
             busy_tck            <= busy_tck_chain[2];
+
+            // Set pending flag immediately when a COMMAND is dispatched (toggle changes).
+            // The holdoff counter keeps it asserted for at least 3 TCK cycles so that
+            // OpenOCD sees busy=1 in the scan immediately following COMMAND dispatch.
+            // Cleared when the holdoff expires AND busy_tck=0 (command done or fast).
+            // This avoids deadlock when commands complete within a single TCK period.
+            if (cmd_wr_toggle_tck_nx != cmd_wr_toggle_tck) begin
+                cmd_busy_tck_pending <= 1'b1;
+                cmd_busy_holdoff_tck <= 2'd3;
+            end
+            else begin
+                if (cmd_busy_holdoff_tck != 2'd0) cmd_busy_holdoff_tck <= cmd_busy_holdoff_tck - 2'd1;
+                if (cmd_busy_holdoff_tck == 2'd0 && !busy_tck) cmd_busy_tck_pending <= 1'b0;
+            end
 
             // Sync sb_err from CLK domain to TCK domain (each bit independently)
             sb_err_tck_chain[0] <= sb_err;
@@ -542,14 +587,14 @@ module jv32_dtm #(
     // Construct abstractcs read value
     // ========================================================================
     wire [31:0] abstractcs_rdata = {
-        3'b0,                    // [31:29] Reserved
-        ABSTRACTCS_PROGBUFSIZE,  // [28:24] progbufsize
-        11'b0,                   // [23:13] Reserved
-        busy_tck,                // [12] busy (CLK->TCK synchronised)
-        1'b0,                    // [11] Reserved
-        cmderr,                  // [10:8] cmderr
-        4'b0,                    // [7:4] Reserved
-        ABSTRACTCS_DATACOUNT     // [3:0] datacount
+        3'b0,                              // [31:29] Reserved
+        ABSTRACTCS_PROGBUFSIZE,            // [28:24] progbufsize
+        11'b0,                             // [23:13] Reserved
+        busy_tck || cmd_busy_tck_pending,  // [12] busy (stable sync OR pending dispatch)
+        1'b0,                              // [11] Reserved
+        cmderr,                            // [10:8] cmderr
+        4'b0,                              // [7:4] Reserved
+        ABSTRACTCS_DATACOUNT               // [3:0] datacount
     };
 
     // ========================================================================
@@ -605,7 +650,8 @@ module jv32_dtm #(
             case (dmi_shift[40:34])
                 DMI_DATA0: if (!busy_tck && autoexec_data[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_DATA1: if (!busy_tck && autoexec_data[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_COMMAND: if (!busy_tck && dmactive) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                DMI_COMMAND:
+                if (!busy_tck && !cmd_busy_tck_pending && dmactive) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_PROGBUF0: if (!busy_tck && autoexec_pbuf[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_PROGBUF1: if (!busy_tck && autoexec_pbuf[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_SBCS: if (dmi_shift[24]) sb_busyerr_nx = 1'b0;
@@ -643,6 +689,7 @@ module jv32_dtm #(
             dtmcs_shift        <= 32'b0;
             dmi_shift          <= 41'b0;
             bypass_shift       <= 1'b0;
+
             // DMI address and control registers
             dmi_address        <= 7'b0;
             haltreq            <= 1'b0;
@@ -653,6 +700,7 @@ module jv32_dtm #(
             hartsello          <= 10'b0;
             data0              <= 32'b0;
             data1              <= 32'b0;
+
             // Default to EBREAK so a progbuf execute with untouched entries
             // immediately returns to debug mode instead of running garbage.
             progbuf0           <= 32'h0010_0073;
@@ -661,15 +709,18 @@ module jv32_dtm #(
             cmderr             <= 3'b0;
             cmderr_clr_tck     <= 3'b0;
             cmderr_clr_tog_tck <= 1'b0;
+
             // abstractauto
             autoexec_data      <= 2'b0;
             autoexec_pbuf      <= 2'b0;
+
             // Synthetic debug CSRs: owned by CLK domain, reset there; not here.
             // SBA
             sb_readonaddr      <= 1'b0;
             sb_access          <= SBA_ACCESS32;
             sb_autoincr        <= 1'b0;
             sb_readondata      <= 1'b0;
+
             // sb_err owned by CLK domain; only the clr-request fields live here
             sb_err_clr_tck     <= 3'b0;
             sb_err_clr_tog_tck <= 1'b0;
@@ -859,11 +910,11 @@ module jv32_dtm #(
                         end
                     end
                     DMI_COMMAND: begin
-                        if (!busy_tck && dmactive) begin
+                        if (!busy_tck && !cmd_busy_tck_pending && dmactive) begin
                             command_reg <= dmi_shift[33:2];
                             `DEBUG2(`DBG_GRP_DTM, ("Write COMMAND = 0x%h", dmi_shift[33:2]));
                         end
-                        else if (busy_tck) begin
+                        else if (busy_tck || cmd_busy_tck_pending) begin
                             // Spec 3.7.1.1: set cmderr=1 (busy) and discard command
                             if (cmderr == 3'b0) cmderr <= CMDERR_BUSY;
                             `DEBUG2(`DBG_GRP_DTM, ("COMMAND write rejected: busy, cmderr set"));
@@ -1063,6 +1114,8 @@ module jv32_dtm #(
             exec_wait_cnt           <= '0;
             exec_halt_req           <= 1'b0;
             exec_fault_halting      <= 1'b0;
+            read_after_exec         <= 1'b0;
+            exec_phase_done         <= 1'b0;
             mem_req_pending         <= 1'b0;
             mem_wait_cnt            <= 4'b0;
             mem_aarpostincrement_r  <= 1'b0;
@@ -1152,6 +1205,8 @@ module jv32_dtm #(
                 // cross-domain residue from blocking a subsequent command.
                 cmderr_sys         <= 3'b0;
                 data0_result_valid <= 1'b0;
+                read_after_exec    <= 1'b0;
+                exec_phase_done    <= 1'b0;
 
                 `DEBUG2(`DBG_GRP_DTM, ("Toggle-sync: command latched = 0x%h", command_reg_tck_sync[2]));
             end
@@ -1232,8 +1287,22 @@ module jv32_dtm #(
                                                 ("Execute: Write GPR x%0d = 0x%h", cmd_regno - 16'h1000, data0_sys));
                                     end
                                     else begin
-                                        cmd_state <= CMD_REG_READ;
-                                        `DEBUG2(`DBG_GRP_DTM, ("Execute: Read GPR x%0d", cmd_regno - 16'h1000));
+                                        // Per Debug Spec 3.7.1.1: postexec runs BEFORE the
+                                        // register transfer on a read.  Redirect to CMD_EXEC
+                                        // first; after CPU re-halts, CMD_REG_READ captures
+                                        // the value the progbuf loaded into the register.
+                                        if (cmd_postexec) begin
+                                            read_after_exec <= 1'b1;
+                                            dbg_pc_wdata_o  <= DEBUG_ROM_BASE;
+                                            dbg_pc_we_o     <= 1'b1;
+                                            cmd_state       <= CMD_EXEC;
+                                            `DEBUG2(`DBG_GRP_DTM,
+                                                    ("Execute: Read GPR x%0d with postexec (exec first)", cmd_regno - 16'h1000));
+                                        end
+                                        else begin
+                                            cmd_state <= CMD_REG_READ;
+                                            `DEBUG2(`DBG_GRP_DTM, ("Execute: Read GPR x%0d", cmd_regno - 16'h1000));
+                                        end
                                     end
                                 end
                                 else if (cmd_regno == 16'h07b1) begin  // CSR DPC (program counter)
@@ -1242,8 +1311,17 @@ module jv32_dtm #(
                                         `DEBUG2(`DBG_GRP_DTM, ("Execute: Write DPC = 0x%h", data0_sys));
                                     end
                                     else begin
-                                        cmd_state <= CMD_REG_READ;
-                                        `DEBUG2(`DBG_GRP_DTM, ("Execute: Read DPC"));
+                                        if (cmd_postexec) begin
+                                            read_after_exec <= 1'b1;
+                                            dbg_pc_wdata_o  <= DEBUG_ROM_BASE;
+                                            dbg_pc_we_o     <= 1'b1;
+                                            cmd_state       <= CMD_EXEC;
+                                            `DEBUG2(`DBG_GRP_DTM, ("Execute: Read DPC with postexec (exec first)"));
+                                        end
+                                        else begin
+                                            cmd_state <= CMD_REG_READ;
+                                            `DEBUG2(`DBG_GRP_DTM, ("Execute: Read DPC"));
+                                        end
                                     end
                                 end
                                 else if (cmd_regno == 16'h07b0 ||
@@ -1388,7 +1466,10 @@ module jv32_dtm #(
                         data0_result_valid <= 1'b1;
                         `DEBUG2(`DBG_GRP_DTM, ("Read DPC = 0x%h (dpc_reg)", dpc_reg));
                     end
-                    if (cmd_postexec) begin
+                    // Only redirect to progbuf when exec has NOT already run.
+                    // exec_phase_done=1 means we arrived here from CMD_EXEC (read_after_exec
+                    // path) so the progbuf already executed; just capture and finish.
+                    if (cmd_postexec && !exec_phase_done) begin
                         // Redirect CPU to progbuf for post-execute
                         dbg_pc_wdata_o <= DEBUG_ROM_BASE;
                         dbg_pc_we_o    <= 1'b1;
@@ -1757,6 +1838,7 @@ module jv32_dtm #(
                             exec_halt_req      <= 1'b0;
                             exec_fault_halting <= 1'b0;
                             exec_waiting_halt  <= 1'b0;
+                            read_after_exec    <= 1'b0;  // abort deferred read on fault
                             cmd_state          <= CMD_DONE;
                             `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU halted after fault, progbuf done with exception"));
                         end
@@ -1772,8 +1854,18 @@ module jv32_dtm #(
                         if (dbg_halted_i && exec_seen_running) begin
                             // CPU has re-halted after executing progbuf.
                             exec_waiting_halt <= 1'b0;
-                            cmd_state         <= CMD_DONE;
-                            `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU re-halted, progbuf done"));
+                            if (read_after_exec) begin
+                                // This exec was the first step of a read+postexec.
+                                // Now do the deferred register read.
+                                read_after_exec <= 1'b0;
+                                exec_phase_done <= 1'b1;
+                                cmd_state       <= CMD_REG_READ;
+                                `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: progbuf done, proceeding to deferred register read"));
+                            end
+                            else begin
+                                cmd_state <= CMD_DONE;
+                                `DEBUG2(`DBG_GRP_DTM, ("CMD_EXEC: CPU re-halted, progbuf done"));
+                            end
                         end
                         else begin
                             exec_wait_cnt <= exec_wait_cnt + 24'd1;
@@ -1789,14 +1881,17 @@ module jv32_dtm #(
                 end
 
                 CMD_DONE: begin
-                    cmd_busy       <= 1'b0;
+                    cmd_busy        <= 1'b0;
+                    exec_phase_done <= 1'b0;  // clear for next command
+
                     // Restore pc_if to the saved DPC.  This undoes any CMD_EXEC side-effect
                     // (CMD_EXEC redirects pc_if to DEBUG_ROM_BASE for progbuf execution).
                     // For non-CMD_EXEC commands dpc_reg already equals the current pc_if.
-                    dbg_pc_we_o    <= 1'b1;
-                    dbg_pc_wdata_o <= dpc_reg;
+                    dbg_pc_we_o     <= 1'b1;
+                    dbg_pc_wdata_o  <= dpc_reg;
+
                     // Don't clear command_reg here - it's in TCK domain
-                    cmd_state      <= CMD_IDLE;
+                    cmd_state       <= CMD_IDLE;
                 end
 
                 default: begin
@@ -1818,8 +1913,10 @@ module jv32_dtm #(
                 cmd_state_nx = CMD_WAIT;  // Address setup; data captured in CMD_WAIT
             end
             CMD_WAIT: begin
-                // If postexec is set, jump to CMD_EXEC (DPC redirect issued in sequential block)
-                cmd_state_nx = cmd_postexec ? CMD_EXEC : CMD_DONE;
+                // If postexec is set AND exec has not already run, jump to CMD_EXEC.
+                // exec_phase_done=1 means we arrived here after CMD_EXEC (read_after_exec
+                // path): the progbuf already ran, so go straight to CMD_DONE.
+                cmd_state_nx = (cmd_postexec && !exec_phase_done) ? CMD_EXEC : CMD_DONE;
             end
             CMD_REG_WRITE: begin
                 // If postexec is set, jump to CMD_EXEC (DPC redirect issued in sequential block)

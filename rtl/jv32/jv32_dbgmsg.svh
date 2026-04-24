@@ -1,7 +1,8 @@
 // ============================================================================
-// File: jv32_dbgmsg.svh
-// Project: JV32 RISC-V Processor
-// Description: Preprocessor macro definitions for debug display and groups.
+// File        : jv32_dbgmsg.svh
+// Project     : JV32 RISC-V Processor
+// Author      : Kuoping Hsu
+// Description : Preprocessor macro definitions for debug display and groups.
 //
 // This file is a plain header (no package/module) so it can be marked as a
 // Vivado global include, ensuring the macros are visible to all compilation

@@ -1,7 +1,7 @@
 // ============================================================================
-// File: axi_uart.sv
-// Project: KV32 RISC-V Processor
-// Description: AXI4-Lite UART Peripheral with TX/RX FIFOs and IRQ
+// File        : axi_uart.sv
+// Project     : KV32 RISC-V Processor
+// Description : AXI4-Lite UART Peripheral with TX/RX FIFOs and IRQ
 //
 // Memory-mapped UART with AXI4-Lite interface. Provides serial communication
 // with configurable baud rate and 8N1 format (8 data bits, no parity, 1 stop).
@@ -57,6 +57,27 @@
 //
 //   Violating this constraint will result in incorrect data reception due to
 //   insufficient sampling resolution and poor center alignment.
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kuoping Hsu
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 // ============================================================================
 
 /**

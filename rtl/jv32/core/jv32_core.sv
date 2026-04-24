@@ -1,7 +1,7 @@
 // ============================================================================
-// File: jv32_core.sv
-// Project: JV32 RISC-V Processor
-// Description: RV32IMAC 3-Stage Pipeline Core (IF -> EX -> WB)
+// File        : jv32_core.sv
+// Project     : JV32 RISC-V Processor
+// Description : RV32IMAC 3-Stage Pipeline Core (IF -> EX -> WB)
 //
 // Pipeline stages:
 //   IF  : PC + instruction fetch request (via jv32_rvc)
@@ -15,6 +15,27 @@
 //   - AMO : IDLE -> LOAD_WAIT -> STORE_WAIT state machine
 //
 // Forwarding: WB->EX same-cycle forwarding (register data available in WB)
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kuoping Hsu
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 // ============================================================================
 
 module jv32_core #(
@@ -829,13 +850,21 @@ module jv32_core #(
             else if (dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
                       || (dbg_step_pending_r && trace_valid_r)) begin
-                dbg_halted_r       <= 1'b1;
-                trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
-                trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
-                // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
-                dbg_step_pending_r <= 1'b0;
-                // After a single-step halt, block re-resume until resumereq deasserts
-                if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
+                // When EBREAK fires while a load is still waiting for its DMEM
+                // response (1-cycle TCM latency), delay halting by one cycle so
+                // the load writeback completes before dbg_halted_r suppresses
+                // wb_retire.  All other halt sources (halt_req, trigger, step)
+                // are unaffected by this guard.
+                if (!dbg_enter_debug || !(ex_wb_r.valid && ex_wb_r.mem_read && !dmem_resp_valid)) begin
+                    dbg_halted_r       <= 1'b1;
+                    trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
+                    trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
+                    // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
+                    dbg_step_pending_r <= 1'b0;
+                    // After a single-step halt, block re-resume until resumereq deasserts
+                    if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
+                end
+                // else: one-cycle delay; EBREAK stays in EX, load WB completes next cycle
             end
         end
     end
