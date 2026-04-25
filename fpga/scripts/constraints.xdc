@@ -3,8 +3,11 @@
 # Project: JV32 RISC-V SoC
 # Brief  : Physical and timing constraints for XCKU5PFFVB676
 #          Used in BOTH synthesis and implementation (no Tcl scripting here).
-#          Conditional / Tcl-based constraints live in constraints_impl.xdc
-#          which is marked used_in_synthesis=false.
+#
+#          Mode-specific implementation-only constraints are in separate files
+#          selected by create_project.tcl based on the USE_CJTAG variable:
+#            USE_CJTAG=1 -> constraints_cjtag.xdc (tap_tck clock + cJTAG I/O)
+#            USE_CJTAG=0 -> constraints_jtag.xdc  (4-wire JTAG I/O delays)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -41,9 +44,6 @@ create_clock -period 100.000 -name jtag_tck [get_ports jtag_tck_i]
 # -include_generated_clocks ensures the MMCM output
 # (clk_out1_jv32_clk_rst_bd_clk_wiz_0_0) is also covered, fixing TIMING-6/7.
 set_clock_groups -asynchronous -group [get_clocks -include_generated_clocks clk_50m] -group [get_clocks jtag_tck]
-
-# NOTE: tap_tck (cJTAG) clock and JTAG/cJTAG I/O constraints require Tcl
-# 'if' logic and live in constraints_impl.xdc (used_in_synthesis=false).
 
 # -----------------------------------------------------------------------------
 # UART – 3.3 V LVCMOS33 (HR bank)

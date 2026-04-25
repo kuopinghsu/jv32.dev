@@ -111,16 +111,29 @@ foreach f $rtl_files {
     set_property file_type SystemVerilog [get_files $f]
 }
 
+# Plain Verilog BD wrapper for jv32_soc – must be Verilog (not SystemVerilog)
+# so Vivado accepts it as a BD RTL module reference (-type module -reference).
+add_files -norecurse ${fpga_rtl}/jv32_soc_fpga.v
+set_property file_type Verilog [get_files jv32_soc_fpga.v]
+
 # ---------------------------------------------------------------------------
 # Add constraints
 # ---------------------------------------------------------------------------
 add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints.xdc
 set_property PROCESSING_ORDER NORMAL [get_files constraints.xdc]
 
-# Implementation-only constraints (Tcl 'if' logic; not valid in synthesis XDC).
-add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_impl.xdc
-set_property used_in_synthesis false [get_files constraints_impl.xdc]
-set_property PROCESSING_ORDER NORMAL [get_files constraints_impl.xdc]
+# Mode-specific implementation-only constraints: add only the file that
+# matches USE_CJTAG.  These contain no Tcl 'if' — the selection is done here
+# in Tcl where it is fully supported, so each XDC is plain constraint commands.
+if {$use_cjtag == "1"} {
+    add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_cjtag.xdc
+    set_property used_in_synthesis false [get_files constraints_cjtag.xdc]
+    set_property PROCESSING_ORDER NORMAL [get_files constraints_cjtag.xdc]
+} else {
+    add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_jtag.xdc
+    set_property used_in_synthesis false [get_files constraints_jtag.xdc]
+    set_property PROCESSING_ORDER NORMAL [get_files constraints_jtag.xdc]
+}
 
 # ---------------------------------------------------------------------------
 # Create block design (sources create_bd.tcl which also sets the top)
