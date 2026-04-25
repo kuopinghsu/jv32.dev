@@ -216,9 +216,13 @@ RUN_MAGIC_DRC: true
 RUN_KLAYOUT_DRC: false
 RUN_LVS: true
 
-# Magic.SpiceExtraction still executes in Classic; use GDS input to bypass LEF
-# parsing issues seen with via1/metal1/metal2 in Magic.
-MAGIC_EXT_USE_GDS: true
+# Switch to DEF+LEF mode so Magic loads the SRAM macro LEF via read_macro_lef,
+# enabling MAGIC_EXT_ABSTRACT_CELLS (property LEFview true) to resolve the SRAM
+# port pin shapes and produce proper net connections in the extracted SPICE.
+# GDS mode was previously preferred to bypass LEF parsing issues, but those
+# were resolved once the magic.tech cifinput section was given full metal/via
+# layer coverage (see calma METAL1-METAL10 34-43 and VIA1-VIA9 50-58 entries).
+MAGIC_EXT_USE_GDS: false
 
 # Preserve progress with current implementation quality by warning (not error)
 # on extraction overlap findings and PDN gaps at final checkers.

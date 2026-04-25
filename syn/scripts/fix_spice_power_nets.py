@@ -27,7 +27,6 @@ import re
 import sys
 from pathlib import Path
 
-
 # Net tokens that end in one of these suffixes (case-insensitive) map to
 # a canonical power name.
 _SUFFIX_MAP = {
@@ -46,7 +45,6 @@ _FRAGMENT_RE = re.compile(
     r'(?i)\S+/(?:VDD!?|VPWR|VSS!?|VGND|GND!?)'
 )
 
-
 def _replace_token(match: re.Match) -> str:
     tok = match.group(0)
     lower = tok.lower()
@@ -54,7 +52,6 @@ def _replace_token(match: re.Match) -> str:
         if lower.endswith(suffix):
             return canonical
     return tok          # should not happen given the regex, but be safe
-
 
 def fix_power_nets(src: Path, dst: Path) -> None:
     text = src.read_text(encoding="utf-8")
@@ -88,7 +85,6 @@ def fix_power_nets(src: Path, dst: Path) -> None:
     dst.write_text("".join(out_lines), encoding="utf-8")
     print(f"fix_spice_power_nets: merged {vdd_count} VDD fragments and "
           f"{vss_count} VSS fragments → {dst}")
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

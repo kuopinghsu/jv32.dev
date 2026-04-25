@@ -9,9 +9,14 @@
 # -----------------------------------------------------------------------------
 # 4-wire JTAG I/O delays
 # -----------------------------------------------------------------------------
-# TMS and TDI are captured on the rising edge of TCK.
-set_input_delay  -clock jtag_tck -max 10.0            [get_ports {jtag_tmsc_io jtag_tdi_i}]
-set_input_delay  -clock jtag_tck -min  0.0 -add_delay [get_ports {jtag_tmsc_io jtag_tdi_i}]
+# TMS (jtag_tmsc_io) passes through an IOBUF synchronizer in the SoC and is
+# re-sampled on TCK inside the TAP; treat as a false path at the port.
+set_false_path -from [get_ports jtag_tmsc_io]
+set_false_path -to   [get_ports jtag_tmsc_io]
+
+# TDI is captured on the rising edge of TCK.
+set_input_delay  -clock jtag_tck -max 10.0            [get_ports jtag_tdi_i]
+set_input_delay  -clock jtag_tck -min  0.0 -add_delay [get_ports jtag_tdi_i]
 
 # TDO is launched on the falling edge of TCK (negedge FF in jtag_tap.sv).
 set_output_delay -clock jtag_tck -clock_fall -max 10.0            [get_ports jtag_tdo_o]
