@@ -117,6 +117,11 @@ foreach f $rtl_files {
 add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints.xdc
 set_property PROCESSING_ORDER NORMAL [get_files constraints.xdc]
 
+# Implementation-only constraints (Tcl 'if' logic; not valid in synthesis XDC).
+add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_impl.xdc
+set_property used_in_synthesis false [get_files constraints_impl.xdc]
+set_property PROCESSING_ORDER NORMAL [get_files constraints_impl.xdc]
+
 # ---------------------------------------------------------------------------
 # Create block design (sources create_bd.tcl which also sets the top)
 # ---------------------------------------------------------------------------

@@ -87,6 +87,7 @@ MAGIC_MACRO_STD_CELL_SOURCE: PDK
 # "device missing 1 terminal" feedback which OpenLane flags as a fatal error.
 MAGIC_EXT_ABSTRACT_CELLS:
   - sram_1rw_2048x32
+  - replica_cell_1rw
 
 # The Classic flow does not auto-place hard macros; provide fixed locations for
 # all 32 SRAM banks so tap insertion and PDN generation can proceed.

@@ -34,7 +34,7 @@
 |---|---|
 | Die area | 4500000 µm² = 4.500 mm² |
 | Core area | 4406880 µm² = 4.407 mm² |
-| Standard cell area | 64137 µm² |
+| Standard cell area | 64066 µm² |
 | Macro area | 2183510 µm² |
 | Total instance utilization | 51.0% |
 | Std cell utilization | 2.88% |
@@ -50,31 +50,31 @@
 
 | Module | NAND2-eq | Area (µm²) | % of SoC logic |
 |---|---:|---:|---:|
-| **jv32_soc** | **2,171** | **1,732.72** | **100.0%** |
-| ↳ jv32_top | 4,124 | 3,291.22 | 190.0% |
+| **jv32_soc** | **1,953** | **1,558.76** | **100.0%** |
+| ↳ jv32_top | 3,532 | 2,818.54 | 180.8% |
 | &nbsp;&nbsp;↳ jv32_core | 0 | 0.00 | 0.0% |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ **jv32_alu** | **16,002** | **12,769.33** | **737.1%** |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ **jv32_alu** | **15,265** | **12,181.47** | **781.6%** |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 0 | 0.00 | 0.0% |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,505 | 4,392.72 | 253.6% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,020 | 4,005.96 | 257.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 0 | 0.00 | 0.0% |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 314 | 250.84 | 14.5% |
-| &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 | 3.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 313 | 250.04 | 16.0% |
+| &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 | 4.3% |
 | ↳ jtag_top | 0 | 0.00 | 0.0% |
-| &nbsp;&nbsp;↳ jtag_tap | 207 | 165.19 | 9.5% |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 17,072 | 13,623.19 | 786.4% |
-| ↳ axi_clic | 5,699 | 4,547.80 | 262.5% |
-| ↳ axi_uart | 4,840 | 3,862.32 | 222.9% |
-| ↳ axi_xbar | 689 | 550.09 | 31.7% |
+| &nbsp;&nbsp;↳ jtag_tap | 212 | 169.44 | 10.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 15,624 | 12,468.22 | 800.0% |
+| ↳ axi_clic | 5,281 | 4,214.24 | 270.4% |
+| ↳ axi_uart | 3,772 | 3,010.06 | 193.1% |
+| ↳ axi_xbar | 562 | 448.48 | 28.8% |
 | ↳ axi_magic | 0 | 0.00 | 0.0% |
 
 ### ALU area breakdown by function
 
 | Sub-block | Config | Key cell types | Est. NAND2-eq | % of ALU |
 |---|---|---|---:|---:|
-| Multiplier (MUL/MULH/MULHSU/MULHU) | `FAST_MUL=1, MUL_MC=1` (2-stage 4×16×16 pipeline) | XOR2/XNOR2, DFFR (193 FFs) | ~2,761 | ~17% |
-| Divider (DIV/DIVU/REM/REMU) | `FAST_DIV=0` (serial restoring) | NAND2/NOR2, DFFR (210 FFs) | ~1,234 | ~8% |
-| Barrel shifter (SLL/SRL/SRA) | `FAST_SHIFT=1` (SRL/SRA shared¹) | MUX2, INV | ~190 | ~1% |
-| ADD/SUB/logic/compare | — | XOR2/XNOR2, AOI/OAI | ~11,817 | ~74% |
+| Multiplier (MUL/MULH/MULHSU/MULHU) | `FAST_MUL=1, MUL_MC=1` (2-stage 4×16×16 pipeline) | XOR2/XNOR2, DFFR (193 FFs) | ~2,721 | ~18% |
+| Divider (DIV/DIVU/REM/REMU) | `FAST_DIV=0` (serial restoring) | NAND2/NOR2, DFFR (210 FFs) | ~1,219 | ~8% |
+| Barrel shifter (SLL/SRL/SRA) | `FAST_SHIFT=1` (SRL/SRA shared¹) | MUX2, INV | ~120 | ~1% |
+| ADD/SUB/logic/compare | — | XOR2/XNOR2, AOI/OAI | ~11,205 | ~73% |
 
 ¹ SRL and SRA share a single right-shift barrel tree (see [rtl/jv32/core/jv32_alu.sv](../rtl/jv32/core/jv32_alu.sv)); the second independent barrel shifter was removed, saving ~100–180 NAND2-eq.
 
@@ -84,16 +84,16 @@
 
 | Category | Count | % of std cells |
 |---|---|---|
-| Total instances | 44221 | — |
-| Standard cells (excl. tap) | 44,217 | 100% |
+| Total instances | 44189 | — |
+| Standard cells (excl. tap) | 44,185 | 100% |
 | Sequential (flip-flops) | 5147 | 11.6% |
-| Multi-input combinational | 26934 | 60.9% |
+| Multi-input combinational | 26882 | 60.8% |
 | Buffers | 96 | 0.2% |
-| Inverters | 2136 | 4.8% |
+| Inverters | 2156 | 4.9% |
 | Macros | 4 | — |
 | Tap cells | 9904 | — |
 | I/O ports | 768 | — |
-| **NAND2 equivalents (post-P&R)** | **80,372** | — |
+| **NAND2 equivalents (post-P&R)** | **80,283** | — |
 
 ---
 
@@ -102,18 +102,18 @@
 | Metric | Value |
 |---|---|
 | Clock roots | 2 |
-| CTS buffers inserted | 265 |
-| Clock subnets | 265 |
+| CTS buffers inserted | 269 |
+| Clock subnets | 269 |
 | Clock sinks | 5151 |
 | Post-CTS setup WNS | 0.0 ns ✅ |
-| Post-CTS hold WNS  | -0.12855777917197123 ns ⚠️ |
+| Post-CTS hold WNS  | -0.07916234558601404 ns ⚠️ |
 
 ### Clock Skew (post-PnR, tt_025C_1v10)
 
 | Clock | Setup skew (ns) | Hold skew (ns) |
 |---|---|---|
-| `core_clk` | 0.643371 | -0.189628 |
-| `jtag_tck` | 1.050919 | -0.158520 |
+| `core_clk` | 0.651180 | -0.187954 |
+| `jtag_tck` | 1.044874 | -0.149765 |
 
 ---
 
@@ -128,16 +128,16 @@
 
 | Clock | Setup skew (ns) |
 |---|---|
-| `core_clk` | 0.643371 |
-| `jtag_tck` | 1.050919 |
+| `core_clk` | 0.651180 |
+| `jtag_tck` | 1.044874 |
 
 ### Design Checks
 
 | Check | Count | |
 |---|---|---|
-| Max slew violations   | 61   | ⚠️ |
-| Max cap violations    | 166    | ⚠️ |
-| Max fanout violations | 0 | ✅ |
+| Max slew violations   | 60   | ⚠️ |
+| Max cap violations    | 171    | ⚠️ |
+| Max fanout violations | 10 | ⚠️ |
 | Unconstrained endpoints | 51 | ℹ️ |
 
 ### Timing Convergence
@@ -145,7 +145,7 @@
 | Stage | Setup WNS (ns) | |
 |---|---|---|
 | Pre-PnR (synthesis) | -9.556 | ❌ |
-| Post-placement (mid-PnR) | -13.041 | ❌ |
+| Post-placement (mid-PnR) | -13.238 | ❌ |
 | Post-CTS + resizer | 0.000 | ✅ |
 | Post-GRT resizer | 0.000 | ✅ |
 | **Post-route STA (sign-off)** | **0.000** | ✅ |
@@ -156,11 +156,11 @@
 
 | Iteration | DRC Errors | Wirelength (µm) |
 |---|---|---|
-| 1 | 11,992 | 1,131,466 |
-| 2 | 1,888 | 1,126,917 |
-| 3 | 1,148 | 1,126,452 |
-| 4 | 39 | 1,126,400 |
-| 5 | 0 | 1,126,400 |
+| 1 | 12,036 | 1,160,859 |
+| 2 | 1,840 | 1,156,023 |
+| 3 | 1,125 | 1,155,483 |
+| 4 | 45 | 1,155,450 |
+| 5 | 0 | 1,155,449 |
 | **Final** | **0** ✅ | — |
 
 ---
@@ -171,12 +171,12 @@
 
 | Group | Internal (W) | Switching (W) | Leakage (W) | Total (W) | % |
 |---|---|---|---|---|---|
-| Sequential | 3.28 mW | 0.61 mW | 0.43 mW | 4.33 mW | 17.5% |
-| Combinational | 3.48 mW | 5.29 mW | 1.26 mW | 10.03 mW | 40.5% |
-| Clock | 0.29 mW | 0.89 mW | 0.02 mW | 1.19 mW | 4.8% |
-| Macro | 8.63 mW | 0.00 mW | 0.59 mW | 9.22 mW | 37.2% |
+| Sequential | 3.20 mW | 0.51 mW | 0.43 mW | 4.14 mW | 19.1% |
+| Combinational | 2.34 mW | 3.48 mW | 1.27 mW | 7.10 mW | 32.7% |
+| Clock | 0.31 mW | 0.90 mW | 0.02 mW | 1.23 mW | 5.7% |
+| Macro | 8.63 mW | 0.00 mW | 0.59 mW | 9.22 mW | 42.5% |
 | Pad | 0.00 mW | 0.00 mW | 0.00 mW | 0.00 mW | 0.0% |
-| Total | 15.68 mW | 6.79 mW | 2.30 mW | 24.78 mW | 100.0% |
+| Total | 14.48 mW | 4.89 mW | 2.31 mW | 21.69 mW | 100.0% |
 
 ---
 
@@ -184,25 +184,25 @@
 
 | Metric | Value |
 |---|---|
-| Total routed nets | 41,942 |
-| Constrained signal nets | 38,209 |
-| Total wirelength | **1126.36 mm** |
-| Total vias | 372,823 |
+| Total routed nets | 41,928 |
+| Constrained signal nets | 38,195 |
+| Total wirelength | **1155.41 mm** |
+| Total vias | 375,682 |
 
 ### Longest Nets (Top 10)
 
 | Rank | Net | Length |
 |---|---|---|
-| 1 | `_06035_` | 1.798 mm |
-| 2 | `net135` | 1.569 mm |
-| 3 | `_06144_` | 1.559 mm |
-| 4 | `net1139` | 1.541 mm |
-| 5 | `net1138` | 1.517 mm |
-| 6 | `net954` | 1.386 mm |
-| 7 | `_06033_` | 1.303 mm |
-| 8 | `_06143_` | 1.298 mm |
-| 9 | `net1140` | 1.287 mm |
-| 10 | `_07329_` | 1.258 mm |
+| 1 | `_06030_` | 1.774 mm |
+| 2 | `net135` | 1.620 mm |
+| 3 | `net1169` | 1.601 mm |
+| 4 | `_06131_` | 1.487 mm |
+| 5 | `net1168` | 1.479 mm |
+| 6 | `net1167` | 1.434 mm |
+| 7 | `net1031` | 1.386 mm |
+| 8 | `net998` | 1.375 mm |
+| 9 | `_06028_` | 1.326 mm |
+| 10 | `net1034` | 1.322 mm |
 
 ---
 
@@ -211,17 +211,17 @@
 | Layer | Resource | Demand | Usage | Overflow (H/V/Total) |
 |---|---|---|---|---|
 | metal1 | 0 | 0 | 0.00% ✅ | 0 /  0 /  0 |
-| metal2 | 3,619,416 | 200,985 | 5.55% ✅ | 0 /  0 /  0 |
-| metal3 | 5,187,866 | 226,321 | 4.36% ✅ | 0 /  0 /  0 |
-| metal4 | 2,077,934 | 44,214 | 2.13% ✅ | 0 /  0 /  0 |
-| metal5 | 3,961,995 | 32,479 | 0.82% ✅ | 0 /  0 /  0 |
-| metal6 | 3,956,418 | 2,473 | 0.06% ✅ | 0 /  0 /  0 |
-| metal7 | 1,018,877 | 2,128 | 0.21% ✅ | 0 /  0 /  0 |
-| metal8 | 1,020,305 | 12 | 0.00% ✅ | 0 /  0 /  0 |
-| metal9 | 1,017,451 | 583 | 0.06% ✅ | 0 /  0 /  0 |
-| **Total** | **21,860,262** | **509,195** | **2.33%** | **0 /  0 /  0** ✅ |
+| metal2 | 3,619,416 | 202,492 | 5.59% ✅ | 0 /  0 /  0 |
+| metal3 | 5,187,866 | 232,816 | 4.49% ✅ | 0 /  0 /  0 |
+| metal4 | 2,077,934 | 49,068 | 2.36% ✅ | 0 /  0 /  0 |
+| metal5 | 3,961,995 | 34,184 | 0.86% ✅ | 0 /  0 /  0 |
+| metal6 | 3,956,418 | 1,708 | 0.04% ✅ | 0 /  0 /  0 |
+| metal7 | 1,018,877 | 2,560 | 0.25% ✅ | 0 /  0 /  0 |
+| metal8 | 1,020,305 | 11 | 0.00% ✅ | 0 /  0 /  0 |
+| metal9 | 1,017,451 | 427 | 0.04% ✅ | 0 /  0 /  0 |
+| **Total** | **21,860,262** | **523,266** | **2.39%** | **0 /  0 /  0** ✅ |
 
-> GRT total wirelength: 1374758 µm
+> GRT total wirelength: 1405958 µm
 
 ---
 
@@ -239,14 +239,14 @@
 
 | Step | Tool | Runtime |
 |---|---|---|
-| Synthesis | Yosys | 00:05:00.002 |
-| Floorplan | OpenROAD | 00:00:06.056 |
-| Global Placement | OpenROAD (RePLace) | 00:01:27.998 |
-| Clock Tree Synthesis | TritonCTS | 00:00:10.969 |
-| Global Routing | OpenROAD (FastRoute) | 00:00:41.215 |
-| Detailed Routing | TritonRoute | 00:01:28.743 |
-| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:51.272 |
-| **Total (key steps)** | | **9 m 43 s** |
+| Synthesis | Yosys | 00:04:59.428 |
+| Floorplan | OpenROAD | 00:00:04.941 |
+| Global Placement | OpenROAD (RePLace) | 00:01:53.393 |
+| Clock Tree Synthesis | TritonCTS | 00:00:12.896 |
+| Global Routing | OpenROAD (FastRoute) | 00:00:41.687 |
+| Detailed Routing | TritonRoute | 00:01:33.674 |
+| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:57.416 |
+| **Total (key steps)** | | **10 m 19 s** |
 
 ---
 
