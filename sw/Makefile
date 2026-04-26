@@ -49,8 +49,10 @@ ifneq ($(strip $(TEST)),)
 -include $(SW_DIR)/$(TEST)/makefile.mak
 endif
 
-# Output directory for ELFs (set by root Makefile; defaults to sw/)
-BUILD_DIR ?= .
+# Output directory for ELFs.
+# When invoked by the root Makefile the root passes BUILD_DIR=$(BUILD_DIR_ABS).
+# When invoked standalone (make -C sw ...) default to the top-level build/ dir.
+BUILD_DIR ?= $(abspath $(SW_DIR)/../build)
 OBJ_DIR   := $(BUILD_DIR)/obj
 
 # Linker script
@@ -155,6 +157,8 @@ $(BUILD_DIR)/%.dis: $(BUILD_DIR)/%.elf
 clean:
 	@rm -rf $(OBJ_DIR)
 	@rm -f $(BUILD_DIR)/*.elf $(BUILD_DIR)/*.map $(BUILD_DIR)/*.dis
+	@rm -f $(SW_DIR)/*.elf $(SW_DIR)/*.map $(SW_DIR)/*.dis
+	@rm -rf $(SW_DIR)/obj
 	@echo "Clean done."
 
 ## Show this help
