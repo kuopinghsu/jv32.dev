@@ -489,7 +489,7 @@ lint-svlint:
 # Usage:
 #   make sim ELF=sw/tests/hello.elf
 #   make rtl-hello          (build sw/tests/hello.elf then simulate)
-#   make rtl-trap_test      (build sw/tests/trap_test.elf then simulate)
+#   make rtl-trap           (build sw/tests/trap.elf then simulate)
 # Optional:
 #   WAVE=fst    — dump FST waveform to $(BUILD_DIR)/jv32soc.fst
 #   TRACE=1     — print instruction trace
@@ -666,7 +666,7 @@ $(JV32SIM): $(SIM_DIR)/jv32sim.cpp $(SIM_DIR)/riscv-dis.cpp
 sim-build: $(JV32SIM)
 
 # Convenience pattern: build sw/<test>.elf then simulate with software simulator
-# Examples: make sim-hello, make sim-trap_test
+# Examples: make sim-hello, make sim-trap
 # Optional: MAX_INSNS=N, TIMEOUT=N
 SIM_MAX_INSNS_ARG = $(if $(MAX_INSNS),--max-insns=$(MAX_INSNS)) $(if $(TIMEOUT),--timeout=$(TIMEOUT))
 
@@ -682,7 +682,7 @@ sim-%: $(BUILD_DIR)/%.elf $(JV32SIM)
 # ============================================================================
 # Trace comparison: software simulator vs RTL simulator
 # Usage:
-#   make compare-<test>     e.g. make compare-hello, make compare-trap_test
+#   make compare-<test>     e.g. make compare-hello, make compare-trap
 #
 # Builds <test>.elf, jv32sim, and the RTL simulation binary, then runs
 # both and diffs the instruction traces (only non-x0 register writes).

@@ -1,5 +1,5 @@
 /* ============================================================================
- * File: sw/trap_test/trap_test.c
+ * File: sw/trap/trap.c
  * Project: JV32 RISC-V Processor
  * Description: Trap / exception handling test — uses JV SDK
  *
