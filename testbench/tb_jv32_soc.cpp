@@ -32,6 +32,39 @@ static const char* const RTL_REG_ABI[32] = {
 };
 static RiscvDisassembler rtl_disasm;
 
+static const char* csr_name_from_addr(uint32_t csr_addr) {
+    switch (csr_addr) {
+    case 0x300: return "mstatus";
+    case 0x301: return "misa";
+    case 0x304: return "mie";
+    case 0x305: return "mtvec";
+    case 0x307: return "mtvt";
+    case 0x340: return "mscratch";
+    case 0x341: return "mepc";
+    case 0x342: return "mcause";
+    case 0x343: return "mtval";
+    case 0x344: return "mip";
+    case 0x345: return "mnxti";
+    case 0x347: return "mintthresh";
+    case 0xFB1: return "mintstatus";
+    case 0xB00: return "mcycle";
+    case 0xB80: return "mcycleh";
+    case 0xB02: return "minstret";
+    case 0xB82: return "minstreth";
+    case 0xC00: return "cycle";
+    case 0xC80: return "cycleh";
+    case 0xC01: return "time";
+    case 0xC81: return "timeh";
+    case 0xC02: return "instret";
+    case 0xC82: return "instreth";
+    case 0xF11: return "mvendorid";
+    case 0xF12: return "marchid";
+    case 0xF13: return "mimpid";
+    case 0xF14: return "mhartid";
+    default:    return nullptr;
+    }
+}
+
 static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint32_t instr,
                            uint32_t rd, uint32_t rddata,
                            bool mem_we, bool mem_re, uint32_t mem_addr, uint32_t mem_data) {
@@ -51,6 +84,18 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint
         // Load: emit addr only (no data, matching SW sim format)
         oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr;
     }
+    uint32_t opcode = instr & 0x7fu;
+    uint32_t funct3 = (instr >> 12) & 0x7u;
+    if (opcode == 0x73u && funct3 != 0) {
+        uint32_t csr_addr = instr >> 20;
+        const char* csr_name = csr_name_from_addr(csr_addr);
+        if (csr_name) {
+            oss << " csr " << csr_name;
+        } else {
+            oss << " csr 0x" << std::hex << std::setfill('0') << std::setw(3)
+                << (csr_addr & 0xFFFu);
+        }
+    }
     std::string base = oss.str();
     std::string disasm = rtl_disasm.disassemble(instr, pc);
     int pad = 72 - (int)base.size();
@@ -59,25 +104,13 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint
 
     // Emit '! hint' comment for cycle-counter CSR reads so jv32sim can sync.
     // Detect: opcode=0x73 (SYSTEM), funct3 != 0, csr_addr in cycle-CSR set.
-    uint32_t opcode = instr & 0x7fu;
-    uint32_t funct3 = (instr >> 12) & 0x7u;
     if (rd != 0 && opcode == 0x73u && funct3 != 0) {
         uint32_t csr_addr = instr >> 20;
-        const char* csr_name = nullptr;
-        switch (csr_addr) {
-        case 0xB00: csr_name = "mcycle";    break;
-        case 0xB80: csr_name = "mcycleh";   break;
-        case 0xB02: csr_name = "minstret";  break;
-        case 0xB82: csr_name = "minstreth"; break;
-        case 0xC00: csr_name = "cycle";     break;
-        case 0xC80: csr_name = "cycleh";    break;
-        case 0xC01: csr_name = "time";      break;
-        case 0xC81: csr_name = "timeh";     break;
-        case 0xC02: csr_name = "instret";   break;
-        case 0xC82: csr_name = "instreth";  break;
-        default:    break;
-        }
-        if (csr_name)
+        const char* csr_name = csr_name_from_addr(csr_addr);
+        if (csr_name && (csr_addr == 0xB00 || csr_addr == 0xB80 || csr_addr == 0xB02 ||
+                         csr_addr == 0xB82 || csr_addr == 0xC00 || csr_addr == 0xC80 ||
+                         csr_addr == 0xC01 || csr_addr == 0xC81 || csr_addr == 0xC02 ||
+                         csr_addr == 0xC82))
             fprintf(fp, "! csr_hint %s 0x%08x\n", csr_name, rddata);
     }
     // Emit mtime hints for CLIC peripheral reads so jv32sim can sync its
@@ -293,10 +326,10 @@ int main(int argc, char** argv) {
         tick(dut, tfp);
         cycle++;
 
-        // Count all retired instructions; emit trace for register-writing and memory-access ones
+        // Count and emit every retired instruction.
         if (dut->trace_valid) {
             instret++;
-            if ((dut->trace_reg_we || dut->trace_mem_we || dut->trace_mem_re) && rtl_tfp) {
+            if (rtl_tfp) {
                 emit_rtl_trace(rtl_tfp, instret, cycle,
                                dut->trace_pc, dut->trace_instr,
                                dut->trace_reg_we ? dut->trace_rd : 0,

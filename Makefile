@@ -498,6 +498,7 @@ lint-svlint:
 # ============================================================================
 TIMEOUT     ?= 120
 TIMEOUT_ARG  = $(if $(MAX_CYCLES),--max-cycles=$(MAX_CYCLES)) $(if $(TIMEOUT),--timeout=$(TIMEOUT))
+RTL_TRACE_FILE = $(abspath $(BUILD_DIR))/rtl_trace.txt
 
 sim: build-rtl
 ifndef ELF
@@ -525,7 +526,7 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
-	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
 	    $(TIMEOUT_ARG) \
 	    $*.elf
 	@echo "=========================================="
@@ -693,20 +694,20 @@ compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo "=========================================="
 	@echo ""
 	@echo "[1/3] Running RTL simulator (generates cycle-CSR hints)..."
-	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
 	    $(BUILD_DIR)/$*.elf \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[2/3] Running software simulator (using RTL hints to sync cycle counters)..."
 	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
-	    --rtl-hints $(BUILD_DIR)/rtl_trace.txt \
+	    --rtl-hints $(RTL_TRACE_FILE) \
 	    $(BUILD_DIR)/$*.elf \
 	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces (sim=RTL-format vs rtl=Spike-format)..."
 	@python3 scripts/trace_compare.py \
 	    $(BUILD_DIR)/sim_trace.txt \
-	    $(BUILD_DIR)/rtl_trace.txt \
+	    $(RTL_TRACE_FILE) \
 	    || exit 1
 
 # ============================================================================
@@ -741,7 +742,7 @@ __rtl-freertos-run: build-rtl
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
-	    $(if $(filter 1,$(TRACE)),--rtl-trace -) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
 	    $(TIMEOUT_ARG) \
 	    freertos-$(TEST).elf
 	@echo "=========================================="
@@ -804,20 +805,20 @@ compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
 	@echo "=========================================="
 	@echo ""
 	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
-	@$(BUILD_DIR)/jv32soc --rtl-trace $(BUILD_DIR)/rtl_trace.txt \
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
 	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
 	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
-	    --rtl-hints $(BUILD_DIR)/rtl_trace.txt \
+	    --rtl-hints $(RTL_TRACE_FILE) \
 	    $(BUILD_DIR)/freertos-$*.elf \
 	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[3/3] Comparing traces..."
 	@python3 scripts/trace_compare.py \
 	    $(BUILD_DIR)/sim_trace.txt \
-	    $(BUILD_DIR)/rtl_trace.txt \
+	    $(RTL_TRACE_FILE) \
 	    || exit 1
 
 # Compare software-vs-RTL traces for all FreeRTOS tests

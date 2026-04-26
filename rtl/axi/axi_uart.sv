@@ -453,8 +453,16 @@ module axi_uart #(
     // TX FIFO push: AXI write to offset 0x00 (drop if FIFO full)
     assign txf_push    = wr_fire && (eff_awaddr_w == 8'h00) && !txf_full && axi_wstrb[0];
 
-    // RX FIFO pop: AXI read of offset 0x00 (advance pointer)
-    assign rxf_pop     = axi_arvalid && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
+    // RX FIFO pop: AXI read of offset 0x00 (advance pointer).
+    // Use a registered request so that rxf_pop fires one cycle after the AR
+    // handshake, avoiding an RTL eval-order issue where axi_arvalid is cleared
+    // in the same combinatorial step that rxf_pop would be computed.
+    logic rxf_pop_req;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) rxf_pop_req <= 1'b0;
+        else rxf_pop_req <= axi_arvalid && axi_arready && (axi_araddr[7:0] == 8'h00) && !rxf_empty;
+    end
+    assign rxf_pop = rxf_pop_req;
 
     // loopback_en: declared earlier as forward declaration
 
@@ -516,7 +524,6 @@ module axi_uart #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            axi_rdata  <= 32'h0;
             axi_rresp  <= 2'b00;
             axi_rvalid <= 1'b0;
         end
@@ -524,12 +531,16 @@ module axi_uart #(
             if (axi_rvalid && axi_rready) axi_rvalid <= 1'b0;
 
             if (axi_arvalid && axi_arready) begin
-                axi_rdata  <= read_data;
                 axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 axi_rvalid <= 1'b1;
             end
         end
     end
+
+    // axi_rdata is combinatorial: always reflects current register values for
+    // the stable rd_addr_r address.  This avoids a Verilator NBA eval-order
+    // issue where the registered capture was one cycle behind.
+    assign axi_rdata = read_data;
 
     // Suppress unused-signal lint warnings: upper address/data bits and byte-enable
     // are not needed for this byte-wide register file.

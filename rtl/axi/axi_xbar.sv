@@ -155,11 +155,13 @@ module axi_xbar #(
     end
 
     // Route R back to master.
-    // Gate by rd_active so a completed DECERR does not leak into the next
-    // fetch/read cycle and look like a second stale response.
-    assign m_rvalid = rd_active ? (rd_err ? 1'b1 : s_rvalid[rd_sel]) : 1'b0;
-    assign m_rdata  = (rd_active && !rd_err) ? s_rdata[rd_sel] : 32'h0000_0000;
-    assign m_rresp  = rd_active ? (rd_err ? 2'b11 : s_rresp[rd_sel]) : 2'b00;
+    // NOTE: rd_active is NOT used to gate m_rdata/m_rvalid here so that
+    // combinatorial evaluation returns the correct slave data.
+    // Spurious responses are safe: the bus-state machine only samples
+    // m_rvalid when bus_state==BUS_DR or BUS_IR.
+    assign m_rvalid = rd_err ? rd_active : s_rvalid[rd_sel];
+    assign m_rdata  = rd_err ? 32'h0000_0000 : s_rdata[rd_sel];
+    assign m_rresp  = rd_err ? 2'b11 : s_rresp[rd_sel];
 
     // =====================================================================
     // Write channel routing

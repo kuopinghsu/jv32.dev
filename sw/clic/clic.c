@@ -300,8 +300,8 @@ int main(void)
     {
         jv_irq_register(JV_CAUSE_MSI, msi_handler);
         jv_clic_msip_irq_enable();
-        jv_irq_enable();
-        jv_clic_msip_set();             /* MSIP = 1 → MSI fires at next WB cycle */
+        jv_clic_msip_set();             /* MSIP = 1 while MIE=0: no interrupt yet */
+        jv_irq_enable();                /* csrrsi mstatus,8 → MSI fires here (safe re-exec) */
         wait_cnt(&msi_count, 1, IRQ_LIMIT);
         jv_irq_disable();
         jv_clic_msip_irq_disable();
@@ -434,13 +434,17 @@ int main(void)
         jv_uart_irq_enable(JV_UART_IE_RX_READY);
         jv_clic_ext_irq_set_level(UART_IRQ_LINE, 0x80u);
 
-        /* Send both bytes through the loopback path.                      */
-        jv_uart_putc('E');
-        jv_uart_putc('F');
+        /* Send both bytes through the loopback path.
+         * Use direct DATA writes here to avoid STATUS polling jitter between
+         * RTL and ISS in the pre-arm setup path.                           */
+        JV_UART_DATA = (uint32_t)'E';
+        JV_UART_DATA = (uint32_t)'F';
 
-        /* Wait until both bytes have arrived in the RX FIFO.
-         * JV_UART_LEVEL[15:0] = RX FIFO occupancy (axi_uart.sv offset 0x10). */
-        for (uint32_t t = 0; (JV_UART_LEVEL & 0xFFFFu) < 2u && t < UART_LIMIT; t++)
+        /* Fixed settle: UART_TX_SETTLE nops run identically in ISS (instant
+         * loopback) and RTL (serial, ~80 cycles/byte at SIM_CLKS_PER_BIT=8).
+         * 300 nops > 2 bytes x 80 RTL cycles / CPI guarantees both bytes are
+         * in the RX FIFO before CLICINT is armed, with deterministic traces. */
+        for (uint32_t t = 300u; t > 0u; t--)
             asm volatile("nop" ::: "memory");
 
         printf("  RX FIFO count before arm = %lu  (expected 2)\n",

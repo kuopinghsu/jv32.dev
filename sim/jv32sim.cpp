@@ -4,7 +4,7 @@
 // Description: RV32IMAC + Zicsr software simulator — golden reference model.
 //
 // Generates an instruction trace compatible with the jv32 RTL testbench
-// filtered trace format (only retired instructions that write rd != x0).
+// format, logging every retired instruction.
 //
 // Usage:
 //   ./jv32sim [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>
@@ -214,6 +214,10 @@ static bool g_msi_irq_pending   = false;  // set by hint; cleared when MSI taken
 static uint32_t g_msi_irq_epc   = 0;      // mepc to use when hint fires the MSI
 static bool     g_mei_irq_pending = false; // set by MEI hint; cleared when taken
 static uint32_t g_mei_irq_epc    = 0;     // mepc to use when hint fires the MEI
+// Tail-chain flag: set by mret when returning from a CLIC trap in hints mode;
+// allows one natural CLIC MEI check in check_interrupts() so tail-chaining
+// (which emits no new ! irq hint in the RTL trace) still works.
+static bool     g_just_did_mret  = false;
 
 // Squashed-store hints: when the JV32 pipeline commits a store's DRAM write
 // in the 1st WB cycle but the instruction is then squashed by an interrupt in
@@ -332,6 +336,39 @@ static const char* const REG_ABI[32] = {
     "s8",   "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6"
 };
 
+static const char* csr_name_from_addr(uint32_t csr_addr) {
+    switch (csr_addr) {
+    case CSR_MSTATUS:   return "mstatus";
+    case CSR_MISA:      return "misa";
+    case CSR_MIE:       return "mie";
+    case CSR_MTVEC:     return "mtvec";
+    case CSR_MTVT:      return "mtvt";
+    case CSR_MSCRATCH:  return "mscratch";
+    case CSR_MEPC:      return "mepc";
+    case CSR_MCAUSE:    return "mcause";
+    case CSR_MTVAL:     return "mtval";
+    case CSR_MIP:       return "mip";
+    case CSR_MNXTI:     return "mnxti";
+    case CSR_MINTTHRESH:return "mintthresh";
+    case CSR_MINTSTATUS:return "mintstatus";
+    case CSR_MCYCLE:    return "mcycle";
+    case CSR_MCYCLEH:   return "mcycleh";
+    case CSR_MINSTRET:  return "minstret";
+    case CSR_MINSTRETH: return "minstreth";
+    case CSR_CYCLE:     return "cycle";
+    case CSR_CYCLEH:    return "cycleh";
+    case CSR_TIME:      return "time";
+    case CSR_TIMEH:     return "timeh";
+    case CSR_INSTRET:   return "instret";
+    case CSR_INSTRETH:  return "instreth";
+    case CSR_MVENDORID: return "mvendorid";
+    case CSR_MARCHID:   return "marchid";
+    case CSR_MIMPID:    return "mimpid";
+    case CSR_MHARTID:   return "mhartid";
+    default:            return nullptr;
+    }
+}
+
 // kv32 RTL format: INSN_COUNT 0xPC (0xINSTR) [abi_reg 0xVAL] [mem 0xADDR [0xVAL]] ; disasm
 static RiscvDisassembler disassembler;
 
@@ -340,7 +377,6 @@ static void emit_trace(uint32_t instr_pc, uint32_t raw_instr,
                        bool has_mem, uint32_t mem_addr,
                        uint32_t mem_val, bool is_store) {
     if (!trace_on) return;
-    if (rd == 0 && !has_mem) return;  // nothing to log
 
     char base[128];
     int pos = 0;
@@ -356,6 +392,19 @@ static void emit_trace(uint32_t instr_pc, uint32_t raw_instr,
         if (is_store)
             pos += snprintf(base + pos, sizeof(base) - pos,
                             " 0x%08x", mem_val);
+    }
+    uint32_t opcode = raw_instr & 0x7Fu;
+    uint32_t funct3 = (raw_instr >> 12) & 0x7u;
+    if (opcode == 0x73u && funct3 != 0) {
+        uint32_t csr_addr = raw_instr >> 20;
+        const char* csr_name = csr_name_from_addr(csr_addr);
+        if (csr_name) {
+            pos += snprintf(base + pos, sizeof(base) - pos,
+                            " csr %s", csr_name);
+        } else {
+            pos += snprintf(base + pos, sizeof(base) - pos,
+                            " csr 0x%03x", csr_addr & 0xFFFu);
+        }
     }
 
     std::string disasm = disassembler.disassemble(raw_instr, instr_pc);
@@ -478,7 +527,9 @@ static uint32_t mem_read(uint32_t addr, int size) {
             return uart_rx_fifo.empty() ? 0u : (1u << 2);
         }
         if (off == 0x08U) return uart_ie;                          // IE register
-        if (off == 0x0CU) return uart_rx_fifo.empty() ? 0u : 1u;  // IS: RX_READY bit0
+        // IS: bit1=txf_empty (always 1 in SW sim: TX is instantaneous),
+        //     bit0=rxf_not_empty (RX data available)
+        if (off == 0x0CU) return (1u << 1) | (uart_rx_fifo.empty() ? 0u : 1u);
         if (off == 0x10U) return (uint32_t)uart_rx_fifo.size();    // LEVEL[15:0]=RX count
         if (off == 0x14U) return uart_loopback;                    // CTRL: loopback_en
         if (off == UART_CAP_OFF) return 0x00010808u;               // version=1, rx=8, tx=8
@@ -788,7 +839,13 @@ static bool check_interrupts() {
     uint32_t clic_id    = 0;
     uint8_t  clic_level = 0;
     bool clic_irq_active = clic_arb(&clic_id, &clic_level);
-    bool natural_mei     = !g_hints_loaded && clic_irq_active
+    // Consume the tail-chain flag (set by mret returning from a CLIC trap).
+    // When set, allow one natural CLIC MEI check even with hints loaded so
+    // that tail-chained interrupts (which emit no ! irq hint in the RTL trace)
+    // still fire correctly.
+    bool tail_chain_allowed = g_just_did_mret;
+    g_just_did_mret = false;
+    bool natural_mei     = (!g_hints_loaded || tail_chain_allowed) && clic_irq_active
                            && clic_level > csr_mintthresh;
     bool mei_irq = g_mei_irq_pending || natural_mei;
 
@@ -1410,6 +1467,12 @@ static void step() {
                 exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
             } else if (sys_imm == 0x302) { // MRET
                 uint32_t mpie = (csr_mstatus >> 7) & 1u;
+                // When returning from a CLIC trap (MIL != 0) in hints mode,
+                // set the tail-chain flag so check_interrupts() on the next
+                // step() allows one natural CLIC MEI check (tail-chain has
+                // no ! irq hint in the RTL trace).
+                if (g_hints_loaded && csr_mintstatus != 0)
+                    g_just_did_mret = true;
                 csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
                             | (mpie ? MSTATUS_MIE : 0)
                             | MSTATUS_MPIE     // MPIE set to 1
