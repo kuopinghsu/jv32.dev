@@ -179,3 +179,105 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 | `FAST_DIV` | `0` | `1` = combinatorial divider; `0` = serial restoring divider (variable latency) |
 | `FAST_SHIFT` | `1` | `1` = barrel shifter (1 cycle); `0` = 1-bit-per-cycle serial shifter |
 | `BP_EN` | `1` | `1` = enable branch predictor; `0` = always-not-taken |
+
+## Synthesis Results — RV32EC=1
+
+> Source: `build/gate_count.rpt` (hierarchical Yosys synthesis, Nangate 45 nm OCL).
+> Reference cell: NAND2\_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
+>
+> Configuration: `RV32EC=1  RV32E_EN=1  RV32M_EN=0  JTAG_EN=0  TRACE_EN=0  AMO_EN=0`
+> `FAST_MUL=0  FAST_DIV=0  FAST_SHIFT=0  BP_EN=0`
+
+### Area Hierarchy (Gate Count)
+
+| Module | NAND2-eq | Area (µm²) |
+|---|---:|---:|
+| **jv32_soc** | **37,137** | **29,635.59** |
+| ↳ jv32_top | 27,531 | 21,969.47 |
+| &nbsp;&nbsp;↳ jv32_core | 23,833 | 19,018.73 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 5,779 | 4,611.91 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,073 | 4,048.52 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,023 | 1,614.35 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 1,636 | 1,305.79 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 308 | 246.05 |
+| &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
+| ↳ axi_clic | 5,257 | 4,195.35 |
+| ↳ axi_uart | 3,774 | 3,011.65 |
+| ↳ axi_xbar | 562 | 448.48 |
+| ↳ axi_magic | 0 | 0.00 |
+
+### Clock Gating Summary
+
+> ICG cell: `CLKGATE_X1` / `CLKGATETST_X1` (Nangate 45 nm).
+> Gated% = Gated\_FFs / Total\_FFs (FF clock driven by a CLKGATE GCK output).
+
+| Module | Total FFs | Gated FFs | Gated% |
+|---|---:|---:|---:|
+| **jv32_soc** | **2,548** | **2,234** | **87.7%** |
+| ↳ jv32_top | 1,720 | 1,477 | 85.9% |
+| &nbsp;&nbsp;↳ jv32_core | 1,372 | 1,206 | 87.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 480 | 480 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 336 | 208 | 61.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 51 | 51 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 79 | 78 | 98.7% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 0 | 0 | 0.0% |
+| &nbsp;&nbsp;↳ sram_1rw | 1 | 0 | 0.0% |
+| ↳ axi_clic | 361 | 297 | 82.3% |
+| ↳ axi_uart | 396 | 393 | 99.2% |
+| ↳ axi_xbar | 69 | 67 | 97.1% |
+| ↳ axi_magic | 0 | 0 | 0.0% |
+
+---
+
+## Synthesis Results — RV32EC=0
+
+> Source: `build/gate_count.rpt` (hierarchical Yosys synthesis, Nangate 45 nm OCL).
+> Reference cell: NAND2\_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
+>
+> Configuration: `RV32EC=0  RV32E_EN=0  RV32M_EN=1  JTAG_EN=1  TRACE_EN=1  AMO_EN=1`
+> `FAST_MUL=1  FAST_DIV=0  FAST_SHIFT=1  BP_EN=1  IFETCH_PREADVANCE=1`
+
+### Area Hierarchy (Gate Count)
+
+| Module | NAND2-eq | Area (µm²) |
+|---|---:|---:|
+| **jv32_soc** | **76,658** | **61,173.08** |
+| ↳ jv32_top | 49,253 | 39,303.89 |
+| &nbsp;&nbsp;↳ jv32_core | 45,554 | 36,351.83 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 15,265 | 12,181.47 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 12,188 | 9,726.02 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,020 | 4,005.96 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,046 | 1,632.97 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 313 | 250.04 |
+| &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
+| ↳ jtag_top | 15,837 | 12,637.66 |
+| &nbsp;&nbsp;↳ jtag_tap | 15,837 | 12,637.66 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 15,624 | 12,468.22 |
+| ↳ axi_clic | 5,281 | 4,214.24 |
+| ↳ axi_uart | 3,772 | 3,010.06 |
+| ↳ axi_xbar | 562 | 448.48 |
+| ↳ axi_magic | 0 | 0.00 |
+
+### Clock Gating Summary
+
+> ICG cell: `CLKGATE_X1` / `CLKGATETST_X1` (Nangate 45 nm).
+> Gated% = Gated\_FFs / Total\_FFs (FF clock driven by a CLKGATE GCK output).
+
+| Module | Total FFs | Gated FFs | Gated% |
+|---|---:|---:|---:|
+| **jv32_soc** | **5,498** | **4,466** | **81.2%** |
+| ↳ jv32_top | 2,788 | 2,540 | 91.1% |
+| &nbsp;&nbsp;↳ jv32_core | 2,440 | 2,269 | 93.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 403 | 402 | 99.8% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 992 | 992 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 336 | 208 | 61.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 51 | 51 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 0 | 0 | 0.0% |
+| &nbsp;&nbsp;↳ sram_1rw | 1 | 0 | 0.0% |
+| ↳ jtag_top | 1,772 | 1,061 | 59.9% |
+| &nbsp;&nbsp;↳ jtag_tap | 1,772 | 1,061 | 59.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 1,756 | 1,050 | 59.8% |
+| ↳ axi_clic | 361 | 297 | 82.3% |
+| ↳ axi_uart | 396 | 393 | 99.2% |
+| ↳ axi_xbar | 69 | 67 | 97.1% |
+| ↳ axi_magic | 0 | 0 | 0.0% |

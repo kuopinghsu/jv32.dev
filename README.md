@@ -25,6 +25,7 @@ sim/        C++ simulation utilities and disassembler support
 verif/      RISC-V arch-test integration and verification flow
 rtos/       FreeRTOS port and samples
 docs/       Datasheet and project documentation
+fpga/       Vivado FPGA flow (Kintex UltraScale+ KU5P)
 syn/        OpenRAM + OpenLane2 synthesis and physical-design flow
 ```
 
@@ -180,57 +181,69 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 | Module | NAND2 eq | Area (µm²) |
 |---|---:|---:|
-| `jv32_soc` | 41,207 | 32,882.92 |
-| ↳ `jv32_top` | 30,470 | 24,314.79 |
-| &nbsp;&nbsp;↳ `jv32_core` | 26,206 | 20,912.12 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 6,928 | 5,528.54 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,391 | 4,302.28 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,412 | 1,924.51 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 1,770 | 1,412.73 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 307 | 245.25 |
+| `jv32_soc` | 37,137 | 29,635.59 |
+| ↳ `jv32_top` | 27,531 | 21,969.47 |
+| &nbsp;&nbsp;↳ `jv32_core` | 23,833 | 19,018.73 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 5,779 | 4,611.91 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,073 | 4,048.52 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,023 | 1,614.35 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 1,636 | 1,305.79 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 308 | 246.05 |
 | &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
-| ↳ `axi_clic` | 5,713 | 4,559.24 |
-| ↳ `axi_uart` | 4,321 | 3,448.16 |
-| ↳ `axi_xbar` | 689 | 550.09 |
+| ↳ `axi_clic` | 5,257 | 4,195.35 |
+| ↳ `axi_uart` | 3,774 | 3,011.65 |
+| ↳ `axi_xbar` | 562 | 448.48 |
 | ↳ `axi_magic` | 0 | 0.00 |
-| **TOTAL** (logic, excl. SRAM macros) | **41,207** | **32,882.92** |
+| **TOTAL** (logic, excl. SRAM macros) | **37,137** | **29,635.59** |
 
-> The ~9,400 NAND2 gap between `jv32_core` (26,206) and the sum of its submodules (16,808) is pipeline logic
+> The ~9,014 NAND2 gap between `jv32_core` (23,833) and the sum of its submodules (14,819) is pipeline logic
 > instantiated directly in `jv32_core.sv`: pipeline registers (`if_ex_r`, `ex_wb_r`), PC control, forwarding
 > muxes, branch evaluation/redirect, hazard control, load/store alignment, exception detection, and debug FSM.
+
+#### Clock Gating — RV32EC=1
+
+| Module | Total FFs | Gated FFs | Gated% |
+|---|---:|---:|---:|
+| `jv32_soc` | 2,548 | 2,234 | **87.7%** |
+| ↳ `jv32_top` | 1,720 | 1,477 | 85.9% |
+| &nbsp;&nbsp;↳ `jv32_core` | 1,372 | 1,206 | 87.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 480 | 480 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 336 | 208 | 61.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 51 | 51 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 79 | 78 | 98.7% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 0 | 0 | 0.0% |
+| &nbsp;&nbsp;↳ `sram_1rw` | 1 | 0 | 0.0% |
+| ↳ `axi_clic` | 361 | 297 | 82.3% |
+| ↳ `axi_uart` | 396 | 393 | 99.2% |
+| ↳ `axi_xbar` | 69 | 67 | 97.1% |
+| ↳ `axi_magic` | 0 | 0 | 0.0% |
 
 ### RV32EC=0 (full / default configuration)
 
 `RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1, IFETCH_PREADVANCE=1`
 
 > Numbers below are from pre-P&R hierarchical synthesis (`make gate-count`).
-> The post-P&R flat-optimised count is **80,372 NAND2-eq** (OpenLane2 run, 2026-04-24).
-> The hierarchy table will be updated after re-running `make gate-count RV32EC=0`.
+> The post-P&R flat-optimised count is **80,386 NAND2-eq** (OpenLane2 run, 2026-04-26).
 
 | Module | NAND2 eq | Area (µm²) |
 |---|---:|---:|
-| `jv32_soc` | 84,635 | 67,538.46 |
-| ↳ `jv32_top` | 54,460 | 43,459.08 |
-| &nbsp;&nbsp;↳ `jv32_core` | 50,168 | 40,034.33 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 14,288 | 11,402.09 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 15,999 | 12,766.94 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,451 | 4,349.90 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,410 | 1,922.91 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 293 | 233.55 |
+| `jv32_soc` | 76,658 | 61,173.08 |
+| ↳ `jv32_top` | 49,253 | 39,303.89 |
+| &nbsp;&nbsp;↳ `jv32_core` | 45,554 | 36,351.83 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 15,265 | 12,181.47 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 12,188 | 9,726.02 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,020 | 4,005.96 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,046 | 1,632.97 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 313 | 250.04 |
 | &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
-| ↳ `jtag_top` | 17,295 | 13,801.41 |
-| &nbsp;&nbsp;↳ `jv32_dtm` | 17,088 | 13,636.22 |
-| ↳ `axi_clic` | 5,699 | 4,547.80 |
-| ↳ `axi_uart` | 4,315 | 3,443.37 |
-| ↳ `axi_xbar` | 689 | 550.09 |
+| ↳ `jtag_top` | 15,837 | 12,637.66 |
+| &nbsp;&nbsp;↳ `jtag_tap` | 15,837 | 12,637.66 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_dtm` | 15,624 | 12,468.22 |
+| ↳ `axi_clic` | 5,281 | 4,214.24 |
+| ↳ `axi_uart` | 3,772 | 3,010.06 |
+| ↳ `axi_xbar` | 562 | 448.48 |
 | ↳ `axi_magic` | 0 | 0.00 |
-| **TOTAL** (logic, excl. SRAM macros) | **84,635** | **67,538.46** |
-
-> Compared to RV32EC=1 (41,207 NAND2-eq pre-P&R hierarchical), the full configuration is ~2× larger.
-> Post-P&R flat synthesis gives 80,372 NAND2-eq for RV32EC=0 vs ~38,000 NAND2-eq for RV32EC=1 (estimated).
-> Main area contributors relative to RV32EC=1:
-> `jv32_regfile` (+7,360, 32 vs 16 GPRs), `jv32_alu` (+14,229, M+A extensions + barrel shifter),
-> `jv32_dtm` (+17,088, JTAG debug module).
+| **TOTAL** (logic, excl. SRAM macros) | **76,658** | **61,173.08** |
 
 ### Clock Gating — RV32EC=0
 
@@ -241,17 +254,24 @@ The synthesis flow applies **multi-bit hierarchical clock gating**: one ICG cell
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| `jv32_soc` | 5,494 | 4,496 | **81.8%** |
-| ↳ `jv32_regfile` | 992 | 992 | 100.0% |
-| ↳ `jv32_alu` | 403 | 402 | 99.8% |
+| `jv32_soc` | 5,498 | 4,466 | **81.2%** |
+| ↳ `jv32_top` | 2,788 | 2,540 | 91.1% |
+| &nbsp;&nbsp;↳ `jv32_core` | 2,440 | 2,269 | 93.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 992 | 992 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 403 | 402 | 99.8% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 51 | 51 | 100.0% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 336 | 208 | 61.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 0 | 0 | 0.0% |
+| &nbsp;&nbsp;↳ `sram_1rw` | 1 | 0 | 0.0% |
+| ↳ `jtag_top` | 1,772 | 1,061 | 59.9% |
+| &nbsp;&nbsp;↳ `jtag_tap` | 1,772 | 1,061 | 59.9% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_dtm` | 1,756 | 1,050 | 59.8% |
+| ↳ `axi_clic` | 361 | 297 | 82.3% |
 | ↳ `axi_uart` | 396 | 393 | 99.2% |
 | ↳ `axi_xbar` | 69 | 67 | 97.1% |
-| ↳ `jv32_rvc` | 52 | 51 | 98.1% |
-| ↳ `axi_clic` | 361 | 297 | 82.3% |
-| ↳ `jv32_csr` | 336 | 208 | 61.9% |
-| ↳ `jv32_dtm` | 1,751 | 1,048 | 59.9% |
+| ↳ `axi_magic` | 0 | 0 | 0.0% |
 
-The overall 81.8% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
+The overall 81.2% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
 
 #### Why `jv32_csr` is lower (~62%)
 
@@ -281,14 +301,78 @@ The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`). 
 
 These ~327 bits toggle continuously during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.
 
-> **RV32EC=1 note:** With `JTAG_EN=0` the `jv32_dtm` block is removed entirely, eliminating all CDC synchronizer FFs and raising the overall gating rate above 90%.  Clock gating figures for RV32EC=1 will be added after re-running `make gate-count` with that configuration.
-
 ## Documentation
 
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`
 - Generated PDF: `docs/jv32_soc_datasheet.pdf`
-- ASIC flow notes: `syn/README.md`
+- FPGA implementation notes: [fpga/README.md](fpga/README.md)
+- ASIC flow notes: [syn/README.md](syn/README.md)
+- Full P&R results report: [syn/REPORT.md](syn/REPORT.md)
 
-## Notes
+## Synthesis & P&R Results (RV32EC=0)
 
-J<sub>V</sub>32 is geared toward **educational use, verification, and implementation exploration**. The repository is organized so the same RTL can be exercised in software simulation, RTL regression, and downstream synthesis flows.
+**PDK:** FreePDK45 / Nangate 45 nm Open Cell Library — **Flow:** OpenLane2 (Classic) — **Date:** 2026-04-26
+
+Configuration: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `TRACE_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz clock, 16 KB IRAM + 16 KB DRAM.
+
+> For the full hierarchy, timing, power, and DRC detail see [syn/REPORT.md](syn/REPORT.md).
+> For gate counts and clock gating breakdown see [syn/README.md](syn/README.md).
+
+### Floorplan
+
+| Metric | Value |
+|---|---|
+| Die area | 4.500 mm² |
+| Core area | 4.407 mm² |
+| Standard cell area | 64,148 µm² |
+| Macro area (SRAM) | 2,183,510 µm² |
+| Std cell utilization | 2.89% |
+
+### Logic area (pre-P&R hierarchical synthesis)
+
+| Metric | Value |
+|---|---|
+| **jv32_soc** total | **76,658 NAND2-eq** (61,173 µm²) |
+| ↳ jv32_core (logic only) | 45,554 NAND2-eq |
+| ↳ jtag_top | 15,837 NAND2-eq |
+| Post-P&R flat total | **80,386 NAND2-eq** |
+
+### Timing (post-route STA, tt_025C_1v10)
+
+| Check | WNS | TNS | |
+|---|---|---|---|
+| Setup | 0.000 ns | 0.000 ns | ✅ MET |
+| Hold | 0.000 ns | 0.000 ns | ✅ MET |
+
+### Power (tt_025C_1v10, 80 MHz)
+
+| Domain | Total |
+|---|---|
+| Sequential | 4.08 mW |
+| Combinational | 6.11 mW |
+| Clock | 1.21 mW |
+| Macro (SRAM) | 9.22 mW |
+| **Total** | **20.61 mW** |
+
+### DRC
+
+Post-route DRC: **0 errors** ✅
+
+## FPGA (Kintex UltraScale+ KU5P)
+
+**Part:** `xcku5p-ffvb676-2-i` — **Tool:** Vivado ML Standard (free licence) — **Clock:** 50 MHz
+
+Default debug interface: **cJTAG / 2-wire OScan1** (`USE_CJTAG=1`, overridable to 4-wire JTAG with `USE_CJTAG=0`).
+
+```bash
+cd fpga/
+make impl              # cJTAG bitstream (default)
+make impl USE_CJTAG=0  # 4-wire JTAG bitstream
+```
+
+See [fpga/README.md](fpga/README.md) for pin assignments, clock architecture, block design, and OpenOCD connection instructions.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+

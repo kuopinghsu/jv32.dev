@@ -41,19 +41,18 @@ package jv32_pkg;
 `ifndef SYNTHESIS
     function automatic string dbg_grp_name(int unsigned idx);
         case (idx)
-            `DBG_GRP_FETCH:  return "FETCH ";
-            `DBG_GRP_PIPE:   return "PIPE  ";
-            `DBG_GRP_EX:     return "EX    ";
-            `DBG_GRP_MEM:    return "MEM   ";
-            `DBG_GRP_CSR:    return "CSR   ";
-            `DBG_GRP_IRQ:    return "IRQ   ";
-            `DBG_GRP_UART:   return "UART  ";
-            `DBG_GRP_CLIC:   return "CLIC  ";
-            `DBG_GRP_MAGIC:  return "MAGIC ";
-            `DBG_GRP_JTAG:   return "JTAG  ";
-            `DBG_GRP_DTM:    return "DTM   ";
-            `DBG_GRP_ICACHE: return "ICACHE";
-            default:         return "???   ";
+            `DBG_GRP_FETCH: return "FETCH ";
+            `DBG_GRP_PIPE:  return "PIPE  ";
+            `DBG_GRP_EX:    return "EX    ";
+            `DBG_GRP_MEM:   return "MEM   ";
+            `DBG_GRP_CSR:   return "CSR   ";
+            `DBG_GRP_IRQ:   return "IRQ   ";
+            `DBG_GRP_UART:  return "UART  ";
+            `DBG_GRP_CLIC:  return "CLIC  ";
+            `DBG_GRP_MAGIC: return "MAGIC ";
+            `DBG_GRP_JTAG:  return "JTAG  ";
+            `DBG_GRP_DTM:   return "DTM   ";
+            default:        return "???   ";
         endcase
     endfunction
 `endif

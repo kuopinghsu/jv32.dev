@@ -85,8 +85,8 @@ module cjtag_bridge (
     // =========================================================================
     // Input Synchronizers (2-stage for metastability)
     // =========================================================================
-    (* ASYNC_REG = "TRUE" *) logic [1:0] tckc_sync;
-    (* ASYNC_REG = "TRUE" *) logic [1:0] tmsc_sync;
+    (* ASYNC_REG = "TRUE" *)logic   [ 1:0] tckc_sync;
+    (* ASYNC_REG = "TRUE" *)logic   [ 1:0] tmsc_sync;
 
     // Synchronized and edge-detected signals
     logic          tckc_s;        // Synchronized TCKC
@@ -500,7 +500,10 @@ module cjtag_bridge (
     // so Vivado can create a primary clock on a proper primitive output (BUFG/O)
     // rather than on an FDRE/Q pin.  A behavioral assign is used in simulation.
 `ifdef SYNTHESIS
-    BUFG u_bufg_tck (.I(tck_int), .O(tck_o));
+    BUFG u_bufg_tck (
+        .I(tck_int),
+        .O(tck_o)
+    );
 `else
     assign tck_o = tck_int;
 `endif

@@ -1,8 +1,8 @@
 = JV32 RV32IMAC System-on-Chip Datasheet
 :doctype: book
 :author: JV32 Development Team
-:revnumber: 1.1
-:revdate: 2026-04-08
+:revnumber: 1.2
+:revdate: 2026-04-26
 :toc: left
 :toclevels: 4
 :sectnums:
@@ -18,7 +18,7 @@ image::jv32-logo.svg[JV32 Logo,align=center,width=240]
 [abstract]
 --
 
-This document provides comprehensive technical specifications for the JV32 System-on-Chip (SoC), a 32-bit RISC-V processor platform targeting embedded simulation and FPGA prototyping. The SoC integrates a 3-stage single-issue RV32IMAC pipeline core with 64 KB tightly-coupled instruction RAM (IRAM) and 64 KB tightly-coupled data RAM (DRAM), a merged AXI4-Lite master for out-of-TCM accesses, an AXI slave port for debug access to TCM, and three peripherals: UART (serial I/O), CLIC (interrupt controller with CLINT-compatible timer), and a simulation Magic device. The design is optimised for straightforward simulation and FPGA implementation.
+This document provides comprehensive technical specifications for the JV32 System-on-Chip (SoC), a 32-bit RISC-V processor platform targeting embedded simulation and FPGA prototyping. The SoC integrates a 3-stage single-issue RV32IMAC pipeline core with 128 KB tightly-coupled instruction RAM (IRAM) and 128 KB tightly-coupled data RAM (DRAM), a merged AXI4-Lite master for out-of-TCM accesses, an AXI slave port for debug access to TCM, and three peripherals: UART (serial I/O), CLIC (interrupt controller with CLINT-compatible timer), and a simulation Magic device. The design is optimised for straightforward simulation and FPGA implementation.
 --
 
 <<<
@@ -30,10 +30,10 @@ This document provides comprehensive technical specifications for the JV32 Syste
 The JV32 SoC is a complete minimal embedded processor system implementing the RISC-V RV32IMAC instruction set with Machine mode (M-mode) support. The system integrates:
 
 * **RV32IMAC Processor Core** (`jv32_core`): Single-issue 3-stage pipeline (IF → EX → WB) with RVC expander, configurable fast multiply/divide/shift, branch predictor, and AMO state machine
-* **Tightly Coupled Memories (TCM)**: 64 KB IRAM at `0x8000_0000` and 64 KB DRAM at `0xC000_0000`, instantiated inside `jv32_top` as byte-bank SRAM primitives with 1-cycle read latency
+* **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0xC000_0000`, instantiated inside `jv32_top` as byte-bank SRAM primitives with 1-cycle read latency
 * **Merged AXI4-Lite Master**: Out-of-TCM accesses from both I-fetch and D-bus share one master port; D-bus has priority over I-fetch
 * **AXI4-Lite Slave**: External agents (debug master, testbench DPI) can read/write TCM; core has absolute priority
-* **Peripheral Subsystem** (3-slave AXI crossbar): UART, CLIC, Magic device
+* **Peripheral Subsystem** (4-slave AXI crossbar): UART, CLIC, Magic device, external catch-all
 * **Interrupt System**: CLIC with CLINT-compatible 64-bit timer (`mtime`/`mtimecmp`), software interrupt (`msip`), and 16 independently-prioritised external interrupt lines
 
 === Key Features
@@ -49,10 +49,10 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; BTFNT static branch predictor (`BP_EN=1`): 0-cycle penalty on correct prediction, 1-cycle penalty on misprediction
 
 |Instruction Memory
-|64 KB IRAM (TCM, 1-cycle access); out-of-TCM I-fetch via shared AXI4-Lite master
+|128 KB IRAM (TCM, 1-cycle access); out-of-TCM I-fetch via shared AXI4-Lite master
 
 |Data Memory
-|64 KB DRAM (TCM, 1-cycle access); IRAM is also D-accessible (IRAM address range); out-of-TCM via shared AXI4-Lite master
+|128 KB DRAM (TCM, 1-cycle access); IRAM is also D-accessible (IRAM address range); out-of-TCM via shared AXI4-Lite master
 
 |Privilege Modes
 |Machine (M-mode) only
@@ -67,7 +67,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |`0x8000_0000` (IRAM base, parameterisable)
 
 |TCM Sizes
-|64 KB IRAM, 64 KB DRAM (each independently parameterisable, power-of-2)
+|128 KB IRAM, 128 KB DRAM (each independently parameterisable, power-of-2)
 
 |Peripherals
 |UART (8N1, 16-deep FIFOs), CLIC/CLINT (64-bit timer, 16 external IRQs), Magic (simulation I/O)
@@ -113,12 +113,12 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |  |                                                                   | |
  |  |  +------------+  I fetch  +===========+                           | |
  |  |  |            +---------->| IRAM TCM  |<-+ D access (IRAM range)  | |
- |  |  | jv32_core  |           | (64 KB)   |  |                        | |
+ |  |  | jv32_core  |           | (128 KB)  |  |                        | |
  |  |  |            |           +===========+  |                        | |
  |  |  |  3 stage   +--D access-----------+----+                        | |
  |  |  |  pipeline  |                     |                             | |
  |  |  |            |                     +-->+===========+             | |
- |  |  |            |                         | DRAM TCM  | (64 KB)     | |
+ |  |  |            |                         | DRAM TCM  | (128 KB)    | |
  |  |  |            |  out of TCM miss        +===========+             | |
  |  |  |            +----------I fetch------->+----------+              | |
  |  |  |            +----------D access------>| AXI Mstr |              | |
@@ -129,7 +129,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |                                                  |  m_axi              |
  |                                         +--------v---------+           |
  |                                         |   AXI4 Lite      |           |
- |                                         |   Crossbar (1:3) |           |
+ |                                         |   Crossbar (1:4) |           |
  |                                         +--+---+---+-------+           |
  |                                            |   |   |                   |
  |                 Slave 0: UART  0x2001_0000-+   |   |                   |
@@ -137,6 +137,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |                   | TX/RX FIFOs (16 deep)    | |   |                   |
  |                   | 8N1, prog baud rate      |---->uart_tx             |
  |                   | irq (rx/tx FIFO level)   |<----uart_rx             |
+ |                   | uart_irq (IRQ output)    +-v   |                   |
  |                   +--------------------------+ |   |                   |
  |                                                |   |                   |
  |                 Slave 1: CLIC  0x0200_0000-----+   |                   |
@@ -145,15 +146,16 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |                   | msip (software IRQ)      +---->timer_irq           |
  |                   | 16 ext IRQ lines         +---->software_irq        |
  |                   +--------------------------+---->external_irq        |
- |                     ^                              |                   |
- |                     |                              |                   |
+ |                     ^  ^                           |                   |
+ |                     |  +-- uart_irq (ORed [0])     |                   |
  |                     +----- ext_irq_i[15:0]         |                   |
  |                 Slave 2: Magic  0x4000_0000--------+                   |
  |                   +--------------------------+                         |
  |                   | Console stdout write     |                         |
  |                   | Simulation exit control  |                         |
- |                   | 512 B NCM (non cacheable)|                         |
  |                   +--------------------------+                         |
+ |                 Slave 3: External (catch-all)                          |
+ |                   ext_axi_* ---- forwarded to SoC top-level ports      |
  |                                                                        |
  +------------------------------------------------------------------------+
     External Pins:
@@ -188,8 +190,8 @@ The core supports:
 
 Both TCM regions are instantiated inside `jv32_top` as banks of `sram_1rw` byte-wide SRAM primitives:
 
-* **IRAM**: 4 byte-banks (`gen_iram_byte[0..3].u_sram`), base `BOOT_ADDR` (default `0x8000_0000`), size `IRAM_SIZE` (default 64 KB)
-* **DRAM**: 4 byte-banks (`gen_dram_byte[0..3].u_sram`), base `DRAM_BASE` (default `0xC000_0000`), size `DRAM_SIZE` (default 64 KB)
+* **IRAM**: 4 byte-banks (`gen_iram_byte[0..3].u_sram`), base `BOOT_ADDR` (default `0x8000_0000`), size `IRAM_SIZE` (default 128 KB)
+* **DRAM**: 4 byte-banks (`gen_dram_byte[0..3].u_sram`), base `DRAM_BASE` (default `0xC000_0000`), size `DRAM_SIZE` (default 128 KB)
 * **1-cycle read latency**: Address presented at cycle N returns data at cycle N+1
 * **Contention resolution**: When I-fetch and D-access both target IRAM, D-access wins; I-fetch stalls 1 cycle
 * **SRAM arbitration priority**: Core-D > Core-I > AXI Slave
@@ -212,7 +214,7 @@ External agents (debug master, pre-simulation ELF loader via DPI) access TCM thr
 
 ==== Peripheral AXI Crossbar
 
-A 1-to-3 AXI4-Lite crossbar routes out-of-TCM transactions from `jv32_top`'s merged master to three peripheral slaves. Address decode uses base/mask comparison (see <<_memory_map>>).
+A 1-to-4 AXI4-Lite crossbar routes out-of-TCM transactions from `jv32_top`'s merged master to three named peripheral slaves (UART, CLIC, Magic) plus a fourth external catch-all slave. Address decode uses base/mask comparison (see <<_memory_map>>).
 
 <<<
 
@@ -232,24 +234,24 @@ The JV32 SoC implements a 32-bit address space (4 GB) with the following allocat
 |2 MB
 |RISC-V CLIC / CLINT-compatible interrupt controller; only first 64 KB used
 
-|`0x2001_0000` – `0x2001_FFFF`
+|`0x2001_0000` – `0x2001_00FF`
 |UART
-|64 KB
-|Serial communication peripheral (8N1, 16-deep FIFOs)
+|256 B
+|Serial communication peripheral (8N1, 16-deep FIFOs); 7 registers used (0x00–0x18); 0x1C–0xFF return SLVERR
 
 |`0x4000_0000` – `0x4FFF_FFFF`
 |Magic Device
 |256 MB (aperture)
-|Simulation console and exit control; only 0x2008 bytes used
+|Simulation console and exit control; only 8 bytes used (CONSOLE at 0x0000, EXIT at 0x0004)
 
-|`0x8000_0000` – `0x8000_FFFF`
+|`0x8000_0000` – `0x8001_FFFF`
 |IRAM (TCM)
-|64 KB
+|128 KB
 |Tightly-coupled instruction + data RAM (inside `jv32_top`)
 
-|`0xC000_0000` – `0xC000_FFFF`
+|`0xC000_0000` – `0xC001_FFFF`
 |DRAM (TCM)
-|64 KB
+|128 KB
 |Tightly-coupled data RAM (inside `jv32_top`)
 |===
 
@@ -268,11 +270,11 @@ TCM is decoded combinatorially using power-of-2 masking:
 
 |IRAM
 |`(addr & ~(IRAM_SIZE-1)) == BOOT_ADDR`
-|`BOOT_ADDR=0x8000_0000`, `IRAM_SIZE=65536`
+|`BOOT_ADDR=0x8000_0000`, `IRAM_SIZE=131072`
 
 |DRAM
 |`(addr & ~(DRAM_SIZE-1)) == DRAM_BASE`
-|`DRAM_BASE=0xC000_0000`, `DRAM_SIZE=65536`
+|`DRAM_BASE=0xC000_0000`, `DRAM_SIZE=131072`
 |===
 
 Accesses that do not match either TCM region are forwarded to the merged AXI master and routed to the peripheral crossbar.
@@ -290,7 +292,7 @@ The AXI crossbar (`axi_xbar`) decodes using base/mask:
 |UART
 |`0x2001_0000`
 |`0xFFFF_FF00`
-|256-byte aperture; only 7 registers used
+|256-byte aperture; 7 registers (DATA, STATUS, IE, IS, LEVEL, CTRL, CAPABILITY at 0x00–0x18)
 
 |1
 |CLIC
@@ -303,6 +305,12 @@ The AXI crossbar (`axi_xbar`) decodes using base/mask:
 |`0x4000_0000`
 |`0xF000_0000`
 |256 MB aperture; only 0x1200 bytes used
+
+|3
+|External catch-all
+|`0x0000_0000`
+|`0x0000_0000`
+|Matches all addresses not decoded by slaves 0–2; forwarded to `ext_axi_*` SoC ports; returns DECERR if those ports are unconnected
 |===
 
 Unmapped addresses return AXI `DECERR` on reads and `DECERR` on writes.
@@ -716,13 +724,13 @@ Both IRAM and DRAM are physically located inside `jv32_top` as arrays of four by
 |`BOOT_ADDR = 32'h8000_0000`
 
 |IRAM size
-|`IRAM_SIZE = 65536` bytes (64 KB); power-of-2
+|`IRAM_SIZE = 131072` bytes (128 KB); power-of-2
 
 |DRAM base address
 |`DRAM_BASE = 32'hC000_0000`
 
 |DRAM size
-|`DRAM_SIZE = 65536` bytes (64 KB); power-of-2
+|`DRAM_SIZE = 131072` bytes (128 KB); power-of-2
 
 |Read latency
 |1 cycle (registered output: addr at cycle N → data at cycle N+1)
@@ -826,7 +834,7 @@ The UART peripheral provides serial communication with configurable baud rate an
 |`0x2001_0000`
 
 |Aperture
-|64 KB (only first 0x18 bytes used; accesses beyond 0x18 return SLVERR)
+|256 B (`0x2001_0000`–`0x2001_00FF`); only first 0x18 bytes used; accesses beyond 0x18 return SLVERR
 
 |Data Format
 |8 bits, no parity, 1 stop bit (8N1)
@@ -860,10 +868,12 @@ The UART peripheral provides serial communication with configurable baud rate an
 |0x04
 |STATUS
 |R/O
-|**[0]** `tx_full` — TX FIFO full (cannot write) +
-**[1]** `tx_full` (duplicate flag; same as bit[0]) +
+|**[0]** `tx_busy` — TX FIFO full / cannot accept data (same signal as `tx_full`) +
+**[1]** `tx_full` — TX FIFO full flag +
 **[2]** `rx_not_empty` — RX FIFO has data +
 **[3]** `rx_full` — RX FIFO full (overrun possible)
+
+NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as a TX-busy / write-inhibit flag, [1] as the canonical full flag.
 
 |0x08
 |IE (Interrupt Enable)
@@ -887,6 +897,13 @@ The UART peripheral provides serial communication with configurable baud rate an
 |CTRL
 |R/W
 |**[0]** `loopback_en` — internal TX→RX loopback (for testing)
+
+|0x18
+|CAPABILITY
+|R/O
+|**[7:0]** RX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
+**[15:8]** TX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
+**[31:16]** UART version (`0x0001`); combined: `{16'h0001, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)}`
 |===
 
 NOTE: Interrupt asserts when `(IE & IS) != 0`. There is no explicit interrupt-clear register; the interrupt de-asserts automatically when the FIFO condition clears (e.g. RX FIFO drained, TX FIFO refilled).
@@ -1030,17 +1047,19 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |CLICINT[n] (n=0..15)
 |R/W
 |Per-interrupt control word (32-bit): +
-**[0]** `ip` (read-only) — interrupt pending; reflects `ext_irq_i[n]` +
+**[0]** `ip` (read-only) — interrupt pending; reflects `ext_irq_i[n]` (ORed with `uart_irq` for n=0) +
 **[1]** `ie` — interrupt enable (1=enabled) +
-**[15:8]** `attr` — interrupt attributes (edge/level, polarity) +
-**[23:16]** `ctl` — interrupt priority/level (8-bit; higher = more urgent)
+**[7:2]** reserved — read as 0, writes ignored +
+**[15:8]** reserved — read as 0, writes ignored (CLIC `attr` field **not implemented** in this RTL) +
+**[23:16]** `ctl` — interrupt priority/level (8-bit; higher value = more urgent; used as both level and priority) +
+**[31:24]** reserved — read as 0
 |===
 
 NOTE: MSIP, MTIME, and MTIMECMP offsets match the standard RISC-V CLINT specification for single-hart systems (compatible with `kv_clint_*` SDK functions).
 
 ==== Timer Operation
 
-The 64-bit `mtime` counter increments by 1 every system clock cycle. The timer interrupt fires when `mtime >= mtimecmp` (unsigned 64-bit comparison). Software clears the timer interrupt by writing a new, larger value to `mtimecmp`.
+The 64-bit `mtime` counter increments by 1 every system clock cycle. The timer interrupt fires when `mtime >= mtimecmp` (unsigned 64-bit comparison), **unless `mtimecmp` equals its reset sentinel value `0xFFFF_FFFF_FFFF_FFFF`** (startup guard — prevents a spurious interrupt before software programs a compare value). Software clears the timer interrupt by writing a new, larger value to `mtimecmp`.
 
 [source,c]
 ----
@@ -1063,7 +1082,12 @@ Write `MSIP[0] = 1` to assert machine software interrupt immediately, `0` to cle
 
 Each `ext_irq_i[n]` input is gateable via `CLICINT[n].ie`. When any enabled and pending external interrupt has `ctl` (priority level) greater than the current `mintthresh` CSR value, `clic_irq_o` is asserted to the core as an M-mode external interrupt.
 
-The CLIC asserts `clic_id_o[4:0]` with the index of the highest-priority pending enabled interrupt. The CPU uses this to compute the handler address as `mtvt + 4*clic_id` (where `mtvt` is programmed to a 4-byte-pointer table). This happens automatically on interrupt entry and on hardware tail-chain at `mret`; software can also perform the same lookup by reading `mnxti`.
+The CLIC asserts `clic_id_o[4:0]` with the index of the highest-priority pending enabled interrupt (highest `ctl` value wins). Both `clic_level_o[7:0]` and `clic_prio_o[7:0]` are driven with the same value — `clicint_ctl[winner]` — since this implementation does not differentiate level from priority. The CPU uses this to compute the handler address as `mtvt + 4*clic_id` (where `mtvt` is programmed to a 4-byte-pointer table). This happens automatically on interrupt entry and on hardware tail-chain at `mret`; software can also perform the same lookup by reading `mnxti`.
+
+[NOTE]
+====
+**UART IRQ routing**: the UART `irq` output (asserted when `(IE & IS) != 0`) is OR'd into `ext_irq_i[0]` inside `jv32_soc` before being presented to the CLIC. The effective `CLICINT[0].ip` thus reflects `ext_irq_i[0] | uart_irq`. Software must enable `CLICINT[0].ie` and configure `CLICINT[0].ctl` to receive UART interrupts. The external `ext_irq_i[0]` SoC pin is still available and is ORed with the UART interrupt.
+====
 
 ---
 
@@ -1071,7 +1095,7 @@ The CLIC asserts `clic_id_o[4:0]` with the index of the highest-priority pending
 
 ==== Overview
 
-The Magic Device provides simulation console I/O, simulation exit control, and a non-cacheable memory (NCM) window for bypass testing.
+The Magic Device provides simulation console I/O and simulation exit control.
 
 WARNING: The Magic Device is for simulation only. It must not be synthesised for FPGA/ASIC production.
 
@@ -1087,10 +1111,7 @@ WARNING: The Magic Device is for simulation only. It must not be synthesised for
 |Offset `0x0000`: write byte (bits[7:0]) to host `stdout`
 
 |Exit Control
-|Offset `0x0004`: write to terminate simulation. Value 1 = PASS (exit 0); value N ≠ 1 = FAIL (exit N via DPI `sim_request_exit`)
-
-|NCM Region
-|Offsets `0x1000`–`0x11FF`: 128 × 32-bit words (512 B) non-cacheable memory for uncached access testing
+|Offset `0x0004`: HTIF-encoded exit. Write `(exit_code << 1) \| 1` to exit with the given code; `1` = pass (exit code 0). The RTL calls `sim_request_exit(value >> 1)`. Writing `0` is ignored.
 |===
 
 ==== Register Map
@@ -1108,17 +1129,12 @@ WARNING: The Magic Device is for simulation only. It must not be synthesised for
 |0x0004
 |EXIT
 |W/O
-|Write to terminate simulation. `1` = success (exit 0). Any other value N = failure (exit N). Uses DPI-C `sim_request_exit(N)`.
-
-|0x1000–0x11FF
-|NCM[0..127]
-|R/W
-|128 × 32-bit non-cacheable memory. Indexed by `addr[8:2]`. Byte strobes on writes apply to the full 32-bit word (no partial-word merge). Useful for testing non-cacheable I-fetch and D-access paths.
+|HTIF-encoded exit control: `sim_request_exit(value >> 1)` is called when any non-zero value is written. Write `1` = pass (exit code 0); write `(code << 1) \| 1` = fail with `code`. Writing `0` has no effect.
 |===
 
 ==== AXI Response Behaviour
 
-`axi_magic` returns `OKAY` for decoded regions (`CONSOLE`, `EXIT`, NCM window). All other addresses within the Magic device AXI aperture return `SLVERR`.
+`axi_magic` returns `OKAY` for `CONSOLE` and `EXIT` addresses. All other addresses within the Magic device AXI aperture return `SLVERR`.
 
 ==== Usage Example
 
@@ -1294,27 +1310,230 @@ The merged AXI master is implemented as a state machine with the following state
 
 === Clock and Reset
 
+==== Clock Domains
+
+The SoC has two independent clock domains.
+
+[cols="1,1,1,3"]
+.Clock Domain Summary
+|===
+|Domain |Source |Nominal Frequency |Clocks
+
+|System (`clk`)
+|External pin
+|100 MHz (parameterisable via `CLK_FREQ`)
+|`jv32_core`, TCM SRAM, AXI crossbar, UART, CLIC, Magic, debug system clock path
+
+|TAP (`tck` / `tap_tck`)
+|External pin (`USE_CJTAG=0`) or internally generated BUFG (`USE_CJTAG=1`)
+|≤ 10 MHz (`USE_CJTAG=0`), ≤ f~sys~/6 (`USE_CJTAG=1`)
+|`jtag_tap`, `jv32_dtm` TAP state machine
+|===
+
+The two domains are **fully asynchronous**.  All signals crossing the boundary
+pass through two-stage synchroniser chains in `jv32_dtm`
+(see `ASYNC_REG`-attributed registers in the RTL).
+
+==== System Clock (`clk`)
+
+The system clock drives the processor pipeline, TCM, peripherals, and the
+system-clock half of the debug transport module.
+
 [cols="1,1,3"]
-.Clock and Reset Specifications
+.System Clock Specifications
 |===
 |Parameter |Value |Description
 
+|Pin
 |`clk`
-|Input
-|System clock (100 MHz nominal)
+|Single-ended clock input
 
-|`CLK_FREQ`
-|`100_000_000`
-|Default clock frequency parameter (Hz); affects UART baud divisor
+|Nominal frequency
+|100 MHz (default)
+|Parameterisable via `CLK_FREQ`; affects UART baud divisor computation
+
+|Minimum frequency
+|No lower limit specified
+|Must satisfy `CLK_FREQ / BAUD_RATE ≥ 4` for correct UART operation
+
+|Maximum frequency
+|Technology-dependent
+|FPGA (KU5P): 50 MHz demonstrated; ASIC (FreePDK45): 80 MHz post-PnR sign-off
+|===
+
+==== TAP Clock — `USE_CJTAG=0` (4-wire JTAG)
+
+In 4-wire JTAG mode the TAP clock is the external `jtag_pin0_tck_i` pin,
+driven directly by the debug probe.
+
+[cols="1,1,3"]
+.4-wire JTAG TAP Clock Specifications
+|===
+|Parameter |Value |Description
+
+|Source
+|`jtag_pin0_tck_i` (external pin)
+|TCK driven by the JTAG probe; asynchronous to `clk`
+
+|Maximum frequency
+|f~sys~ / 2 (hard limit), f~sys~ / 4 recommended
+|Must be slow enough for the two-stage synchronisers in `jv32_dtm` to resolve metastability; ≤ 10 MHz typical for the FPGA build
+
+|Relationship to `clk`
+|Fully asynchronous
+|`set_clock_groups -asynchronous` between `jtag_tck` and the system clock domain
+
+|Constraint file (FPGA)
+|`fpga/scripts/constraints.xdc` (primary clock), `fpga/scripts/constraints_jtag.xdc` (I/O delays)
+|TDI: `set_input_delay -clock jtag_tck`; TDO: `set_output_delay -clock jtag_tck -clock_fall` (negedge launch)
+|===
+
+==== TAP Clock — `USE_CJTAG=1` (2-wire cJTAG)
+
+In 2-wire cJTAG mode the external `jtag_pin0_tck_i` pin carries the raw TCKC
+signal.  The `cjtag_bridge` module samples TCKC using the system clock and
+regenerates an internal TAP clock (`tck_int`) as a registered pulse, which
+is then buffered through a `BUFG` (`u_bufg_tck`) to become `tck_o`.
+
+[cols="1,1,3"]
+.2-wire cJTAG TAP Clock Specifications (`USE_CJTAG=1`)
+|===
+|Parameter |Value |Description
+
+|TCKC source
+|`jtag_pin0_tck_i` (external pin)
+|2-wire cJTAG clock from probe; asynchronous to `clk`
+
+|TAP clock source (`tck_o`)
+|`cjtag_bridge` BUFG output (`u_bufg_tck/O`)
+|`tck_int` register (clocked by `clk`) → BUFG; the TAP clock is **derived from the system clock**
+
+|Maximum TCKC frequency
+|f~sys~ / 6
+|`cjtag_bridge` requires ≥ 3 system clock cycles per TCKC half-period for two-stage sync + edge detection; at 100 MHz system clock, TCKC ≤ 16.7 MHz; at 50 MHz (FPGA), TCKC ≤ 8.3 MHz
+
+|Relationship to `clk`
+|Downstream of `clk` (generated by `clk`-clocked flip-flop)
+|`set_clock_groups -physically_exclusive` suppresses TIMING-3 (AR#63774); `set_clock_groups -asynchronous` separates the domains for STA
+
+|Constraint file (FPGA)
+|`fpga/scripts/constraints_cjtag.xdc` (implementation-only)
+|`create_clock` targets the `BUFG/O` pin of `u_bufg_tck`, not the external TCKC pin
+
+|Input synchronisers in bridge
+|2-stage (`ASYNC_REG = "TRUE"`)
+|TCKC and TMSC are both sampled through 2-stage synchronisers before any combinational or registered logic uses them
+|===
+
+[NOTE]
+====
+In simulation the `BUFG` macro is replaced by a plain `assign tck_o = tck_int`
+(`\`ifdef SYNTHESIS`).  The TAP clock is therefore the combinational value of
+`tck_int` in simulation and the BUFG-buffered version in synthesis.
+====
+
+==== Reset Architecture
+
+The SoC implements an **asynchronous-assert / synchronous-deassert** reset
+pattern.  Two independent sources can assert reset: the external `rst_n` pin
+and the debug non-debug-module reset (`dbg_ndmreset`) asserted by the RISC-V
+Debug Module via JTAG.
+
+===== Reset signal flow
+
+[source,systemverilog]
+----
+// jv32_soc.sv
+assign rst_n_pre = rst_n & ~dbg_ndmreset;   // (1) OR of both reset sources
+
+always_ff @(posedge clk or negedge rst_n_pre) begin
+    if (!rst_n_pre) begin
+        rst_sync_ff1 <= 1'b0;               // (2) async assert: both FFs cleared immediately
+        rst_sync_ff2 <= 1'b0;
+    end else begin
+        rst_sync_ff1 <= 1'b1;               // (3) synchronous deassert: propagates over 2 clk cycles
+        rst_sync_ff2 <= rst_sync_ff1;
+    end
+end
+
+assign soc_rst_n = rst_sync_ff2;            // (4) clean synchronised reset to all SoC logic
+----
+
+.Reset de-assertion timing (2-cycle synchroniser)
+....
+ rst_n_pre  _____|‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+ clk        __|‾|_|‾|_|‾|_|‾|_|‾|_|‾|_
+ rst_sync_ff1  0   0   1   1   1   1
+ rst_sync_ff2  0   0   0   1   1   1
+ soc_rst_n  ______________|‾‾‾‾‾‾‾‾‾‾‾
+....
+
+===== Reset source behaviour
+
+[cols="1,1,3"]
+.Reset Sources
+|===
+|Source |Assertion |Description
 
 |`rst_n`
-|Active-low asynchronous
-|Must be asserted (low) for ≥ 2 clock cycles before release
+|Asynchronous (active-low)
+|External system reset pin; asserted immediately by hardware; de-asserted synchronously through the 2-FF chain
 
-|Reset recovery
-|2 cycles
-|Pipeline initialises within 2 cycles of `rst_n` deassertion
+|`dbg_ndmreset`
+|Asynchronous (active-high) from `jv32_dtm`
+|Non-debug-module reset issued over JTAG (`dmcontrol.ndmreset`); resets the SoC while the debug module itself remains active; `rst_n_pre = rst_n & ~dbg_ndmreset`
+
+|`dbg_hartreset`
+|Synchronous, core only
+|Hart reset signal from `jv32_dtm`; resets the `jv32_core` pipeline registers only, without affecting peripherals or the debug infrastructure
 |===
+
+===== Reset domain coverage
+
+`soc_rst_n` (the synchronised output of the 2-FF chain) is distributed to:
+
+* `jv32_top` — processor pipeline, TCM SRAM control registers, AXI master/slave
+* `axi_clic` — CLIC/CLINT registers (`mtime`, `mtimecmp`, `msip`, interrupt pending)
+* `axi_uart` — UART TX/RX FIFOs and baud rate generator
+* `axi_xbar` — AXI crossbar state
+
+The JTAG TAP (`jtag_tap`) and `jv32_dtm` are reset by `rst_n` **directly** (not
+through the synchroniser), so debug infrastructure is available as soon as the
+external reset is released, independent of the 2-cycle delay on `soc_rst_n`.
+`jtag_ntrst_i` provides an additional TAP-only reset.
+
+===== Reset timing requirements
+
+[cols="2,1,3"]
+.Reset Timing Requirements
+|===
+|Parameter |Minimum |Description
+
+|`rst_n` assert width
+|1 ns
+|No minimum pulse width; async clear is edge-sensitive on `negedge rst_n_pre`
+
+|`rst_n` deassert hold (before first `clk` rising edge used for computation)
+|2 clock cycles
+|Two `clk` rising edges are required before `soc_rst_n` deasserts and SoC logic begins operating
+
+|`rst_n` setup before `clk` rising edge
+|Not required
+|Deassertion is sampled synchronously; no setup requirement on the deassert edge
+
+|`dbg_ndmreset` minimum width
+|1 `clk` cycle
+|Must remain high for at least one complete `clk` cycle to ensure the async clear of `rst_sync_ff1/ff2` is captured
+|===
+
+[IMPORTANT]
+====
+The `rst_n_pre` net is a 2-input LUT driving the asynchronous clear (`CLR`) of
+`rst_sync_ff1` and `rst_sync_ff2`.  In FPGA implementations this is an
+intentional asynchronous-reset pattern; the path is marked as a false path to
+suppress the Vivado LUTAR-1 methodology warning
+(`fpga/scripts/constraints.xdc`).
+====
 
 === Timing Parameters
 
@@ -1374,21 +1593,49 @@ The merged AXI master is implemented as a state machine with the following state
 |`115_200`
 |UART baud rate (must satisfy `CLK_FREQ / BAUD_RATE >= 4`)
 
-|`IRAM_SIZE`
-|`65536`
-|IRAM size in bytes (power-of-2; also sets TCM address decode mask)
+|`UART_FIFO_DEPTH`
+|`16`
+|TX and RX FIFO depth (same value for both; must be a power-of-2)
 
-|`DRAM_SIZE`
-|`65536`
-|DRAM size in bytes (power-of-2)
+|`RV32E_EN`
+|`0`
+|`1`=RV32E reduced register file (16 GPRs); `0`=RV32I full register file (32 GPRs). Also gates `misa.E`.
+
+|`RV32M_EN`
+|`1`
+|`1`=M-extension enabled (MUL/DIV/REM instructions legal); `0`=all multiply/divide instructions trap as illegal
+
+|`JTAG_EN`
+|`1`
+|`1`=JTAG debug port and RISC-V Debug Module instantiated; `0`=all debug outputs tied off, JTAG pins ignored
+
+|`USE_CJTAG`
+|`0`
+|`0`=4-wire JTAG (TCK/TMS/TDI/TDO); `1`=2-wire cJTAG IEEE 1149.7 OScan1 (TCKC/TMSC); see <<_clock_and_reset>> for clock architecture
+
+|`JTAG_IDCODE`
+|`32'h1DEAD3FF`
+|JTAG TAP `IDCODE` register value returned by the DTM on IR=`IDCODE` (0x01) scan
+
+|`N_TRIGGERS`
+|`2`
+|Number of hardware breakpoint/watchpoint trigger registers (`tdata1`/`tdata2` pairs); range 0..4
+
+|`AMO_EN`
+|`1`
+|`1`=full A-extension (LR/SC + all AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W); `0`=LR.W/SC.W only
 
 |`FAST_MUL`
 |`1`
-|`1`=single-cycle combinatorial multiply; `0`=33-cycle serial multiply
+|`1`=single-cycle combinatorial multiply; `0`=multi-cycle serial multiply (CLZ-reduced; 1–32 cycles)
+
+|`MUL_MC`
+|`1`
+|When `FAST_MUL=0`: `1`=CLZ-based iteration count reduction; `0`=always 32 iterations. Has no effect when `FAST_MUL=1`.
 
 |`FAST_DIV`
-|`1`
-|`1`=single-cycle combinatorial divide; `0`=33-cycle serial divide
+|`0`
+|`1`=single-cycle combinatorial divide; `0`=CLZ-reduced serial divide (1–32 cycles)
 
 |`FAST_SHIFT`
 |`1`
@@ -1398,9 +1645,21 @@ The merged AXI master is implemented as a state machine with the following state
 |`1`
 |`1`=BTFNT static branch predictor enabled (backward branches predicted taken, forward branches predicted not-taken; 0-cycle penalty on correct prediction, 1-cycle on misprediction); `0`=all branches predicted not-taken (1-cycle penalty on every taken branch)
 
+|`TRACE_EN`
+|`1`
+|`1`=trace output ports (`trace_valid`, `trace_pc`, etc.) carry live values; `0`=all trace outputs tied to 0
+
+|`IRAM_SIZE`
+|`131072`
+|IRAM size in bytes (power-of-2; also sets TCM address decode mask)
+
+|`DRAM_SIZE`
+|`131072`
+|DRAM size in bytes (power-of-2)
+
 |`BOOT_ADDR`
 |`32'h8000_0000`
-|Reset PC and IRAM base address
+|Reset PC; also sets `IRAM_BASE` (IRAM address decode base)
 
 |`DRAM_BASE`
 |`32'hC000_0000`
@@ -1567,8 +1826,8 @@ void uart_puts(const char *s) {
 
 void debug_putc(char c) { MAGIC_CON = c; }
 void debug_puts(const char *s) { while (*s) debug_putc(*s++); }
-void sim_pass(void) { MAGIC_EXIT = 1; }
-void sim_fail(int code) { MAGIC_EXIT = code; }
+void sim_pass(void) { MAGIC_EXIT = 1; }              // HTIF: exit(0)
+void sim_fail(int code) { MAGIC_EXIT = (code << 1) | 1; }  // HTIF: exit(code)
 ----
 
 ==== Waveform Capture
@@ -1673,7 +1932,7 @@ This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering
 |`0x2001_0004`
 |STATUS
 |R/O
-|`0x0000_0002` (TX not full)
+|`0x0000_0000` (TX FIFO empty, TX ready)
 
 |`0x2001_0008`
 |IE
@@ -1694,6 +1953,11 @@ This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering
 |CTRL
 |R/W
 |`0x0000_0000`
+
+|`0x2001_0018`
+|CAPABILITY
+|R/O
+|`0x0001_1010` (version=1, TX depth=16, RX depth=16 with default `FIFO_DEPTH=16`)
 |===
 
 === Magic Device Registers
@@ -1711,11 +1975,6 @@ This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering
 |EXIT
 |W/O
 |—
-
-|`0x4000_1000`–`0x4000_11FC`
-|NCM[0..127]
-|R/W
-|`0x0000_0000`
 |===
 
 <<<
@@ -1939,6 +2198,251 @@ NOTE: `mcause[31]=1` indicates interrupt; `mcause[30:0]` is the cause code.
 
 |`s_tcm_bready`
 |Input
+|1
+|Write response ready
+|===
+
+=== JTAG / cJTAG Debug Interface
+
+Active only when `JTAG_EN=1`. Pin roles differ between `USE_CJTAG=0` (4-wire JTAG) and `USE_CJTAG=1` (2-wire cJTAG).
+
+[cols="1,1,1,3"]
+.JTAG / cJTAG Debug Pins
+|===
+|Signal |I/O |Width |Description
+
+|`jtag_ntrst_i`
+|Input
+|1
+|TAP reset (active-low); resets the JTAG TAP state machine independently of `rst_n`. Tie high if not used.
+
+|`jtag_pin0_tck_i`
+|Input
+|1
+|`USE_CJTAG=0`: TAP clock (TCK), driven by debug probe, asynchronous to `clk`. +
+`USE_CJTAG=1`: cJTAG serial clock (TCKC); asynchronous to `clk`; internally sampled by 2-stage synchroniser in `cjtag_bridge`. Maximum frequency = f~sys~/6.
+
+|`jtag_pin1_tms_i`
+|Input
+|1
+|`USE_CJTAG=0`: TAP Mode Select (TMS). +
+`USE_CJTAG=1`: cJTAG data (TMSC) input direction; driven by probe during scan-in.
+
+|`jtag_pin1_tms_o`
+|Output
+|1
+|`USE_CJTAG=0`: not driven (tie `jtag_pin1_tms_oe` low). +
+`USE_CJTAG=1`: TMSC output direction; valid when `jtag_pin1_tms_oe=1` (SoC driving TMSC during scan-out).
+
+|`jtag_pin1_tms_oe`
+|Output
+|1
+|TMSC output-enable (active-high). Drive the `OE` of an external IOBUF on TMSC. In `USE_CJTAG=0` mode this is always 0.
+
+|`jtag_pin2_tdi_i`
+|Input
+|1
+|`USE_CJTAG=0`: TAP Data In (TDI). +
+`USE_CJTAG=1`: not used (internal cJTAG shift path is fully serialised over TMSC).
+
+|`jtag_pin3_tdo_o`
+|Output
+|1
+|`USE_CJTAG=0`: TAP Data Out (TDO); valid on falling edge of TCK. +
+`USE_CJTAG=1`: not used; cJTAG scan-out uses TMSC.
+
+|`jtag_pin3_tdo_oe`
+|Output
+|1
+|TDO output-enable (active-high). Drive the `OE` of an external tristate buffer on TDO. In `USE_CJTAG=0` mode this follows the TAP shift state.
+|===
+
+=== Trace Interface
+
+Active only when `TRACE_EN=1`. All outputs change on the rising edge of `clk` and are qualified by `trace_valid`. Connect to an off-chip trace capture port or to the testbench trace logger. Tie inputs/outputs unconnected (`/* synthesis keep */`) when trace is not needed.
+
+[cols="1,1,1,3"]
+.Trace Output Pins
+|===
+|Signal |I/O |Width |Description
+
+|`trace_en`
+|Input
+|1
+|Run-time trace enable gate; when low, `trace_valid` stays deasserted even with `TRACE_EN=1`
+
+|`trace_valid`
+|Output
+|1
+|Strobe: high for one `clk` cycle when a new instruction has retired
+
+|`trace_reg_we`
+|Output
+|1
+|Register file write enable for the retired instruction
+
+|`trace_pc`
+|Output
+|32
+|PC of the retired instruction
+
+|`trace_rd`
+|Output
+|5
+|Destination register index of the retired instruction
+
+|`trace_rd_data`
+|Output
+|32
+|Value written to `rd` (valid when `trace_reg_we=1`)
+
+|`trace_instr`
+|Output
+|32
+|32-bit expanded instruction word (after RVC expansion)
+
+|`trace_mem_we`
+|Output
+|1
+|Memory write-enable for the retired instruction (store)
+
+|`trace_mem_re`
+|Output
+|1
+|Memory read-enable for the retired instruction (load)
+
+|`trace_mem_addr`
+|Output
+|32
+|Memory address of the load/store
+
+|`trace_mem_data`
+|Output
+|32
+|Data written to memory (store) or loaded from memory (load)
+
+|`trace_irq_taken`
+|Output
+|1
+|Strobe: high for one cycle when an interrupt is taken (pipeline redirected to handler)
+
+|`trace_irq_cause`
+|Output
+|32
+|`mcause` value captured at interrupt entry
+
+|`trace_irq_epc`
+|Output
+|32
+|`mepc` value captured at interrupt entry (pre-empted PC)
+
+|`trace_irq_store_we`
+|Output
+|1
+|Interrupt pipeline — memory write-enable for interrupt-triggered store (e.g. stack save)
+
+|`trace_irq_store_addr`
+|Output
+|32
+|Interrupt pipeline — store address
+
+|`trace_irq_store_data`
+|Output
+|32
+|Interrupt pipeline — store data
+|===
+
+=== External AXI Master Interface (`ext_axi_*`)
+
+The external AXI master port carries transactions that fall outside all TCM and peripheral apertures (crossbar slave 3 catch-all). Connect to an external memory or MMIO fabric, or tie `ext_axi_arready`, `ext_axi_rvalid`, `ext_axi_awready`, `ext_axi_wready`, `ext_axi_bvalid` all to 0 if no external master is needed (the core will stall until reset).
+
+[cols="1,1,1,3"]
+.External AXI Master Pins
+|===
+|Signal |I/O |Width |Description
+
+|`ext_axi_araddr[31:0]`
+|Output
+|32
+|Read address
+
+|`ext_axi_arvalid`
+|Output
+|1
+|Read address valid
+
+|`ext_axi_arready`
+|Input
+|1
+|Read address ready
+
+|`ext_axi_rdata[31:0]`
+|Input
+|32
+|Read data
+
+|`ext_axi_rresp[1:0]`
+|Input
+|2
+|Read response (`OKAY`/`SLVERR`/`DECERR`)
+
+|`ext_axi_rvalid`
+|Input
+|1
+|Read data valid
+
+|`ext_axi_rready`
+|Output
+|1
+|Read data ready
+
+|`ext_axi_awaddr[31:0]`
+|Output
+|32
+|Write address
+
+|`ext_axi_awvalid`
+|Output
+|1
+|Write address valid
+
+|`ext_axi_awready`
+|Input
+|1
+|Write address ready
+
+|`ext_axi_wdata[31:0]`
+|Output
+|32
+|Write data
+
+|`ext_axi_wstrb[3:0]`
+|Output
+|4
+|Write byte strobes
+
+|`ext_axi_wvalid`
+|Output
+|1
+|Write data valid
+
+|`ext_axi_wready`
+|Input
+|1
+|Write data ready
+
+|`ext_axi_bresp[1:0]`
+|Input
+|2
+|Write response
+
+|`ext_axi_bvalid`
+|Input
+|1
+|Write response valid
+
+|`ext_axi_bready`
+|Output
 |1
 |Write response ready
 |===

@@ -239,14 +239,14 @@
 
 | Step | Tool | Runtime |
 |---|---|---|
-| Synthesis | Yosys | 00:05:20.862 |
-| Floorplan | OpenROAD | 00:00:01.411 |
-| Global Placement | OpenROAD (RePLace) | 00:01:42.804 |
-| Clock Tree Synthesis | TritonCTS | 00:00:11.362 |
-| Global Routing | OpenROAD (FastRoute) | 00:00:43.075 |
-| Detailed Routing | TritonRoute | 00:01:37.848 |
-| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:55.777 |
-| **Total (key steps)** | | **10 m 29 s** |
+| Synthesis | Yosys | 00:05:31.184 |
+| Floorplan | OpenROAD | 00:00:01.309 |
+| Global Placement | OpenROAD (RePLace) | 00:01:52.470 |
+| Clock Tree Synthesis | TritonCTS | 00:00:11.657 |
+| Global Routing | OpenROAD (FastRoute) | 00:00:45.213 |
+| Detailed Routing | TritonRoute | 00:01:41.558 |
+| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:57.917 |
+| **Total (key steps)** | | **10 m 58 s** |
 
 ---
 

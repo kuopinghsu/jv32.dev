@@ -172,89 +172,128 @@ module jv32_soc #(
     // =====================================================================
     // AXI bus between jv32_top master and xbar
     // =====================================================================
-    logic [31:0] core_mbus_araddr;
-    logic core_mbus_arvalid, core_mbus_arready;
-    logic [31:0] core_mbus_rdata;
-    logic [ 1:0] core_mbus_rresp;
-    logic core_mbus_rvalid, core_mbus_rready;
-    logic [31:0] core_mbus_awaddr;
-    logic core_mbus_awvalid, core_mbus_awready;
-    logic [31:0] core_mbus_wdata;
-    logic [ 3:0] core_mbus_wstrb;
-    logic core_mbus_wvalid, core_mbus_wready;
-    logic [1:0] core_mbus_bresp;
-    logic core_mbus_bvalid, core_mbus_bready;
+    logic [          31:0]       core_mbus_araddr;
+    logic                        core_mbus_arvalid;
+    logic                        core_mbus_arready;
+    logic [          31:0]       core_mbus_rdata;
+    logic [           1:0]       core_mbus_rresp;
+    logic                        core_mbus_rvalid;
+    logic                        core_mbus_rready;
+    logic [          31:0]       core_mbus_awaddr;
+    logic                        core_mbus_awvalid;
+    logic                        core_mbus_awready;
+    logic [          31:0]       core_mbus_wdata;
+    logic [           3:0]       core_mbus_wstrb;
+    logic                        core_mbus_wvalid;
+    logic                        core_mbus_wready;
+    logic [           1:0]       core_mbus_bresp;
+    logic                        core_mbus_bvalid;
+    logic                        core_mbus_bready;
 
-    logic [31:0] mbus_araddr;
-    logic mbus_arvalid, mbus_arready;
-    logic [31:0] mbus_rdata;
-    logic [ 1:0] mbus_rresp;
-    logic mbus_rvalid, mbus_rready;
-    logic [31:0] mbus_awaddr;
-    logic mbus_awvalid, mbus_awready;
-    logic [31:0] mbus_wdata;
-    logic [ 3:0] mbus_wstrb;
-    logic mbus_wvalid, mbus_wready;
-    logic [1:0] mbus_bresp;
-    logic mbus_bvalid, mbus_bready;
+    logic [          31:0]       mbus_araddr;
+    logic                        mbus_arvalid;
+    logic                        mbus_arready;
+    logic [          31:0]       mbus_rdata;
+    logic [           1:0]       mbus_rresp;
+    logic                        mbus_rvalid;
+    logic                        mbus_rready;
+    logic [          31:0]       mbus_awaddr;
+    logic                        mbus_awvalid;
+    logic                        mbus_awready;
+    logic [          31:0]       mbus_wdata;
+    logic [           3:0]       mbus_wstrb;
+    logic                        mbus_wvalid;
+    logic                        mbus_wready;
+    logic [           1:0]       mbus_bresp;
+    logic                        mbus_bvalid;
+    logic                        mbus_bready;
 
     // IRQ interconnect
-    logic timer_irq, software_irq, external_irq;
-    logic clic_irq;
-    logic [7:0] clic_level, clic_prio;
-    logic [ 4:0] clic_id;
-    logic        clic_ack;
-    logic [63:0] clic_mtime;  // mtime from CLIC, wired to core time/timeh CSR
+    logic                        timer_irq;
+    logic                        software_irq;
+    logic                        external_irq;
+    logic                        clic_irq;
+    logic                        uart_irq;
+    logic [           7:0]       clic_level;
+    logic [           7:0]       clic_prio;
+    logic [           4:0]       clic_id;
+    logic                        clic_ack;
+    logic [          63:0]       clic_mtime;  // mtime from CLIC, wired to core time/timeh CSR
 
     // =====================================================================
     // Debug / JTAG interconnect
     // =====================================================================
-    logic dbg_halt_req, dbg_halted, dbg_resume_req, dbg_resumeack;
-    logic [4:0] dbg_reg_addr;
-    logic [31:0] dbg_reg_wdata, dbg_reg_rdata;
-    logic dbg_reg_we;
-    logic [31:0] dbg_pc_wdata, dbg_pc;
-    logic dbg_pc_we;
-    logic dbg_mem_req, dbg_mem_ready, dbg_mem_error;
-    logic [31:0] dbg_mem_addr, dbg_mem_wdata, dbg_mem_rdata;
-    logic [3:0] dbg_mem_we;
-    logic dbg_ndmreset, dbg_hartreset;
-    logic dbg_singlestep, dbg_ebreakm;
-    logic [31:0] progbuf0, progbuf1;
-    logic soc_rst_n;
-    logic rst_n_pre, rst_sync_ff1, rst_sync_ff2;
+    logic                        dbg_halt_req;
+    logic                        dbg_halted;
+    logic                        dbg_resume_req;
+    logic                        dbg_resumeack;
+    logic [           4:0]       dbg_reg_addr;
+    logic [          31:0]       dbg_reg_wdata;
+    logic [          31:0]       dbg_reg_rdata;
+    logic                        dbg_reg_we;
+    logic [          31:0]       dbg_pc_wdata;
+    logic [          31:0]       dbg_pc;
+    logic                        dbg_pc_we;
+    logic                        dbg_mem_req;
+    logic                        dbg_mem_ready;
+    logic                        dbg_mem_error;
+    logic [          31:0]       dbg_mem_addr;
+    logic [          31:0]       dbg_mem_wdata;
+    logic [          31:0]       dbg_mem_rdata;
+    logic [           3:0]       dbg_mem_we;
+    logic                        dbg_ndmreset;
+    logic                        dbg_hartreset;
+    logic                        dbg_singlestep;
+    logic                        dbg_ebreakm;
+    logic [          31:0]       progbuf0;
+    logic [          31:0]       progbuf1;
+    logic                        soc_rst_n;
+    logic                        rst_n_pre;
+    logic                        rst_sync_ff1;
+    logic                        rst_sync_ff2;
 
     // Trigger interface wires (DTM <-> core)
-    logic                  dbg_trigger_halt;
-    logic [N_TRIGGERS-1:0] dbg_trigger_hit;  // per-trigger hit bits
-    logic [N_TRIGGERS-1:0][31:0] dbg_tdata1, dbg_tdata2;
+    logic                        dbg_trigger_halt;
+    logic [N_TRIGGERS-1:0]       dbg_trigger_hit;  // per-trigger hit bits
+    logic [N_TRIGGERS-1:0][31:0] dbg_tdata1;
+    logic [N_TRIGGERS-1:0][31:0] dbg_tdata2;
 
     // Internal AXI wires into the `jv32_top` IRAM/DRAM TCM slaves.
-    logic [31:0] iram_tcm_araddr_mux;
-    logic iram_tcm_arvalid_mux, iram_tcm_arready_int;
-    logic [31:0] iram_tcm_rdata_int;
-    logic [ 1:0] iram_tcm_rresp_int;
-    logic iram_tcm_rvalid_int, iram_tcm_rready_mux;
-    logic [31:0] iram_tcm_awaddr_mux;
-    logic iram_tcm_awvalid_mux, iram_tcm_awready_int;
-    logic [31:0] iram_tcm_wdata_mux;
-    logic [ 3:0] iram_tcm_wstrb_mux;
-    logic iram_tcm_wvalid_mux, iram_tcm_wready_int;
-    logic [1:0] iram_tcm_bresp_int;
-    logic iram_tcm_bvalid_int, iram_tcm_bready_mux;
+    logic [          31:0]       iram_tcm_araddr_mux;
+    logic                        iram_tcm_arvalid_mux;
+    logic                        iram_tcm_arready_int;
+    logic [          31:0]       iram_tcm_rdata_int;
+    logic [           1:0]       iram_tcm_rresp_int;
+    logic                        iram_tcm_rvalid_int;
+    logic                        iram_tcm_rready_mux;
+    logic [          31:0]       iram_tcm_awaddr_mux;
+    logic                        iram_tcm_awvalid_mux;
+    logic                        iram_tcm_awready_int;
+    logic [          31:0]       iram_tcm_wdata_mux;
+    logic [           3:0]       iram_tcm_wstrb_mux;
+    logic                        iram_tcm_wvalid_mux;
+    logic                        iram_tcm_wready_int;
+    logic [           1:0]       iram_tcm_bresp_int;
+    logic                        iram_tcm_bvalid_int;
+    logic                        iram_tcm_bready_mux;
 
-    logic [31:0] dram_tcm_araddr_mux;
-    logic dram_tcm_arvalid_mux, dram_tcm_arready_int;
-    logic [31:0] dram_tcm_rdata_int;
-    logic [ 1:0] dram_tcm_rresp_int;
-    logic dram_tcm_rvalid_int, dram_tcm_rready_mux;
-    logic [31:0] dram_tcm_awaddr_mux;
-    logic dram_tcm_awvalid_mux, dram_tcm_awready_int;
-    logic [31:0] dram_tcm_wdata_mux;
-    logic [ 3:0] dram_tcm_wstrb_mux;
-    logic dram_tcm_wvalid_mux, dram_tcm_wready_int;
-    logic [1:0] dram_tcm_bresp_int;
-    logic dram_tcm_bvalid_int, dram_tcm_bready_mux;
+    logic [          31:0]       dram_tcm_araddr_mux;
+    logic                        dram_tcm_arvalid_mux;
+    logic                        dram_tcm_arready_int;
+    logic [          31:0]       dram_tcm_rdata_int;
+    logic [           1:0]       dram_tcm_rresp_int;
+    logic                        dram_tcm_rvalid_int;
+    logic                        dram_tcm_rready_mux;
+    logic [          31:0]       dram_tcm_awaddr_mux;
+    logic                        dram_tcm_awvalid_mux;
+    logic                        dram_tcm_awready_int;
+    logic [          31:0]       dram_tcm_wdata_mux;
+    logic [           3:0]       dram_tcm_wstrb_mux;
+    logic                        dram_tcm_wvalid_mux;
+    logic                        dram_tcm_wready_int;
+    logic [           1:0]       dram_tcm_bresp_int;
+    logic                        dram_tcm_bvalid_int;
+    logic                        dram_tcm_bready_mux;
 
     typedef enum logic [3:0] {
         DBG_TCM_IDLE,
@@ -268,15 +307,17 @@ module jv32_soc #(
         DBG_EXT_WR_RESP
     } dbg_tcm_state_e;
 
-    dbg_tcm_state_e dbg_tcm_state;
-    logic           dbg_tcm_select;
-    logic           dbg_ext_select;
-    logic           dbg_mem_req_d;
-    logic           dbg_tcm_is_iram;
-    logic           dbg_mem_error_r;
-    logic dbg_aw_done, dbg_w_done;
-    logic [31:0] dbg_addr_r, dbg_wdata_r;
-    logic [3:0] dbg_wstrb_r;
+    dbg_tcm_state_e        dbg_tcm_state;
+    logic                  dbg_tcm_select;
+    logic                  dbg_ext_select;
+    logic                  dbg_mem_req_d;
+    logic                  dbg_tcm_is_iram;
+    logic                  dbg_mem_error_r;
+    logic                  dbg_aw_done;
+    logic                  dbg_w_done;
+    logic           [31:0] dbg_addr_r;
+    logic           [31:0] dbg_wdata_r;
+    logic           [ 3:0] dbg_wstrb_r;
 
     function automatic logic in_iram(input logic [31:0] addr);
         return (addr >= IRAM_BASE) && (addr < IRAM_BASE + 32'(IRAM_SIZE));
@@ -815,9 +856,7 @@ module jv32_soc #(
         .axi_rready (xs_rready[0]),
         .uart_rx    (uart_rx_i),
         .uart_tx    (uart_tx_o),
-        /* verilator lint_off PINCONNECTEMPTY */
-        .irq        ()
-        /* verilator lint_on PINCONNECTEMPTY */
+        .irq        (uart_irq)
     );
 
     // =====================================================================
@@ -846,7 +885,7 @@ module jv32_soc #(
         .s_rresp       (xs_rresp[1]),
         .s_rvalid      (xs_rvalid[1]),
         .s_rready      (xs_rready[1]),
-        .ext_irq_i     (ext_irq_i),
+        .ext_irq_i     ({ext_irq_i[15:1], ext_irq_i[0] | uart_irq}),
         .timer_irq_o   (timer_irq),
         .software_irq_o(software_irq),
         .clic_irq_o    (clic_irq),

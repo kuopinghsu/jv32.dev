@@ -25,10 +25,9 @@
 `define DBG_GRP_IRQ    5   // Interrupts and exceptions
 `define DBG_GRP_UART   6   // UART peripheral
 `define DBG_GRP_CLIC   7   // CLIC interrupt controller
-`define DBG_GRP_MAGIC  8   // Magic simulation device (exit, NCM)
+`define DBG_GRP_MAGIC  8   // Magic simulation device (exit control, console)
 `define DBG_GRP_JTAG   9   // JTAG / cJTAG transport and TAP activity
 `define DBG_GRP_DTM   10   // RISC-V debug transport / debug-module activity
-`define DBG_GRP_ICACHE 13  // NCM / magic-device icache-bypass (legacy)
 
 // Default: all groups enabled. Override with +define+DEBUG_GROUP=<decimal>
 `ifndef DEBUG_GROUP

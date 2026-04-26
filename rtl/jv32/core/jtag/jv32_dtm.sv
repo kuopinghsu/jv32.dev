@@ -224,12 +224,12 @@ module jv32_dtm #(
     logic       cmd_busy;    // Command busy (system clock domain)
 
     // W1C cmderr clear from TCK->CLK via toggle-sync
-    logic [2:0] cmderr_clr_tck;                      // TCK domain clear mask
+    logic [2:0] cmderr_clr_tck;                               // TCK domain clear mask
     logic       cmderr_clr_tog_tck;
-    (* ASYNC_REG = "TRUE" *) logic [2:0] cmderr_clr_tog_sync;  // CLK domain toggle sync chain
-    logic       cmderr_clr_tog_r;                              // CLK edge detect
-    localparam [3:0] ABSTRACTCS_DATACOUNT   = 4'd2;  // data0+data1 (RV32 abstract mem uses both)
-    localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2;  // 2 program buffer registers
+    (* ASYNC_REG = "TRUE" *)logic [2:0] cmderr_clr_tog_sync;  // CLK domain toggle sync chain
+    logic       cmderr_clr_tog_r;                             // CLK edge detect
+    localparam [3:0] ABSTRACTCS_DATACOUNT   = 4'd2;           // data0+data1 (RV32 abstract mem uses both)
+    localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2;           // 2 program buffer registers
 
     // abstractauto register (0x18) - auto re-execute on data/progbuf access
     // Only data[1:0] and pbuf[1:0] can ever fire (DATACOUNT=2, PROGBUFSIZE=2).
@@ -279,11 +279,11 @@ module jv32_dtm #(
     // sb_err is owned exclusively by CLK domain.
     // W1C from TCK domain uses a toggle-sync: TCK latches the clear-mask and
     // pulses sb_err_clr_tog_tck; CLK applies the W1C on the edge.
-    logic [ 2:0] sb_err;               // SBA error status (CLK domain)
-    logic [ 2:0] sb_err_clr_tck;       // TCK domain: mask of bits to clear (W1C)
-    logic        sb_err_clr_tog_tck;   // TCK domain: toggles to trigger W1C
-    (* ASYNC_REG = "TRUE" *) logic [ 2:0] sb_err_clr_tog_sync;  // 3-stage sync for toggle (CLK domain)
-    logic        sb_err_clr_tog_r;                               // Edge-detect for toggle (CLK domain)
+    logic [ 2:0] sb_err;                                       // SBA error status (CLK domain)
+    logic [ 2:0] sb_err_clr_tck;                               // TCK domain: mask of bits to clear (W1C)
+    logic        sb_err_clr_tog_tck;                           // TCK domain: toggles to trigger W1C
+    (* ASYNC_REG = "TRUE" *)logic [ 2:0] sb_err_clr_tog_sync;  // 3-stage sync for toggle (CLK domain)
+    logic        sb_err_clr_tog_r;                             // Edge-detect for toggle (CLK domain)
 
     // sb_access synced to CLK domain so FSM can check access width at SBA trigger
     logic [ 2:0] sb_access_clk;  // CLK-domain copy of sb_access (2-stage sync)
@@ -378,9 +378,9 @@ module jv32_dtm #(
     logic [3:0] mem_wait_cnt;  // 16-cycle timeout for memory operations
 
     // Command trigger: toggle-sync from TCK->clk domain
-    logic cmd_wr_toggle_tck;                                  // toggles in TCK domain when COMMAND is written
-    (* ASYNC_REG = "TRUE" *) logic [2:0] cmd_wr_toggle_sync;  // 3-stage sync chain in clk domain
-    logic cmd_wr_toggle_r;                                    // delayed version for edge detect
+    logic cmd_wr_toggle_tck;                                          // toggles in TCK domain when COMMAND is written
+    (* ASYNC_REG = "TRUE" *) logic [2:0] cmd_wr_toggle_sync;          // 3-stage sync chain in clk domain
+    logic cmd_wr_toggle_r;                                            // delayed version for edge detect
     (* ASYNC_REG = "TRUE" *) logic [31:0] command_reg_tck_sync[2:0];  // TCK->CLK sync chain for command payload
     (* ASYNC_REG = "TRUE" *) logic [31:0] data0_tck_sync[2:0];        // TCK->CLK sync chain for data0 payload
     (* ASYNC_REG = "TRUE" *) logic [31:0] data1_tck_sync[2:0];        // TCK->CLK sync chain for data1 payload
@@ -393,9 +393,9 @@ module jv32_dtm #(
     logic [3:0] sba_wait_cnt;                                 // SBA timeout counter
 
     // SBA busy: sync from clk domain back to TCK domain for SBCS.sbbusy read
-    logic sba_busy_clk;                                          // clk domain: SBA FSM is active
-    (* ASYNC_REG = "TRUE" *) logic [2:0] sba_busy_tck_chain;    // 3-stage sync to TCK
-    logic sba_busy_tck;                                          // TCK domain: SBA is busy
+    logic sba_busy_clk;                                       // clk domain: SBA FSM is active
+    (* ASYNC_REG = "TRUE" *) logic [2:0] sba_busy_tck_chain;  // 3-stage sync to TCK
+    logic sba_busy_tck;                                       // TCK domain: SBA is busy
 
     // ========================================================================
     // Status signals derived from CPU state
@@ -438,7 +438,14 @@ module jv32_dtm #(
 
     // CLK->TCK sync for sb_err (read in CAPTURE_DR for SBCS register)
     (* ASYNC_REG = "TRUE" *) logic [2:0] sb_err_tck_chain[2:0];  // 3 pipeline stages, each holding 3-bit error
-    logic [2:0] sb_err_tck;                                       // TCK-domain stable copy
+    logic [2:0] sb_err_tck;                                      // TCK-domain stable copy
+
+    // Next-value combinational signals (declared here so they are in scope for
+    // the always_ff block below that reads them before the always_comb that
+    // drives them is defined).
+    logic cmd_wr_toggle_tck_nx;
+    logic sb_busyerr_nx;
+    logic sba_rd_toggle_tck_nx;
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
@@ -496,9 +503,9 @@ module jv32_dtm #(
     end
 
     // Synchronize debug requests from TCK domain to system clock domain
-    (* ASYNC_REG = "TRUE" *) logic [ 2:0] halt_req_sync_chain;
-    (* ASYNC_REG = "TRUE" *) logic [ 2:0] resume_req_sync_chain;
-    logic [ 2:0] halted_clk_chain;  // same-domain pipeline (not CDC)
+    (* ASYNC_REG = "TRUE" *)logic [ 2:0] halt_req_sync_chain;
+    (* ASYNC_REG = "TRUE" *)logic [ 2:0] resume_req_sync_chain;
+    logic [ 2:0] halted_clk_chain;     // same-domain pipeline (not CDC)
     logic [ 2:0] dcsr_cause_r;         // dcsr.cause bits updated on debug mode entry
     logic        dbg_halted_prev;      // edge detector driven by sync always_ff
     logic        dbg_halted_prev_fsm;  // independent edge detector driven by FSM always_ff
@@ -615,10 +622,10 @@ module jv32_dtm #(
     // CLK->TCK sync chains for SBA results (mirrors data0_result_sync mechanism)
     (* ASYNC_REG = "TRUE" *) logic [31:0] sbdata0_result_sync[2:0];
     (* ASYNC_REG = "TRUE" *) logic sbdata0_result_valid_sync[2:0];
-    logic sbdata0_result_valid_sync_r;                              // One-cycle delayed [2]
+    logic sbdata0_result_valid_sync_r;     // One-cycle delayed [2]
     (* ASYNC_REG = "TRUE" *) logic [31:0] sbaddress0_result_sync[2:0];
     (* ASYNC_REG = "TRUE" *) logic sbaddress0_result_valid_sync[2:0];
-    logic sbaddress0_result_valid_sync_r;                           // One-cycle delayed [2]
+    logic sbaddress0_result_valid_sync_r;  // One-cycle delayed [2]
 
     // ========================================================================
     // Next-value logic for signals assigned in both capture_dr_i and
@@ -626,9 +633,6 @@ module jv32_dtm #(
     // each register exactly one sequential driver, eliminating CDFG2G-622
     // (Genus "multiple drivers") warnings.
     // ========================================================================
-    logic cmd_wr_toggle_tck_nx;
-    logic sb_busyerr_nx;
-    logic sba_rd_toggle_tck_nx;
 
     always_comb begin
         cmd_wr_toggle_tck_nx = cmd_wr_toggle_tck;
