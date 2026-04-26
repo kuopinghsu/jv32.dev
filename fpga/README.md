@@ -115,11 +115,11 @@ system clock which is on an **HP (High Performance) bank**, 1.8 V LVCMOS18.
 |---|---|---|---|---|
 | `clk_50m` | E18 | HP / LVCMOS18 | I | 50 MHz system clock |
 | `jtag_tck_i` | D11 | HR / LVCMOS33 | I | TCK (4-wire) / TCKC (cJTAG) |
-| `jtag_tmsc_io` | C12 | HR / LVCMOS33 | I/O | TMS (4-wire) / TMSC (cJTAG, bidir) |
-| `jtag_tdi_i` | J12 | HR / LVCMOS33 | I | TDI — 4-wire JTAG only; unused (tied to GND) in cJTAG |
-| `jtag_tdo_o` | E12 | HR / LVCMOS33 | O | TDO — 4-wire JTAG only; driven `0` in cJTAG |
-| `uart_tx_o` | J14 | HR / LVCMOS33 | O | UART TX |
-| `uart_rx_i` | G12 | HR / LVCMOS33 | I | UART RX |
+| `jtag_tmsc_io` | E12 | HR / LVCMOS33 | I/O | TMS (4-wire) / TMSC (cJTAG, bidir) |
+| `jtag_tdi_i` | C12 | HR / LVCMOS33 | I | TDI — 4-wire JTAG only; unused (tied to GND) in cJTAG |
+| `jtag_tdo_o` | J12 | HR / LVCMOS33 | O | TDO — 4-wire JTAG only; driven `0` in cJTAG |
+| `uart_tx_o` | G12 | HR / LVCMOS33 | O | UART TX |
+| `uart_rx_i` | J14 | HR / LVCMOS33 | I | UART RX |
 
 ---
 

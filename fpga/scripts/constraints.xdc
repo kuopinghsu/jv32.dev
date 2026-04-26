@@ -29,14 +29,14 @@ set_input_jitter clk_50m 0.200
 set_property PACKAGE_PIN D11 [get_ports jtag_tck_i]
 set_property IOSTANDARD LVCMOS33 [get_ports jtag_tck_i]
 
-set_property PACKAGE_PIN C12 [get_ports jtag_tmsc_io]
-set_property IOSTANDARD LVCMOS33 [get_ports jtag_tmsc_io]
-
-set_property PACKAGE_PIN J12 [get_ports jtag_tdi_i]
+set_property PACKAGE_PIN C12 [get_ports jtag_tdi_i]
 set_property IOSTANDARD LVCMOS33 [get_ports jtag_tdi_i]
 
-set_property PACKAGE_PIN E12 [get_ports jtag_tdo_o]
+set_property PACKAGE_PIN J12 [get_ports jtag_tdo_o]
 set_property IOSTANDARD LVCMOS33 [get_ports jtag_tdo_o]
+
+set_property PACKAGE_PIN E12 [get_ports jtag_tmsc_io]
+set_property IOSTANDARD LVCMOS33 [get_ports jtag_tmsc_io]
 
 create_clock -period 100.000 -name jtag_tck [get_ports jtag_tck_i]
 
@@ -49,11 +49,12 @@ set_clock_groups -asynchronous -group [get_clocks -include_generated_clocks clk_
 # UART – 3.3 V LVCMOS33 (HR bank)
 # These are asynchronous I/Os – use false paths.
 # -----------------------------------------------------------------------------
-set_property PACKAGE_PIN J14 [get_ports uart_tx_o]
-set_property IOSTANDARD LVCMOS33 [get_ports uart_tx_o]
 
-set_property PACKAGE_PIN G12 [get_ports uart_rx_i]
+set_property PACKAGE_PIN J14 [get_ports uart_rx_i]
 set_property IOSTANDARD LVCMOS33 [get_ports uart_rx_i]
+
+set_property PACKAGE_PIN G12 [get_ports uart_tx_o]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_tx_o]
 
 set_false_path -from [get_ports uart_rx_i]
 set_false_path -to [get_ports uart_tx_o]

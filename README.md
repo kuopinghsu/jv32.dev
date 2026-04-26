@@ -74,7 +74,7 @@ Build the patched OpenOCD:
 ```bash
 git clone https://github.com/kuopinghsu/openocd
 cd openocd && ./bootstrap
-./configure --enable-jtag_vpi --enable-cjtag_vpi
+./configure --prefix=/usr/local --disable-werror --enable-internal-jimtcl
 make -j$(nproc) && sudo make install
 ```
 
