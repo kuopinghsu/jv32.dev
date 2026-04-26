@@ -61,8 +61,15 @@ def read_nand2_area(lib_path: str) -> float:
 
 def find_latest_step(run_dir, glob_pat):
     """Return the highest-numbered directory matching glob_pat."""
-    matches = sorted(glob.glob(os.path.join(run_dir, glob_pat)))
-    return matches[-1] if matches else None
+    matches = glob.glob(os.path.join(run_dir, glob_pat))
+    if not matches:
+        return None
+    # Sort numerically by the leading step number (e.g. 103 > 96 > 9)
+    def _step_num(p):
+        name = os.path.basename(p)
+        m = re.match(r'^(\d+)', name)
+        return int(m.group(1)) if m else 0
+    return max(matches, key=_step_num)
 
 def wirelength_stats(csv_path):
     """Return (total_mm, n_nets, longest_net, longest_mm) from wire_lengths.csv."""
@@ -753,10 +760,11 @@ def section_antenna(run_dir, mfg_rpt):
     if lvs_res is None or lvs_res == "N/A":
         lvs_step = find_latest_step(run_dir, "*-netgen-lvs")
         if lvs_step:
-            lvs_rpt = os.path.join(lvs_step, "lvs.rpt")
+            lvs_rpt = os.path.join(lvs_step, "reports", "lvs.netgen.rpt")
             if not os.path.isfile(lvs_rpt):
-                # Some OpenLane2 versions put it here
                 lvs_rpt = os.path.join(lvs_step, "reports", "lvs.rpt")
+            if not os.path.isfile(lvs_rpt):
+                lvs_rpt = os.path.join(lvs_step, "lvs.rpt")
             lvs_txt = read(lvs_rpt)
             if lvs_txt:
                 if re.search(r"match\.?\s*$|Circuits match|Netlists match",
