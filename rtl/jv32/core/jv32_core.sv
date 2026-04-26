@@ -1132,8 +1132,17 @@ module jv32_core #(
                           dbg_resume_flush ? pc_if             :
                                              bp_redirect_pc;
 
-    // Expose flush so jv32_top can suppress stale TCM SRAM responses
+    // Expose flush so jv32_top can suppress stale TCM SRAM responses.
+    // With IFETCH_PREADVANCE the SRAM address is driven combinatorially in the
+    // same cycle bp_redirect fires, so the 1-cycle-later SRAM response already
+    // carries the correct branch-target data and must NOT be invalidated.
+    // Only genuine pipeline flushes (exception, EX mispredict, debug) need to
+    // suppress the in-flight response.
+`ifdef IFETCH_PREADVANCE
+    assign imem_flush = if_flush || dbg_pc_we_i || dbg_resume_flush;
+`else
     assign imem_flush = rvc_flush;
+`endif
 
     // =====================================================================
     // EX->WB Pipeline Register
