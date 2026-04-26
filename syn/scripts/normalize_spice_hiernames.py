@@ -25,7 +25,6 @@ import shutil
 import tempfile
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Step 1 – Parse Verilog to build (instname, pinname) -> wirename map
 # ---------------------------------------------------------------------------
@@ -34,7 +33,6 @@ from pathlib import Path
 # Captures: cell_type, instance_name, port_list
 # Strategy: read the Verilog line-by-line, accumulate until we see ');'
 _PIN_CONN_RE = re.compile(r'\.([A-Za-z0-9_]+)\s*\(\s*([^)]*?)\s*\)')
-
 
 def build_pin_map(verilog_path: Path) -> dict:
     """Return {(inst_name, pin_name): wire_name} from a Verilog netlist."""
@@ -98,13 +96,11 @@ def build_pin_map(verilog_path: Path) -> dict:
 
     return pin_map
 
-
 # ---------------------------------------------------------------------------
 # Step 2 – Find all INST/PIN tokens in SPICE and build a replacement map
 # ---------------------------------------------------------------------------
 
 _HIER_NET_RE = re.compile(r'([A-Za-z0-9_.]+)/([A-Za-z0-9]+)(?=\s)')
-
 
 def build_spice_rename_map(spice_path: Path, pin_map: dict) -> dict:
     """Return {spice_hier_name: verilog_wire_name} by scanning SPICE for X/Y patterns.
@@ -147,7 +143,6 @@ def build_spice_rename_map(spice_path: Path, pin_map: dict) -> dict:
 
     return rename, not_found, synthetic
 
-
 # ---------------------------------------------------------------------------
 # Step 3 – Apply the renaming to the SPICE file
 # ---------------------------------------------------------------------------
@@ -181,7 +176,6 @@ def apply_rename(spice_path: Path, rename: dict, output_path: Path) -> int:
     new_text = pattern.sub(_repl, text)
     output_path.write_text(new_text, encoding='utf-8')
     return total
-
 
 # ---------------------------------------------------------------------------
 # main
@@ -243,7 +237,6 @@ def main():
         n = apply_rename(spice_in, rename, spice_out)
 
     print(f'normalize_spice_hiernames: {n} hierarchical net name(s) renamed in {spice_out}')
-
 
 if __name__ == '__main__':
     main()

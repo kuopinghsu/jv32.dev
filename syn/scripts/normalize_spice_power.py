@@ -83,7 +83,6 @@ _BRACKET_RE = re.compile(
     r'(?=\s)'               # followed by whitespace (net name ends here)
 )
 
-
 def _replace_power(match: re.Match) -> str:
     token = match.group()
     token_lower = token.lower()
@@ -92,7 +91,6 @@ def _replace_power(match: re.Match) -> str:
     if token_lower.endswith('/vss') or token_lower.endswith('/gnd'):
         return 'VSS'
     return token  # shouldn't happen
-
 
 def _replace_brackets(match: re.Match) -> str:
     """Convert SPICE-style name(bs)[n(bs)] to Verilog escaped-identifier (bs)name[n] ."""
@@ -109,11 +107,9 @@ def _replace_brackets(match: re.Match) -> str:
     # always terminated by a space regardless of position in the line.
     return '\\' + base + subscripts_clean + ' '
 
-
 def _fix_instance_name(match: re.Match) -> str:
     """Strip backslash-bracket escaping from X-element instance names."""
     return match.group(1).replace('\\[', '[').replace('\\]', ']')
-
 
 def normalize_spice(input_path: Path, output_path: Path) -> tuple[int, int, int]:
     """Normalize SPICE net names.
@@ -154,13 +150,11 @@ def normalize_spice(input_path: Path, output_path: Path) -> tuple[int, int, int]
     output_path.write_text(''.join(result), encoding='utf-8')
     return power_total, bracket_total, instance_total
 
-
 # Keep the old name for backward compatibility
 def normalize_power_nets(input_path: Path, output_path: Path) -> int:
     """Normalize fragmented power net names only.  Returns the replacement count."""
     power_count, _, _ = normalize_spice(input_path, output_path)
     return power_count
-
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -200,7 +194,6 @@ def main() -> None:
           f'converted to Verilog escaped-identifier format in {output_path}')
     print(f'normalize_spice_power: {instance_n} X-element instance name(s) '
           f'had bracket escaping stripped in {output_path}')
-
 
 if __name__ == '__main__':
     main()

@@ -3,7 +3,7 @@
 **Design:** `jv32_soc`
 **PDK:** FreePDK45 / Nangate 45nm Open Cell Library
 **Flow:** OpenLane2 (Classic)
-**Date:** 2026-04-25
+**Date:** 2026-04-26
 
 ---
 
@@ -239,14 +239,14 @@
 
 | Step | Tool | Runtime |
 |---|---|---|
-| Synthesis | Yosys | 00:05:38.760 |
-| Floorplan | OpenROAD | 00:00:01.308 |
-| Global Placement | OpenROAD (RePLace) | 00:01:40.367 |
-| Clock Tree Synthesis | TritonCTS | 00:00:12.365 |
-| Global Routing | OpenROAD (FastRoute) | 00:00:44.499 |
-| Detailed Routing | TritonRoute | 00:01:39.472 |
-| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:54.470 |
-| **Total (key steps)** | | **10 m 48 s** |
+| Synthesis | Yosys | 00:05:20.862 |
+| Floorplan | OpenROAD | 00:00:01.411 |
+| Global Placement | OpenROAD (RePLace) | 00:01:42.804 |
+| Clock Tree Synthesis | TritonCTS | 00:00:11.362 |
+| Global Routing | OpenROAD (FastRoute) | 00:00:43.075 |
+| Detailed Routing | TritonRoute | 00:01:37.848 |
+| Post-PnR STA | OpenROAD (OpenSTA) | 00:00:55.777 |
+| **Total (key steps)** | | **10 m 29 s** |
 
 ---
 

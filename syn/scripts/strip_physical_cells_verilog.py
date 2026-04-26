@@ -63,7 +63,6 @@ _INSTANCE_START_RE = re.compile(
     r"^\s+(?:" + _CELL_ALT + r")\s+\S+\s*\(",
 )
 
-
 def strip_physical_cells(input_path: Path, output_path: Path) -> dict:
     """Strip physical-only cell instances.
 
@@ -106,7 +105,6 @@ def strip_physical_cells(input_path: Path, output_path: Path) -> dict:
     output_path.write_text("".join(result), encoding="utf-8")
     return counts
 
-
 def main() -> None:
     if len(sys.argv) < 2:
         print(
@@ -148,7 +146,6 @@ def main() -> None:
     )
     for cell_type, n in sorted(counts.items()):
         print(f"  {cell_type:30s}: {n}")
-
 
 if __name__ == "__main__":
     main()

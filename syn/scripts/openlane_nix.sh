@@ -68,4 +68,6 @@ for a in "$@"; do
     CMD="$CMD $(printf '%q' "$a")"
 done
 
-exec "$NIX_SHELL_BIN" "$SHELL_NIX" --run "$CMD"
+# Do NOT use exec here — exec replaces the bash process, which prevents the
+# EXIT trap above from firing, leaving the lock directory behind.
+"$NIX_SHELL_BIN" "$SHELL_NIX" --run "$CMD"

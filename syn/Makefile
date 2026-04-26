@@ -136,7 +136,7 @@ export NIX_SHELL
 # reporting in gen_report.py.
 NANGATE_LIB ?= $(NANGATE_HOME)/lib/NangateOpenCellLibrary_typical.lib
 
-.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report gate-count drc lvs clean cleanall help
+.PHONY: all check openram-setup syn-setup gen-mem synth synth-resume pnr timing-report gate-count drc normalize-spice strip-pnl lvs lvs-resume clean cleanall help
 
 all: synth
 
@@ -330,24 +330,76 @@ synth: check $(BUILD_DIR)
 	            exit 1; \
 	        fi; \
 	        echo "Resuming OpenLane2 from step: $$resume_from"; \
-	        cd $(OPENLANE_DIR) && \
-	        $(OPENLANE_CMD) \
-	            --pdk-root $(PDK_ROOT) \
-	            --pdk $(PDK) \
-	            --manual-pdk \
-	            --force-run-dir $(OPENLANE_RUN_DIR) \
-	            -F "$$resume_from" \
-	            config.yaml \
-	            $(TCM_PARAMS_YAML); \
+	        _spice_dir=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-magic-spiceextraction 2>/dev/null | head -1); \
+	        _spice_num=0; [ -n "$$_spice_dir" ] && _spice_num=$$(basename "$$_spice_dir" | cut -d- -f1 | grep -oP '^\d+' || echo 0); \
+	        _rf_clean=$$(echo "$$resume_from" | tr '[:upper:]' '[:lower:]' | tr '.' '-'); \
+	        _rf_dir=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-$$_rf_clean 2>/dev/null | head -1); \
+	        _rf_num=0; [ -n "$$_rf_dir" ] && _rf_num=$$(basename "$$_rf_dir" | cut -d- -f1 | grep -oP '^\d+' || echo 0); \
+	        _need_stage1=0; \
+	        if [ "$$_spice_num" -eq 0 ]; then _need_stage1=1; \
+	        elif [ "$$_rf_num" -ne 0 ] && [ "$$_rf_num" -le "$$_spice_num" ]; then _need_stage1=1; fi; \
+	        if [ "$$_need_stage1" -eq 1 ]; then \
+	            echo "--- Stage 1: running through SpiceExtraction (step $$_spice_num) ---" && \
+	            cd $(OPENLANE_DIR) && \
+	            $(OPENLANE_CMD) \
+	                --pdk-root $(PDK_ROOT) \
+	                --pdk $(PDK) \
+	                --manual-pdk \
+	                --force-run-dir $(OPENLANE_RUN_DIR) \
+	                -F "$$resume_from" -T Magic.SpiceExtraction \
+	                config.yaml \
+	                $(TCM_PARAMS_YAML) && \
+	            echo "--- Normalizing SPICE and PNL before LVS ---" && \
+	            $(call _find_spice_pnl) \
+	            bash $(SYN_DIR)/scripts/normalize_before_lvs.sh "$$_ols" "$$_olp" "$(PYTHON3)" && \
+	            echo "--- Stage 2: running from Netgen.LVS ---" && \
+	            cd $(OPENLANE_DIR) && \
+	            $(OPENLANE_CMD) \
+	                --pdk-root $(PDK_ROOT) \
+	                --pdk $(PDK) \
+	                --manual-pdk \
+	                --force-run-dir $(OPENLANE_RUN_DIR) \
+	                -F Netgen.LVS \
+	                config.yaml \
+	                $(TCM_PARAMS_YAML); \
+	        else \
+	            echo "--- SpiceExtraction done (step $$_spice_num), normalizing before step $$resume_from ---" && \
+	            $(call _find_spice_pnl) \
+	            bash $(SYN_DIR)/scripts/normalize_before_lvs.sh "$$_ols" "$$_olp" "$(PYTHON3)" && \
+	            cd $(OPENLANE_DIR) && \
+	            $(OPENLANE_CMD) \
+	                --pdk-root $(PDK_ROOT) \
+	                --pdk $(PDK) \
+	                --manual-pdk \
+	                --force-run-dir $(OPENLANE_RUN_DIR) \
+	                -F "$$resume_from" \
+	                config.yaml \
+	                $(TCM_PARAMS_YAML); \
+	        fi; \
 	    else \
 	        rm -rf $(OPENLANE_RUN_DIR); \
 	        mkdir -p $(OPENLANE_RUN_DIR); \
+	        echo "--- Stage 1/2: running through SpiceExtraction ---" && \
 	        cd $(OPENLANE_DIR) && \
 	        $(OPENLANE_CMD) \
 	            --pdk-root $(PDK_ROOT) \
 	            --pdk $(PDK) \
 	            --manual-pdk \
 	            --force-run-dir $(OPENLANE_RUN_DIR) \
+	            -T Magic.SpiceExtraction \
+	            config.yaml \
+	            $(TCM_PARAMS_YAML) && \
+	        echo "--- Normalizing SPICE and PNL before LVS ---" && \
+	        $(call _find_spice_pnl) \
+	        bash $(SYN_DIR)/scripts/normalize_before_lvs.sh "$$_ols" "$$_olp" "$(PYTHON3)" && \
+	        echo "--- Stage 2/2: running from Netgen.LVS ---" && \
+	        cd $(OPENLANE_DIR) && \
+	        $(OPENLANE_CMD) \
+	            --pdk-root $(PDK_ROOT) \
+	            --pdk $(PDK) \
+	            --manual-pdk \
+	            --force-run-dir $(OPENLANE_RUN_DIR) \
+	            -F Netgen.LVS \
 	            config.yaml \
 	            $(TCM_PARAMS_YAML); \
 	    fi \
@@ -648,6 +700,75 @@ drc:
 	@grep -E "^Total DRC" $(DRC_RPT) || true
 	@echo "========================================"
 
+# ── Normalize extracted SPICE power nets ────────────────────────────────────
+# Rewrites fragmented power/ground rail net names (e.g. hold63/VDD,
+# FILLER_1850_7787/VSS) to canonical global VDD/VSS throughout the
+# Magic-extracted SPICE netlist produced by OpenLane2 step 58.
+#
+# This is required when FP_PDN_ENABLE_RAILS: false is set in config.yaml.
+# Without explicit metal-1/metal-4 row power straps, Magic names each rail
+# segment after an adjacent cell instance rather than using a global net
+# name.  Netgen LVS then sees thousands of unique VDD/VSS variants in the
+# layout (circuit1) that do not exist in the Verilog schematic (circuit2),
+# producing ~40000 false errors.
+#
+# The script writes the normalised file in-place and preserves the original
+# as *.spice.orig (first run only).
+#
+# Usage:
+#   make normalize-spice                        # fix SPICE from last run
+#   make normalize-spice && make synth-resume OPENLANE_FROM=Netgen.LVS
+#   make lvs-resume                             # shorthand for the above
+#
+# These are evaluated at parse time; use $$(_OL_SPICE_DYN) / $$(_OL_PNL_DYN) inside recipes.
+# _OL_SPICE_DYN / _OL_PNL_DYN are defined via shell glob inside each recipe so that
+# the correct step-numbered directory is always used regardless of step number drift.
+OL_SPICE := $(shell ls -d $(OPENLANE_RUN_DIR)/*-magic-spiceextraction 2>/dev/null | sort -V | tail -1)/$(DESIGN).spice
+OL_PNL   := $(shell ls -d $(OPENLANE_RUN_DIR)/*-openroad-fillinsertion 2>/dev/null | sort -V | tail -1)/$(DESIGN).pnl.v
+define _find_spice_pnl
+	_ols=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-magic-spiceextraction 2>/dev/null | sort -V | tail -1); \
+	_olp=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-openroad-fillinsertion 2>/dev/null | sort -V | tail -1); \
+	_ols="$$_ols/$(DESIGN).spice"; \
+	_olp="$$_olp/$(DESIGN).pnl.v";
+endef
+
+# normalize-spice: run all pre-LVS normalization steps on the last build.
+# Delegates to scripts/normalize_before_lvs.sh which handles:
+#   1. .orig backups        4. Hier inst/pin → Verilog wire name (normalize_spice_hiernames.py)
+#   2. strip physical cells 5. NC output port patching (patch_verilog_nc_ports.py)
+#   3. Power/bracket/inst-name normalization (normalize_spice_power.py)
+#
+# Usage:
+#   make normalize-spice                        # fix SPICE from last run
+#   make normalize-spice && make synth-resume OPENLANE_FROM=Netgen.LVS
+#   make lvs-resume                             # shorthand for the above
+#
+normalize-spice:
+	@_ols=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-magic-spiceextraction 2>/dev/null | sort -V | tail -1); \
+	_olp=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-openroad-fillinsertion 2>/dev/null | sort -V | tail -1); \
+	if [ -z "$$_ols" ] || [ ! -f "$$_ols/$(DESIGN).spice" ]; then \
+	    echo "ERROR: Extracted SPICE not found in $(OPENLANE_RUN_DIR)/*-magic-spiceextraction/"; \
+	    echo "       Run 'make synth' first (or at least through Magic.SpiceExtraction)."; \
+	    exit 1; \
+	fi; \
+	bash $(SYN_DIR)/scripts/normalize_before_lvs.sh "$$_ols/$(DESIGN).spice" "$$_olp/$(DESIGN).pnl.v" "$(PYTHON3)"
+
+# strip-pnl: kept for backward compatibility — normalize_before_lvs.sh includes stripping.
+strip-pnl:
+	@_ols=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-magic-spiceextraction 2>/dev/null | sort -V | tail -1); \
+	_olp=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-openroad-fillinsertion 2>/dev/null | sort -V | tail -1); \
+	if [ -z "$$_olp" ] || [ ! -f "$$_olp/$(DESIGN).pnl.v" ]; then \
+	    echo "ERROR: Powered netlist not found in $(OPENLANE_RUN_DIR)/*-openroad-fillinsertion/"; \
+	    echo "       Run 'make synth' first (or at least through OpenROAD.FillInsertion)."; \
+	    exit 1; \
+	fi; \
+	bash $(SYN_DIR)/scripts/normalize_before_lvs.sh "$$_ols/$(DESIGN).spice" "$$_olp/$(DESIGN).pnl.v" "$(PYTHON3)"
+
+# Re-run only the Netgen LVS step using the normalised SPICE and stripped PNL.
+# Equivalent to: make normalize-spice && make synth-resume OPENLANE_FROM=Netgen.LVS
+lvs-resume: normalize-spice
+	@$(MAKE) --no-print-directory synth-resume OPENLANE_FROM=Netgen.LVS
+
 # ── Standalone LVS (Magic + Netgen) ─────────────────────────────────────────
 # Extracts a SPICE netlist from the GDS using Magic, then runs Netgen LVS
 # against the post-route gate-level Verilog netlist.
@@ -747,6 +868,9 @@ help:
 	@echo "  make pnr                      # standalone OpenROAD P&R (after synth)"
 	@echo "  make timing-report            # post-route STA with hold repair (after pnr)"
 	@echo "  make drc                      # standalone Magic DRC on last OpenLane2 GDS"
+	@echo "  make normalize-spice          # fix fragmented VDD/VSS in extracted SPICE (FP_PDN_ENABLE_RAILS:false)"
+	@echo "  make strip-pnl                # strip ANTENNA_X1/FILLCELL/TAPCELL from pnl.v before LVS"
+	@echo "  make lvs-resume               # strip-pnl + normalize-spice + re-run Netgen LVS only"
 	@echo "  make lvs                      # standalone Magic+Netgen LVS on last OpenLane2 GDS"
 	@echo "  make check                    # verify tool paths"
 	@echo "  make reports                  # print all .rpt files from last OpenLane2 run"

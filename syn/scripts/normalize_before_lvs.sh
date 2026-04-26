@@ -40,14 +40,22 @@ echo "  SPICE : $SPICE"
 echo "  PNL   : $PNL"
 echo "======================================="
 
-# ── Step 0: Create .orig backups on first call ───────────────────────────────
+# ── Step 0: Create .orig backups on first call; restore on subsequent calls ──
 if [ ! -f "${SPICE}.orig" ]; then
     cp "$SPICE" "${SPICE}.orig"
     echo " Original SPICE backed up → ${SPICE}.orig"
+else
+    cp "${SPICE}.orig" "$SPICE"
+    echo " Restored SPICE from backup → ${SPICE}.orig"
 fi
-if [ -f "$PNL" ] && [ ! -f "${PNL}.orig" ]; then
-    cp "$PNL" "${PNL}.orig"
-    echo " Original PNL backed up   → ${PNL}.orig"
+if [ -f "$PNL" ]; then
+    if [ ! -f "${PNL}.orig" ]; then
+        cp "$PNL" "${PNL}.orig"
+        echo " Original PNL backed up   → ${PNL}.orig"
+    else
+        cp "${PNL}.orig" "$PNL"
+        echo " Restored PNL from backup  → ${PNL}.orig"
+    fi
 fi
 
 # ── Step 1: Strip physical-only cells from PNL ───────────────────────────────

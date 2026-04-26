@@ -26,7 +26,6 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Build {inst_name: {pin_name: wire_name}} from the synthetic map
 # ---------------------------------------------------------------------------
@@ -42,7 +41,6 @@ def load_patch_map(json_path: Path) -> dict:
         patch[inst][pin] = wire
     return dict(patch)
 
-
 # ---------------------------------------------------------------------------
 # Patch the Verilog netlist
 # ---------------------------------------------------------------------------
@@ -51,7 +49,6 @@ def load_patch_map(json_path: Path) -> dict:
 _INST_HDR_RE = re.compile(
     r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s+\\?([A-Za-z_][A-Za-z0-9_.\[\]\\]*)\s*\('
 )
-
 
 def patch_verilog(verilog_path: Path, patch_map: dict, output_path: Path) -> int:
     """Patch instance declarations in the Verilog netlist.
@@ -142,7 +139,6 @@ def patch_verilog(verilog_path: Path, patch_map: dict, output_path: Path) -> int
     output_path.write_text(''.join(out_lines), encoding='utf-8')
     return added
 
-
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -187,7 +183,6 @@ def main():
         n = patch_verilog(verilog_in, patch_map, verilog_out)
 
     print(f'patch_verilog_nc_ports: {n} port connection(s) added to {verilog_out}')
-
 
 if __name__ == '__main__':
     main()
