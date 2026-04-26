@@ -21,6 +21,8 @@
 #include <cerrno>
 #include <chrono>
 static uint32_t expand_rvc(uint16_t ci);
+static bool     uart_irq_active();
+static bool     clic_arb(uint32_t *out_id, uint8_t *out_level);
 #include <csignal>
 #include <iostream>
 #include <iomanip>
@@ -150,6 +152,15 @@ static uint64_t mtime;
 static uint64_t mtimecmp = 0xFFFFFFFFFFFFFFFFULL;
 static uint32_t msip;
 
+// CLIC external interrupt state
+static uint8_t  clicint_ie[16];   // per-line interrupt enable
+static uint8_t  clicint_ctl[16];  // per-line level/priority
+
+// UART simulation state (loopback, interrupt enable, RX FIFO)
+static uint8_t  uart_loopback;   // loopback_en flag (CTRL bit0)
+static uint8_t  uart_ie;         // UART IE register [1:0]
+static std::deque<uint8_t> uart_rx_fifo;  // simulated RX FIFO
+
 // CSR registers
 static uint32_t csr_mstatus;
 static uint32_t csr_mie;
@@ -201,6 +212,8 @@ static bool g_timer_irq_pending = false;  // set by hint; cleared when timer tak
 static uint32_t g_timer_irq_epc = 0;      // mepc to use when hint fires the timer
 static bool g_msi_irq_pending   = false;  // set by hint; cleared when MSI taken
 static uint32_t g_msi_irq_epc   = 0;      // mepc to use when hint fires the MSI
+static bool     g_mei_irq_pending = false; // set by MEI hint; cleared when taken
+static uint32_t g_mei_irq_epc    = 0;     // mepc to use when hint fires the MEI
 
 // Squashed-store hints: when the JV32 pipeline commits a store's DRAM write
 // in the 1st WB cycle but the instruction is then squashed by an interrupt in
@@ -438,14 +451,38 @@ static uint32_t mem_read(uint32_t addr, int size) {
         }
         if (off == CLIC_MTIMECMP_LO_OFF) return (uint32_t)(mtimecmp & 0xFFFFFFFFu);
         if (off == CLIC_MTIMECMP_HI_OFF) return (uint32_t)(mtimecmp >> 32);
+        // CLICINT[n] external interrupt control registers (offset 0x1000 + n*4)
+        if (off >= 0x1000u && off < 0x1000u + 16u * 4u) {
+            uint32_t n = (off - 0x1000u) / 4u;
+            bool ext_irq_n = (n == 0u) ? uart_irq_active() : false;
+            return (ext_irq_n             ? (1u << 0)                : 0u)  // bit0 = IP (RO)
+                 | (clicint_ie[n]         ? (1u << 1)                : 0u)  // bit1 = IE
+                 | ((uint32_t)clicint_ctl[n] << 16);                        // bits[23:16] = CTL
+        }
         return 0;
     }
     // UART
     if (addr >= UART_BASE && addr < UART_BASE + 0x10000U) {
         uint32_t off = addr - UART_BASE;
-        if (off == UART_STATUS_OFF) return 0;  // TX never full
-        if (off == UART_CAP_OFF)    return 0x00010808u;  // version=1, rx=8, tx=8
-        return 0;
+        if (off == UART_DATA_OFF) {
+            // Pop one byte from the RX FIFO on read
+            if (!uart_rx_fifo.empty()) {
+                uint8_t b = uart_rx_fifo.front();
+                uart_rx_fifo.pop_front();
+                return b;
+            }
+            return 0u;
+        }
+        if (off == UART_STATUS_OFF) {
+            // bit0 = TX_BUSY (always 0 = not full), bit2 = RX_READY
+            return uart_rx_fifo.empty() ? 0u : (1u << 2);
+        }
+        if (off == 0x08U) return uart_ie;                          // IE register
+        if (off == 0x0CU) return uart_rx_fifo.empty() ? 0u : 1u;  // IS: RX_READY bit0
+        if (off == 0x10U) return (uint32_t)uart_rx_fifo.size();    // LEVEL[15:0]=RX count
+        if (off == 0x14U) return uart_loopback;                    // CTRL: loopback_en
+        if (off == UART_CAP_OFF) return 0x00010808u;               // version=1, rx=8, tx=8
+        return 0u;
     }
     // Magic device (reads return 0)
     if (addr >= MAGIC_BASE && addr < MAGIC_BASE + 0x10000U) {
@@ -480,14 +517,28 @@ static void mem_write(uint32_t addr, uint32_t val, int size) {
         else if (off == CLIC_MTIME_HI_OFF)    mtime = (mtime & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32);
         else if (off == CLIC_MTIMECMP_LO_OFF) mtimecmp = (mtimecmp & 0xFFFFFFFF00000000ULL) | val;
         else if (off == CLIC_MTIMECMP_HI_OFF) mtimecmp = (mtimecmp & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32);
+        // CLICINT[n] writes: update IE (bit1) and CTL (bits[23:16]); IP is read-only
+        else if (off >= 0x1000u && off < 0x1000u + 16u * 4u) {
+            uint32_t n = (off - 0x1000u) / 4u;
+            clicint_ie[n]  = (uint8_t)((val >> 1) & 1u);
+            clicint_ctl[n] = (uint8_t)((val >> 16) & 0xFFu);
+        }
         return;
     }
-    // UART DATA register — print character
+    // UART registers
     if (addr >= UART_BASE && addr < UART_BASE + 0x10000U) {
         uint32_t off = addr - UART_BASE;
         if (off == UART_DATA_OFF) {
             fputc((int)(val & 0xFF), stdout);
             fflush(stdout);
+            if (uart_loopback)                          // loopback: TX byte → RX FIFO
+                uart_rx_fifo.push_back((uint8_t)(val & 0xFFu));
+        } else if (off == 0x08U) {                      // IE register
+            uart_ie = (uint8_t)(val & 0x3u);
+        } else if (off == 0x0CU) {                      // IS — W1C, no effect in sim
+        } else if (off == 0x10U) {                      // LEVEL — baud-rate divisor, ignore
+        } else if (off == 0x14U) {                      // CTRL: loopback_en bit0
+            uart_loopback = (uint8_t)(val & 1u);
         }
         return;
     }
@@ -621,6 +672,52 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
         (unsigned)cause, (unsigned)tval, (unsigned)trap_pc, (unsigned)pc);
 }
 
+// ============================================================================
+// CLIC arbiter helpers
+// ============================================================================
+
+// Return true when the UART RX interrupt is active (level-triggered).
+static bool uart_irq_active() {
+    return (uart_ie & 0x1u) != 0u && !uart_rx_fifo.empty();
+}
+
+// Scan CLICINT[0..15]: find the enabled+pending line with the highest CTL.
+// Returns true if any line fires; sets *out_id and *out_level on success.
+static bool clic_arb(uint32_t *out_id, uint8_t *out_level) {
+    bool     found      = false;
+    uint8_t  best_level = 0;
+    uint32_t best_id    = 0;
+    for (uint32_t n = 0; n < 16u; n++) {
+        bool ext_irq_n = (n == 0u) ? uart_irq_active() : false;
+        if (clicint_ie[n] && ext_irq_n) {
+            if (!found || clicint_ctl[n] > best_level) {
+                found      = true;
+                best_level = clicint_ctl[n];
+                best_id    = n;
+            }
+        }
+    }
+    if (found) { *out_id = best_id; *out_level = best_level; }
+    return found;
+}
+
+// Take a CLIC external interrupt trap: save CSR state, compute
+// PC = mtvt + clic_id*4, update mintstatus.MIL.
+static void take_clic_trap(uint32_t clic_id, uint8_t clic_level, uint32_t trap_pc) {
+    uint32_t mie_bit = (csr_mstatus >> 3) & 1u;
+    csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
+                | (mie_bit ? MSTATUS_MPIE : 0u)
+                | MSTATUS_MPP;
+    csr_mcause     = CAUSE_EXTERNAL_INT;
+    csr_mepc       = trap_pc & ~1u;
+    csr_mtval      = 0u;
+    csr_mintstatus = clic_level;
+    pc = (csr_mtvt & ~63u) + clic_id * 4u;
+    DBG(1, "clic_trap: id=%u level=0x%02x mepc=0x%08x pc->0x%08x\n",
+        (unsigned)clic_id, (unsigned)clic_level,
+        (unsigned)csr_mepc, (unsigned)pc);
+}
+
 static bool check_interrupts() {
     // When RTL hints are loaded: allow firing the timer even when mstatus.MIE=0
     // if we are exactly at the instruction that the RTL squashed via irq_cancel.
@@ -637,7 +734,9 @@ static bool check_interrupts() {
                               && g_timer_irq_epc && (pc == g_timer_irq_epc);
     bool msi_at_squash_pc   = g_hints_loaded && g_msi_irq_pending
                               && g_msi_irq_epc   && (pc == g_msi_irq_epc);
-    bool at_squash_pc = timer_at_squash_pc || msi_at_squash_pc;
+    bool mei_at_squash_pc   = g_hints_loaded && g_mei_irq_pending
+                              && g_mei_irq_epc   && (pc == g_mei_irq_epc);
+    bool at_squash_pc = timer_at_squash_pc || msi_at_squash_pc || mei_at_squash_pc;
 
     // If at_squash_pc and the squashed instruction is a CSR write to mstatus
     // that enables interrupts, apply the write first (before take_trap).
@@ -684,9 +783,29 @@ static bool check_interrupts() {
                       mtime >= mtimecmp &&
                       mtimecmp != 0xFFFFFFFFFFFFFFFFULL);
     bool soft_irq  = (msip != 0);
-    // external CLIC IRQ not simulated here
 
-    if ((csr_mie & MIP_MTIP) && timer_irq) {
+    // CLIC external interrupt arbiter
+    uint32_t clic_id    = 0;
+    uint8_t  clic_level = 0;
+    bool clic_irq_active = clic_arb(&clic_id, &clic_level);
+    bool natural_mei     = !g_hints_loaded && clic_irq_active
+                           && clic_level > csr_mintthresh;
+    bool mei_irq = g_mei_irq_pending || natural_mei;
+
+    if (mei_irq) {
+        // CLIC external interrupt has highest priority (no mie.MEIE gate in RTL).
+        // RTL condition: clic_irq && clic_level > mintthresh && mstatus_mie.
+        // (mstatus.MIE already checked at the top of this function via at_squash_pc guard.)
+        g_mei_irq_pending = false;
+        if (!clic_irq_active) {
+            for (uint32_t n = 0; n < 16u; n++) {
+                if (clicint_ie[n]) { clic_id = n; clic_level = clicint_ctl[n]; break; }
+            }
+        }
+        uint32_t trap_pc = (g_hints_loaded && g_mei_irq_epc) ? g_mei_irq_epc : pc;
+        take_clic_trap(clic_id, clic_level, trap_pc);
+        return true;
+    } else if ((csr_mie & MIP_MTIP) && timer_irq) {
         g_timer_irq_pending = false;  // consumed
         // Use the hint's epc as mepc when available (matches RTL pipeline
         // behaviour where mepc = interrupted/squashed instruction PC).
@@ -1295,6 +1414,7 @@ static void step() {
                             | (mpie ? MSTATUS_MIE : 0)
                             | MSTATUS_MPIE     // MPIE set to 1
                             | MSTATUS_MPP;     // MPP stays M-mode
+                csr_mintstatus = 0;            // clear MIL on exit from interrupt context
                 new_pc = csr_mepc;
                 // MRET does not write rd → no do_write
             } else if (sys_imm == 0x105) { // WFI — treat as NOP
@@ -1551,6 +1671,11 @@ int main(int argc, char **argv) {
     mtime        = 0;
     mtimecmp     = 0xFFFFFFFFFFFFFFFFULL;
     msip         = 0;
+    memset(clicint_ie,  0, sizeof(clicint_ie));
+    memset(clicint_ctl, 0, sizeof(clicint_ctl));
+    uart_loopback = 0;
+    uart_ie       = 0;
+    uart_rx_fifo.clear();
     exc_pending  = false;
     running      = true;
     exit_code    = 0;
@@ -1616,6 +1741,12 @@ int main(int argc, char **argv) {
                     (unsigned long long)insn_count, (unsigned)hint_epc);
                 g_msi_irq_pending = true;
                 g_msi_irq_epc     = hint_epc;
+            } else if ((hint_cause & 0x8000007Fu) == 0x8000000Bu) {
+                // MEI hint (CLIC external interrupt): fire on the very next step().
+                DBG(2, "[irq] mei hint at insn=%llu epc=0x%08x\n",
+                    (unsigned long long)insn_count, (unsigned)hint_epc);
+                g_mei_irq_pending = true;
+                g_mei_irq_epc     = hint_epc;
             }
         }
         step();
