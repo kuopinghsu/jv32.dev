@@ -17,6 +17,9 @@
 VERIF_DIR    := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 JV32_ROOT    := $(abspath $(VERIF_DIR)/..)
 
+# Load root env.config so SPIKE and RISCV_PREFIX are set when invoked standalone
+-include $(JV32_ROOT)/env.config
+
 # ── ACT4 source ──────────────────────────────────────────────────────────────
 ACT_REPO     := https://github.com/riscv/riscv-arch-test
 ACT_BRANCH   := act4
@@ -42,6 +45,7 @@ ARCH_TEST_IRAM_SIZE := 262144
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
+# SPIKE is set via env.config in repo root; fall back to bare 'spike' if not exported
 SPIKE        ?= spike
 
 # ── uv (Python env manager) ──────────────────────────────────────────────────
@@ -56,19 +60,8 @@ all: help
 # while delegating signature generation to Spike.
 $(ARCH_TEST_REF_WRAPPER): $(VERIF_DIR)sail_spike_wrapper.sh.in $(VERIF_DIR)Makefile
 	@mkdir -p "$(WORKDIR)"
-	@spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
-	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
-	    spike_bin="/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike"; \
-	fi; \
-	if [ -z "$$spike_bin" ]; then \
-	    echo "[arch-test] ERROR: spike executable not found (set SPIKE=/path/to/spike)."; \
-	    exit 1; \
-	fi; \
+	@spike_bin="$(SPIKE)"; \
 	cp "$(JV32_ROOT)/verif/sail_spike_wrapper.sh.in" "$(ARCH_TEST_REF_WRAPPER)"; \
-	spike_bin="$$(command -v "$(SPIKE)" 2>/dev/null || true)"; \
-	if [ -z "$$spike_bin" ] && [ -x "/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike" ]; then \
-	    spike_bin="/Users/kuoping/riscv-gnu-toolchain/build/build-spike/spike"; \
-	fi; \
 	sed -i.bak "s|__SPIKE_BIN__|$$spike_bin|g" "$(ARCH_TEST_REF_WRAPPER)"; \
 	rm -f "$(ARCH_TEST_REF_WRAPPER).bak"; \
 	chmod +x "$(ARCH_TEST_REF_WRAPPER)"

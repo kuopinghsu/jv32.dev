@@ -29,6 +29,72 @@ fpga/       Vivado FPGA flow (Kintex UltraScale+ KU5P)
 syn/        OpenRAM + OpenLane2 synthesis and physical-design flow
 ```
 
+## Tool Requirements
+
+All tool paths are configured in `env.config` (copied from `env.config.template` on first run).
+
+### RTL Simulation (required for `make build-rtl`, `make rtl-*`, `make lint`)
+
+| Tool | Min version | Notes |
+|---|---|---|
+| [Verilator](https://verilator.org) | 5.x | SystemVerilog simulator; set `VERILATOR=` in `env.config` |
+| RISC-V toolchain | GCC 12+ | Bare-metal `riscv-none-elf-` or `riscv64-unknown-elf-`; set `RISCV_PREFIX=` in `env.config` |
+| GNU Make | 4.x | Build system |
+| Python 3 | 3.9+ | Required by lint helper scripts (`scripts/*.py`) |
+
+### Lint (optional; skipped automatically if binary is absent or set to `None`)
+
+| Tool | Notes |
+|---|---|
+| [Verible](https://github.com/chipsalliance/verible) | SystemVerilog style lint and formatter; set `VERIBLE=` / `VERIBLE_FORMAT=` in `env.config` |
+| [svlint](https://github.com/dalance/svlint) | Structural / intent lint; set `SVLINT=` in `env.config` |
+
+### Waveform viewing (optional)
+
+| Tool | Notes |
+|---|---|
+| [GTKWave](https://gtkwave.sourceforge.net) | Required for `make wave`; set `GTKWAVE=` in `Makefile.cfg` |
+
+### Architectural Compliance Tests (required for `make arch-test-run`)
+
+| Tool | Notes |
+|---|---|
+| [Spike](https://github.com/riscv-software-src/riscv-isa-sim) | RISC-V ISA reference simulator; set `SPIKE=` in `env.config` |
+| [uv](https://docs.astral.sh/uv/) | Python package/venv manager for the ACT4 framework; auto-installed by `make arch-test-setup` if absent |
+| Git | Required to clone the `riscv-arch-test` submodule during `make arch-test-setup` |
+
+### Debug Interface Tests (required for `make openocd-test`)
+
+| Tool | Notes |
+|---|---|
+| [OpenOCD](https://github.com/kuopinghsu/openocd) | **Patched fork required** for cJTAG VPI support; set `OPENOCD=` in `openocd/Makefile` or PATH |
+
+Build the patched OpenOCD:
+
+```bash
+git clone https://github.com/kuopinghsu/openocd
+cd openocd && ./bootstrap
+./configure --enable-jtag_vpi --enable-cjtag_vpi
+make -j$(nproc) && sudo make install
+```
+
+### ASIC Synthesis and P&R (required for `make -C syn synth`)
+
+| Tool | Notes |
+|---|---|
+| [OpenLane2](https://github.com/efabless/openlane2) | Full RTL-to-GDS flow; set `OPENLANE=` in `env.config`; Nix-based setup recommended |
+| [OpenRAM](https://github.com/VLSIDA/OpenRAM) | SRAM macro compiler (1.2.x); set `OPENRAM=` in `env.config` |
+| [OpenROAD](https://theopenroadproject.org) | P&R engine bundled with OpenLane2 / Nix; set `OPENROAD=` in `env.config` |
+| Nangate 45nm PDK | FreePDK45 Open Cell Library; set `NANGATE_HOME=` in `env.config`; download from [NCSU EDA](https://www.eda.ncsu.edu/wiki/FreePDK45) |
+| [Nix](https://nixos.org) | Package manager used by the OpenLane2 Nix shell wrapper (`syn/scripts/openlane_nix.sh`) |
+| Python 3 | 3.9+ | Required by OpenLane2 and synthesis helper scripts |
+
+### FPGA (required for `make -C fpga impl`)
+
+| Tool | Notes |
+|---|---|
+| [Vivado ML Standard](https://www.xilinx.com/support/download.html) | AMD/Xilinx toolchain for Kintex UltraScale+ KU5P; **free licence** (no cost) |
+
 ## Quick Start
 
 ### 1) Clone the repository
@@ -166,6 +232,215 @@ The multiplier has three modes, selectable via `FAST_MUL` and `MUL_MC`:
 | `TRACE` | _(none)_ | `1` = print RTL instruction trace to stdout |
 | `DEBUG` | _(none)_ | `1` = level-1 messages; `2` = per-group messages |
 | `DEBUG_GROUP` | _(none)_ | Bitmask of module groups to print (used with `DEBUG=2`) |
+
+## Verification
+
+### Summary
+
+| Target | Purpose |
+|---|---|
+| `make all` | Full regression — RTL sim, FreeRTOS, trace comparison, config variants, arch tests, OpenOCD |
+| `make compare-all` | Compare RTL instruction traces against the software (JIT) simulator for all `sw/` tests |
+| `make lint` | RTL lint: Verilator, Verible, svlint, declaration order, FF reset |
+| `make arch-test-run` | RISC-V ACT4 architectural compliance tests (details below) |
+| `make openocd-test` | JTAG and cJTAG debug interface tests via OpenOCD + VPI (details below) |
+| `make -C syn synth` | ASIC synthesis and P&R (see [syn/README.md](syn/README.md)) |
+| `make -C fpga impl` | FPGA build — synthesis + place-and-route + bitstream (see [fpga/README.md](fpga/README.md)) |
+
+### Regression (`make all`)
+
+`make all` is the full end-to-end regression; it runs the following steps in order:
+
+1. `rtl-all` — build and run every `sw/` test on the Verilator RTL simulator
+2. `sim-all` — run every `sw/` test on the software (JIT) simulator
+3. `compare-all` — compare RTL instruction traces against software simulator traces word-for-word
+4. `rtl-freertos-all` / `sim-freertos-all` / `compare-freertos-all` — the same three steps for the FreeRTOS workloads
+5. `extra-tests` — repeat steps 1–3 for three additional RTL parameter combinations to exercise different multiplier/divider/shifter/branch-predictor paths
+6. `arch-test-run` — RISC-V architectural compliance suite (see below)
+7. `openocd-test` — JTAG + cJTAG debug interface tests (see below)
+
+> `make -C syn synth` and `make -C fpga impl` are **not** included in `make all` because they require
+> commercial/specialised EDA tools and can take several hours. Run them explicitly when needed.
+
+### RISC-V Architectural Compliance Tests (`make arch-test-run`)
+
+JV32 is verified against the **RISC-V Architectural Compliance Test suite v4 (ACT4)** from
+[riscv-non-isa/riscv-arch-test](https://github.com/riscv-non-isa/riscv-arch-test).
+
+#### One-time setup
+
+```bash
+make arch-test-setup   # clone riscv-arch-test submodule and install Python venv (uv)
+```
+
+#### Running the tests
+
+```bash
+make arch-test-run
+```
+
+#### Test methodology
+
+The arch-test run proceeds in three phases:
+
+1. **Build RTL simulator** — `build/jv32soc` is recompiled with `IRAM_SIZE=262144` (256 KB) to
+   accommodate the largest test (see _I-jal-00_ below). The default `IRAM_SIZE` in `Makefile.cfg`
+   is unchanged.
+
+2. **Generate self-checking ELFs** — ACT4 compiles each test to a self-checking ELF. During this
+   phase, **Spike** (the RISC-V ISA reference simulator) also runs each test and dumps a golden
+   memory signature for the region `begin_signature`…`end_signature`.
+
+3. **Run on JV32 RTL** — `run_tests.py` loads each ELF on to `build/jv32soc`. The RTL simulator
+   polls the `tohost` MMIO word; when the test program writes `1` (pass) or `(exit_code << 1) | 1`
+   (fail/timeout), the simulator exits and dumps its own memory signature. The two signatures are
+   compared word-for-word: any mismatch is a compliance failure.
+
+Configure your Spike binary in `env.config`:
+
+```ini
+SPIKE=$(HOME)/opt/riscv/bin/spike
+```
+
+#### Extensions covered
+
+| Extension | Notes |
+|---|---|
+| `I` | Base integer instruction set (RV32I) |
+| `M` | Integer multiply and divide |
+| `Zaamo` / `Zalrsc` | Atomic memory operations (AMO and LR/SC subsets) |
+| `C` / `Zca` | Compressed (16-bit) instructions |
+| `Zicsr` | Control and status register instructions |
+| `Zifencei` | Instruction-fetch fence |
+| `Zicntr` | Base counters and timers (`cycle`, `time`, `instret`) |
+| `Sm` | Machine-mode privileged architecture |
+
+Supervisor mode (`S`), PMP, and virtual-memory extensions are excluded because JV32 is M-mode only
+with no MMU and no PMP.
+
+#### I-jal-00: 256 KB IRAM requirement
+
+The `I-jal-00` test places its `.text` segment at `0x80004000` and extends approximately 0x1C080
+bytes, ending just past the default 128 KB IRAM boundary (`0x80020000`). All other tests fit within
+128 KB.
+
+`verif/Makefile` automatically overrides `IRAM_SIZE=262144` (256 KB) when building the RTL
+simulator for arch-test runs. The default simulator and all other `make` targets continue to use the
+128 KB default from `Makefile.cfg`.
+
+### Debug Interface Tests (`make openocd-test`)
+
+`make openocd-test` builds two Verilator VPI testbench variants and runs all Tcl test scripts in
+`openocd/` against both debug transports:
+
+| Mode | Transport | Simulator binary |
+|---|---|---|
+| JTAG | 4-wire IEEE 1149.1 | `build/jv32vpi_jtag` |
+| cJTAG | 2-wire OScan1 (IEEE 1149.7) | `build/jv32vpi_cjtag` |
+
+Tests cover: halt/resume, single-step, breakpoints, watchpoints, abstract register access, program
+buffer execution, system bus access (SBA), reset and `havereset` behaviour, DCSR fields, DTMCS/DMI
+registers, and cJTAG-specific protocol sequences.
+
+#### Patched OpenOCD required
+
+Standard OpenOCD does not include VPI-based cJTAG simulation support. Use the patched fork:
+
+```bash
+git clone https://github.com/kuopinghsu/openocd
+cd openocd
+./bootstrap
+./configure --enable-jtag_vpi --enable-cjtag_vpi
+make -j$(nproc)
+sudo make install    # or set OPENOCD= in env.config
+```
+
+### RTL Lint (`make lint`)
+
+`make lint` runs six passes in sequence:
+
+| Pass | Tool | Checks |
+|---|---|---|
+| `lint-full` | Verilator | Full-design lint with all warnings and `-Werror-IMPLICIT` |
+| `lint-modules` | Verilator | Each module linted as an independent top (catches `MULTIDRIVEN` etc.) |
+| `lint-decl` | Python script | Signal use-before-declare order |
+| `lint-ffreset` | Python script | Flip-flop reset completeness |
+| `lint-verible` | Verible | SystemVerilog style and formatting rules |
+| `lint-svlint` | svlint | Structural / intent lint rules |
+
+### ASIC Synthesis and P&R (`make -C syn synth`)
+
+Runs OpenLane2 with the Nangate 45 nm Open Cell Library (FreePDK45). See [syn/README.md](syn/README.md)
+and the [Area Reference](#area-reference) section below for results.
+
+### FPGA (`make -C fpga impl`)
+
+Runs full synthesis, place-and-route, and bitstream generation using Vivado ML Standard Edition
+(free licence). See [fpga/README.md](fpga/README.md) and the [FPGA](#fpga-kintex-ultrascale-ku5p)
+section below for configuration and results.
+
+## FPGA (Kintex UltraScale+ KU5P)
+
+**Part:** `xcku5p-ffvb676-2-i` — **Tool:** Vivado ML Standard (free licence) — **Clock:** 50 MHz
+
+Default debug interface: **cJTAG / 2-wire OScan1** (`USE_CJTAG=1`, overridable to 4-wire JTAG with `USE_CJTAG=0`).
+
+```bash
+cd fpga/
+make impl              # cJTAG bitstream (default)
+make impl USE_CJTAG=0  # 4-wire JTAG bitstream
+```
+
+See [fpga/README.md](fpga/README.md) for pin assignments, clock architecture, block design, and OpenOCD connection instructions.
+
+## Synthesis & P&R Results (RV32EC=0)
+
+**PDK:** FreePDK45 / Nangate 45 nm Open Cell Library — **Flow:** OpenLane2 (Classic) — **Date:** 2026-04-26
+
+Configuration: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `TRACE_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz clock, 16 KB IRAM + 16 KB DRAM.
+
+> For the full hierarchy, timing, power, and DRC detail see [syn/REPORT.md](syn/REPORT.md).
+> For gate counts and clock gating breakdown see [syn/README.md](syn/README.md).
+
+### Floorplan
+
+| Metric | Value |
+|---|---|
+| Die area | 4.500 mm² |
+| Core area | 4.407 mm² |
+| Standard cell area | 64,148 µm² |
+| Macro area (SRAM) | 2,183,510 µm² |
+| Std cell utilization | 2.89% |
+
+### Logic area (pre-P&R hierarchical synthesis)
+
+| Metric | Value |
+|---|---|
+| **jv32_soc** total | **76,658 NAND2-eq** (61,173 µm²) |
+| ↳ jv32_core (logic only) | 45,554 NAND2-eq |
+| ↳ jtag_top | 15,837 NAND2-eq |
+| Post-P&R flat total | **80,386 NAND2-eq** |
+
+### Timing (post-route STA, tt_025C_1v10)
+
+| Check | WNS | TNS | |
+|---|---|---|---|
+| Setup | 0.000 ns | 0.000 ns | ✅ MET |
+| Hold | 0.000 ns | 0.000 ns | ✅ MET |
+
+### Power (tt_025C_1v10, 80 MHz)
+
+| Domain | Total |
+|---|---|
+| Sequential | 4.08 mW |
+| Combinational | 6.11 mW |
+| Clock | 1.21 mW |
+| Macro (SRAM) | 9.22 mW |
+| **Total** | **20.61 mW** |
+
+### DRC
+
+Post-route DRC: **0 errors** ✅
 
 ## Area Reference
 
@@ -308,69 +583,6 @@ These ~327 bits toggle continuously during debug accesses.  This is **architectu
 - FPGA implementation notes: [fpga/README.md](fpga/README.md)
 - ASIC flow notes: [syn/README.md](syn/README.md)
 - Full P&R results report: [syn/REPORT.md](syn/REPORT.md)
-
-## Synthesis & P&R Results (RV32EC=0)
-
-**PDK:** FreePDK45 / Nangate 45 nm Open Cell Library — **Flow:** OpenLane2 (Classic) — **Date:** 2026-04-26
-
-Configuration: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `TRACE_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz clock, 16 KB IRAM + 16 KB DRAM.
-
-> For the full hierarchy, timing, power, and DRC detail see [syn/REPORT.md](syn/REPORT.md).
-> For gate counts and clock gating breakdown see [syn/README.md](syn/README.md).
-
-### Floorplan
-
-| Metric | Value |
-|---|---|
-| Die area | 4.500 mm² |
-| Core area | 4.407 mm² |
-| Standard cell area | 64,148 µm² |
-| Macro area (SRAM) | 2,183,510 µm² |
-| Std cell utilization | 2.89% |
-
-### Logic area (pre-P&R hierarchical synthesis)
-
-| Metric | Value |
-|---|---|
-| **jv32_soc** total | **76,658 NAND2-eq** (61,173 µm²) |
-| ↳ jv32_core (logic only) | 45,554 NAND2-eq |
-| ↳ jtag_top | 15,837 NAND2-eq |
-| Post-P&R flat total | **80,386 NAND2-eq** |
-
-### Timing (post-route STA, tt_025C_1v10)
-
-| Check | WNS | TNS | |
-|---|---|---|---|
-| Setup | 0.000 ns | 0.000 ns | ✅ MET |
-| Hold | 0.000 ns | 0.000 ns | ✅ MET |
-
-### Power (tt_025C_1v10, 80 MHz)
-
-| Domain | Total |
-|---|---|
-| Sequential | 4.08 mW |
-| Combinational | 6.11 mW |
-| Clock | 1.21 mW |
-| Macro (SRAM) | 9.22 mW |
-| **Total** | **20.61 mW** |
-
-### DRC
-
-Post-route DRC: **0 errors** ✅
-
-## FPGA (Kintex UltraScale+ KU5P)
-
-**Part:** `xcku5p-ffvb676-2-i` — **Tool:** Vivado ML Standard (free licence) — **Clock:** 50 MHz
-
-Default debug interface: **cJTAG / 2-wire OScan1** (`USE_CJTAG=1`, overridable to 4-wire JTAG with `USE_CJTAG=0`).
-
-```bash
-cd fpga/
-make impl              # cJTAG bitstream (default)
-make impl USE_CJTAG=0  # 4-wire JTAG bitstream
-```
-
-See [fpga/README.md](fpga/README.md) for pin assignments, clock architecture, block design, and OpenOCD connection instructions.
 
 ## License
 

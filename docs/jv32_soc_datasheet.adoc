@@ -137,7 +137,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
  |                   | TX/RX FIFOs (16 deep)    | |   |                   |
  |                   | 8N1, prog baud rate      |---->uart_tx             |
  |                   | irq (rx/tx FIFO level)   |<----uart_rx             |
- |                   | uart_irq (IRQ output)    +-v   |                   |
+ |                   | uart_irq (IRQ output)    +-+   |                   |
  |                   +--------------------------+ |   |                   |
  |                                                |   |                   |
  |                 Slave 1: CLIC  0x0200_0000-----+   |                   |
