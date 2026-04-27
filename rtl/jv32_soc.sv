@@ -165,7 +165,15 @@ module jv32_soc #(
     output logic [31:0] trace_irq_epc,
     output logic        trace_irq_store_we,
     output logic [31:0] trace_irq_store_addr,
-    output logic [31:0] trace_irq_store_data
+    output logic [31:0] trace_irq_store_data,
+
+    // Branch predictor performance counters
+    output logic perf_bp_branch,
+    output logic perf_bp_taken,
+    output logic perf_bp_mispred,
+    output logic perf_bp_jal,
+    output logic perf_bp_jal_miss,
+    output logic perf_bp_jalr
 );
     import jv32_pkg::*;
 
@@ -733,6 +741,12 @@ module jv32_soc #(
         .trace_irq_store_we  (trace_irq_store_we),
         .trace_irq_store_addr(trace_irq_store_addr),
         .trace_irq_store_data(trace_irq_store_data),
+        .perf_bp_branch      (perf_bp_branch),
+        .perf_bp_taken       (perf_bp_taken),
+        .perf_bp_mispred     (perf_bp_mispred),
+        .perf_bp_jal         (perf_bp_jal),
+        .perf_bp_jal_miss    (perf_bp_jal_miss),
+        .perf_bp_jalr        (perf_bp_jalr),
         .mtime_i             (clic_mtime)
     );
 

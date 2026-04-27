@@ -72,8 +72,7 @@ set_property target_language    Verilog [current_project]
 set_property default_lib        work    [current_project]
 
 # XILINX_URAM selects the UltraRAM inference path in sram_1rw.sv (XCKU5P).
-# IFETCH_PREADVANCE pre-advances the fetch address combinatorially for lower CPI.
-set_property verilog_define {XILINX_URAM IFETCH_PREADVANCE} [current_fileset]
+set_property verilog_define {XILINX_URAM} [current_fileset]
 
 # USE_CJTAG parameter override: 0=4-wire JTAG (default), 1=2-wire cJTAG.
 # Also read by constraints.xdc to select JTAG delays vs cJTAG false-paths.

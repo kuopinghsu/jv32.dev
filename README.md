@@ -495,7 +495,7 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 ### RV32EC=0 (full / default configuration)
 
-`RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1, IFETCH_PREADVANCE=1`
+`RV32E_EN=0, RV32M_EN=1, AMO_EN=1, JTAG_EN=1, TRACE_EN=1, BP_EN=1, FAST_SHIFT=1, FAST_MUL=1, MUL_MC=1`
 
 > Numbers below are from pre-P&R hierarchical synthesis (`make gate-count`).
 > The post-P&R flat-optimised count is **80,386 NAND2-eq** (OpenLane2 run, 2026-04-26).

@@ -258,9 +258,8 @@ multi-stage synchroniser chains in `jv32_dtm`.
 RTL `define` macros enabled in Vivado:
 
 | Macro | Effect |
-|---|---|
+|---|—|
 | `XILINX_URAM` | Selects UltraRAM inference path in `sram_1rw.sv` (XCKU5P has URAMs) |
-| `IFETCH_PREADVANCE` | Pre-advances the fetch address combinatorially, reducing CPI on the FPGA |
 
 ---
 

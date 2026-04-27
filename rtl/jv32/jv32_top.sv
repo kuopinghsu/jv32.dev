@@ -211,6 +211,14 @@ module jv32_top #(
     output logic [31:0] trace_irq_store_addr,
     output logic [31:0] trace_irq_store_data,
 
+    // Branch predictor performance counters
+    output logic perf_bp_branch,
+    output logic perf_bp_taken,
+    output logic perf_bp_mispred,
+    output logic perf_bp_jal,
+    output logic perf_bp_jal_miss,
+    output logic perf_bp_jalr,
+
     // mtime from platform timer (for time/timeh CSR)
     input logic [63:0] mtime_i
 );
@@ -261,6 +269,7 @@ module jv32_top #(
     logic [ 3:0] dmem_req_wstrb;
     logic        dmem_resp_valid;
     logic [31:0] dmem_resp_data;
+    logic        d_preload_active;  // core stole DRAM port during WB-load response (consec. loads)
     logic        core_rst_n;
 
     assign core_rst_n = rst_n & ~dbg_hartreset_i;
@@ -276,7 +285,11 @@ module jv32_top #(
         .BP_EN     (BP_EN),
         .AMO_EN    (AMO_EN),
         .N_TRIGGERS(N_TRIGGERS),
-        .BOOT_ADDR (BOOT_ADDR)
+        .BOOT_ADDR (BOOT_ADDR),
+        .IRAM_BASE (IRAM_BASE),
+        .IRAM_SIZE (IRAM_SIZE),
+        .DRAM_BASE (DRAM_BASE),
+        .DRAM_SIZE (DRAM_SIZE)
     ) u_core (
         .clk                 (clk),
         .rst_n               (core_rst_n),
@@ -338,6 +351,13 @@ module jv32_top #(
         .trace_irq_store_we  (trace_irq_store_we),
         .trace_irq_store_addr(trace_irq_store_addr),
         .trace_irq_store_data(trace_irq_store_data),
+        .perf_bp_branch      (perf_bp_branch),
+        .perf_bp_taken       (perf_bp_taken),
+        .perf_bp_mispred     (perf_bp_mispred),
+        .perf_bp_jal         (perf_bp_jal),
+        .perf_bp_jal_miss    (perf_bp_jal_miss),
+        .perf_bp_jalr        (perf_bp_jalr),
+        .d_preload_active    (d_preload_active),
         .mtime_i             (mtime_i)
     );
 
@@ -672,13 +692,19 @@ module jv32_top #(
             // ex_wb_r still holds the completing instruction and would re-drive
             // core_d_dram_re/we with the same old address, causing the SRAM to
             // capture the old address again and return stale data to the next load.
-            dram_used_by_core_d_d <= (core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d;
+            // Exception: d_preload_active means the core intentionally overrode the
+            // address with a new preload — capture it despite the response-cycle gate.
+            dram_used_by_core_d_d <= d_preload_active | ((core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d);
 
             // Was the D-path a write?
             dmem_was_write_d      <= dmem_req_write;
 
-            // Flush invalidates in-flight I-fetch response
-            imem_flush_d          <= imem_flush_core;
+            // IFETCH_PREADVANCE: the SRAM already sees the new (correct) address
+            // combinatorially in the same cycle as the flush fires, so the response
+            // arriving one cycle later is always valid — no stale echo to suppress.
+            // Keeping imem_flush_d=0 prevents the 1-cycle bubble that would otherwise
+            // occur after every correctly-predicted backward-taken branch.
+            imem_flush_d          <= 1'b0;
 
             // Register I-fetch address for imem_resp_pc
             imem_req_addr_d       <= imem_req_addr;

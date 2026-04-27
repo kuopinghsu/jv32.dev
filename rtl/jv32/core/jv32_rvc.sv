@@ -381,15 +381,10 @@ module jv32_rvc #(
             stale_rsp       <= 1'b0;
         end
         else begin
-            // Advance stale_rsp: set when mem_ready fired last cycle (SRAM echo incoming).
-            // Not needed under IFETCH_PREADVANCE because the SRAM already sees the
-            // next address at the same posedge mem_ready fires - the response one
-            // cycle later carries the correct new data, not a stale echo.
-`ifdef IFETCH_PREADVANCE
+            // IFETCH_PREADVANCE: the SRAM already sees the next address at the
+            // same posedge mem_ready fires, so the response one cycle later
+            // carries the correct new data, not a stale echo.
             stale_rsp <= 1'b0;
-`else
-            stale_rsp <= mem_ready && !stall;
-`endif
 
             if (!stall) begin
                 if (split32 && eff_valid) begin

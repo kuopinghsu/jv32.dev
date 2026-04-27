@@ -233,7 +233,7 @@ package jv32_pkg;
         logic [31:0] instr;          // expanded 32-bit instruction
         logic [31:0] orig_instr;     // original encoding (16-bit zero-ext for RVC)
         logic        is_compressed;  // was originally 16-bit RVC
-        logic        bp_taken;       // branch was predicted taken by BTFNT predictor
+        logic        bp_taken;       // front-end pre-redirected: BTFNT taken-branch or JAL
         logic        ifetch_fault;   // AXI DECERR on I-fetch -> EXC_INSTR_ACCESS_FAULT
     } if_ex_t;
 

@@ -16,7 +16,6 @@
 #   IRAM_SIZE    — IRAM bytes (e.g. 16384)
 #   DRAM_SIZE    — DRAM bytes (e.g. 16384)
 #   FAST_MUL, MUL_MC, FAST_DIV, FAST_SHIFT, BP_EN  — pipeline feature bits
-#   IFETCH_PREADVANCE                               — 1=combinatorial next-PC preadvance
 #   RV32E_EN, RV32M_EN, JTAG_EN, TRACE_EN, AMO_EN  — ISA / feature enable bits
 #   CG_EN                                           — 1=insert CLKGATE_X1 ICG cells
 #   DFT_EN                                          — 1=DFT mode: CLKGATETST_X1 + scan FFs
@@ -34,7 +33,6 @@ set -euo pipefail
 : "${FAST_DIV:=0}"
 : "${FAST_SHIFT:=1}"
 : "${BP_EN:=1}"
-: "${IFETCH_PREADVANCE:=1}"  # 1=pre-advance fetch address combinatorially (lower CPI, longer comb path)
 : "${RV32E_EN:=0}"
 : "${RV32M_EN:=1}"
 : "${JTAG_EN:=1}"
@@ -67,7 +65,6 @@ YOSYS_EOF
 {
     printf 'read_systemverilog -sverilog -top jv32_soc'
     printf ' -DSYNTHESIS -DNO_ASSERTION -DGENERIC_SRAM'
-    if [ "${IFETCH_PREADVANCE}" = "1" ]; then printf ' -DIFETCH_PREADVANCE'; fi
     printf ' -I%s' "${RTL_DIR}/jv32"
     printf ' -PIRAM_SIZE=%s -PDRAM_SIZE=%s' "${IRAM_SIZE}" "${DRAM_SIZE}"
     printf ' -PFAST_MUL=%s -PMUL_MC=%s -PFAST_DIV=%s -PFAST_SHIFT=%s -PBP_EN=%s' \

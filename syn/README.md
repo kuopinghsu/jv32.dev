@@ -235,7 +235,7 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 > Reference cell: NAND2\_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
 >
 > Configuration: `RV32EC=0  RV32E_EN=0  RV32M_EN=1  JTAG_EN=1  TRACE_EN=1  AMO_EN=1`
-> `FAST_MUL=1  FAST_DIV=0  FAST_SHIFT=1  BP_EN=1  IFETCH_PREADVANCE=1`
+> `FAST_MUL=1  FAST_DIV=0  FAST_SHIFT=1  BP_EN=1`
 
 ### Area Hierarchy (Gate Count)
 

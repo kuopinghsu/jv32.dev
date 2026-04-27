@@ -1,7 +1,7 @@
 // ============================================================================
-// File        : jv32_core.sv
-// Project     : JV32 RISC-V Processor
-// Description : RV32IMAC 3-Stage Pipeline Core (IF -> EX -> WB)
+// File: jv32_core.sv
+// Project: JV32 RISC-V Processor
+// Description: RV32IMAC 3-Stage Pipeline Core (IF -> EX -> WB)
 //
 // Pipeline stages:
 //   IF  : PC + instruction fetch request (via jv32_rvc)
@@ -15,41 +15,24 @@
 //   - AMO : IDLE -> LOAD_WAIT -> STORE_WAIT state machine
 //
 // Forwarding: WB->EX same-cycle forwarding (register data available in WB)
-//
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2026 Kuoping Hsu
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
 // ============================================================================
 
 module jv32_core #(
-    parameter bit        RV32E_EN   = 1'b0,  // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
-    parameter bit        RV32M_EN   = 1'b1,  // 1=M-extension; 0=illegal for MUL/DIV
-    parameter bit        TRACE_EN   = 1'b1,  // 1=trace outputs active; 0=tied to 0
-    parameter bit        FAST_MUL   = 1'b1,
-    parameter bit        MUL_MC     = 1'b1,
-    parameter bit        FAST_DIV   = 1'b0,
-    parameter bit        FAST_SHIFT = 1'b1,
-    parameter bit        BP_EN      = 1'b1,
-    parameter bit        AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
-    parameter int        N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
-    parameter bit [31:0] BOOT_ADDR  = 32'h8000_0000
+    parameter bit                 RV32E_EN   = 1'b0,  // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit                 RV32M_EN   = 1'b1,  // 1=M-extension; 0=illegal for MUL/DIV
+    parameter bit                 TRACE_EN   = 1'b1,  // 1=trace outputs active; 0=tied to 0
+    parameter bit                 FAST_MUL   = 1'b1,
+    parameter bit                 MUL_MC     = 1'b1,
+    parameter bit                 FAST_DIV   = 1'b0,
+    parameter bit                 FAST_SHIFT = 1'b1,
+    parameter bit                 BP_EN      = 1'b1,
+    parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
+    parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
+    parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
+    parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
+    parameter int unsigned        IRAM_SIZE  = 128 * 1024,
+    parameter bit          [31:0] DRAM_BASE  = 32'hC000_0000,
+    parameter int unsigned        DRAM_SIZE  = 128 * 1024
 ) (
     input logic clk,
     input logic rst_n,
@@ -131,6 +114,17 @@ module jv32_core #(
     output logic        trace_irq_store_we,
     output logic [31:0] trace_irq_store_addr,
     output logic [31:0] trace_irq_store_data,
+
+    // Branch predictor performance counters (valid only when BP_EN=1; tied to 0 otherwise)
+    output logic perf_bp_branch,    // 1 conditional branch retired this cycle
+    output logic perf_bp_taken,     // 1 branch was actually taken
+    output logic perf_bp_mispred,   // 1 branch misprediction (EX redirect)
+    output logic perf_bp_jal,       // 1 JAL retired this cycle
+    output logic perf_bp_jal_miss,  // 1 JAL not pre-decoded (caused EX redirect)
+    output logic perf_bp_jalr,      // 1 JALR retired (always causes EX redirect)
+
+    // D-preload active during WB DRAM response cycle (consecutive loads; used by jv32_top tracking)
+    output logic d_preload_active,
 
     // mtime from platform timer (for time/timeh CSR)
     input logic [63:0] mtime_i
@@ -327,10 +321,15 @@ module jv32_core #(
     logic              irq_cancel;
     logic              trace_valid_r;
     logic              wb_retire;
+    logic              wb_redirect;
     // Forward declarations - defined in the IF stage section below
     logic              if_stall;
     logic              bp_redirect;
     logic       [31:0] bp_redirect_pc;
+    logic              bp_l0_valid;
+    logic       [31:0] bp_l0_pc;
+    logic       [31:0] bp_l0_target;
+    logic              bp_l0_taken;
 
     // EX->WB pipeline register
     ex_wb_t            ex_wb_r;
@@ -409,13 +408,10 @@ module jv32_core #(
 
     assign imem_req_valid = !dbg_halted_r;
 
-`ifdef IFETCH_PREADVANCE
     // Pre-advance: drive the *next* fetch address combinatorially so the SRAM
     // sees the new address in the same cycle that mem_ready/flush fires.
     // This eliminates the 1-cycle stale-echo after each fetch word, reducing
     // the CPI floor from 2.0 (32-bit) / 1.5 (compressed) to ~1.0 / 0.67.
-    // Trade-off: longer combinatorial path (SRAM out → RVC mem_ready →
-    // next-PC mux → SRAM in).  Check timing closure before enabling in synth.
     always_comb begin
         if (dbg_halted_r) imem_req_addr = pc_if;
         else if (dbg_pc_we_i) imem_req_addr = dbg_pc_wdata_i;
@@ -425,12 +421,11 @@ module jv32_core #(
         else if (rvc_mem_ready) imem_req_addr = pc_if + 32'd4;
         else imem_req_addr = pc_if;
     end
-`else
-    assign imem_req_addr = pc_if;
-`endif
 
     // =====================================================================
     // Static Branch Predictor: Backward-Taken / Forward-Not-Taken (BTFNT)
+    // + Unconditional JAL pre-decode
+    // + L0 last-branch target fast path (helps recurring forward-taken branches)
     //
     // Pre-decode runs on the expanded instruction at the RVC output, one
     // cycle before it is latched into the IF/EX register.
@@ -439,23 +434,31 @@ module jv32_core #(
     // instr[31].  A negative offset means a backward (likely loop-back)
     // branch -> predict taken.  A positive offset -> predict not-taken.
     //
-    // When predicting taken:
+    // For JAL (opcode 7'b110_1111) the target is always PC+J-imm and the
+    // redirect is always correct -> zero penalty unconditionally.
+    //
+    // When predicting taken (branch) or pre-decoding JAL:
     //   - pc_if is steered to the target (replaces the next sequential fetch)
     //   - The RVC buffer is flushed to discard any instruction already fetched
     //     from PC+4 that is now on the wrong path
-    //   - bp_taken=1 is recorded in the IF/EX register for the branch itself
+    //   - bp_taken=1 is recorded in the IF/EX register so EX skips its own
+    //     redirect (front-end already handled it)
     //
     // In EX the actual outcome is compared against the prediction:
-    //   - predicted NOT-taken but actually taken  -> redirect to branch_target
-    //   - predicted     taken  but actually not   -> redirect to PC+instr_size
-    //   - correct prediction                      -> no redirect (0-cycle penalty)
+    //   - JAL with bp_taken         -> no EX redirect (always correct)
+    //   - BRANCH correct prediction -> no redirect (0-cycle penalty)
+    //   - BRANCH misprediction      -> 1-cycle flush to corrected PC
     // =====================================================================
     logic        bp_is_branch;
+    logic        bp_is_jal;
+    logic        bp_l0_hit;
     logic [31:0] bp_imm;        // sign-extended B-type immediate
-    logic [31:0] bp_target_if;  // predicted branch target
+    logic [31:0] bp_jal_imm;    // sign-extended J-type immediate for JAL
+    logic [31:0] bp_target_if;  // predicted branch/JAL target
 
-    // Identify BRANCH opcode on the expanded instruction
+    // Identify BRANCH and JAL opcodes on the expanded instruction
     assign bp_is_branch = (rvc_instr_data[6:0] == 7'b110_0011);
+    assign bp_is_jal = (rvc_instr_data[6:0] == 7'b110_1111);
 
     // Reconstruct B-immediate: {signx19, imm[12], imm[11], imm[10:5], imm[4:1], 1'b0}
     assign bp_imm = {
@@ -467,12 +470,31 @@ module jv32_core #(
         1'b0
     };
 
-    assign bp_target_if = rvc_instr_pc + bp_imm;
+    // Reconstruct J-immediate: {signx11, imm[20], imm[10:1], imm[11], imm[19:12], 1'b0}
+    assign bp_jal_imm = {
+        {11{rvc_instr_data[31]}},
+        rvc_instr_data[31],     // imm[20]
+        rvc_instr_data[19:12],  // imm[19:12]
+        rvc_instr_data[20],     // imm[11]
+        rvc_instr_data[30:21],  // imm[10:1]
+        1'b0
+    };
 
-    // Predict taken only for backward branches (negative offset -> imm signed < 0).
-    // Suppress if a higher-priority flush is already in flight or pipeline is stalled.
-    assign bp_redirect = BP_EN && bp_is_branch && rvc_instr_data[31] && rvc_instr_valid && !if_stall && !if_flush;
-    assign bp_redirect_pc = bp_target_if;
+    // Mux branch vs JAL target
+    assign bp_target_if = rvc_instr_pc + (bp_is_jal ? bp_jal_imm : bp_imm);
+
+    // L0 last-branch fast path: if this PC recently resolved taken, reuse target.
+    assign bp_l0_hit = BP_EN && bp_l0_valid && bp_l0_taken && bp_is_branch
+                       && rvc_instr_valid && (rvc_instr_pc == bp_l0_pc);
+
+    // Redirect for:
+    //   - Backward-taken branches (BTFNT: imm[31]=1 means negative offset)
+    //   - L0-hit branches that were recently resolved as taken (any direction)
+    //   - All JAL instructions (always-taken unconditional jump)
+    // Suppress if a higher-priority flush is in flight or pipeline is stalled.
+    assign bp_redirect = BP_EN && rvc_instr_valid && !if_stall && !if_flush &&
+                         ((bp_is_branch && (rvc_instr_data[31] || bp_l0_hit)) || bp_is_jal);
+    assign bp_redirect_pc = bp_l0_hit ? bp_l0_target : bp_target_if;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) pc_if <= BOOT_ADDR;
@@ -483,6 +505,7 @@ module jv32_core #(
             else if (rvc_mem_ready) pc_if <= pc_if + 32'd4;
         end
     end
+
     logic ex_stall;  // stall EX stage (and upstream)
     logic ex_flush;  // inject bubble into EX
     logic load_use_stall;
@@ -570,19 +593,20 @@ module jv32_core #(
     // =====================================================================
     // Forwarding: WB->EX (single forwarding path)
     // =====================================================================
-    // Suppress WB->EX forwarding when the WB result is sourced from a live
-    // SRAM output (regular loads and LR atomics).  The SRAM launches on the
-    // falling clock edge, leaving only half a period (~5 ns) before ex_wb_r
-    // must capture - far too little for the alignment->sign-extend->fwd-mux->
-    // ALU->ex_wb_r chain.  Instead, a load-use stall (see below) guarantees
-    // the register file is written one full cycle before the dependent
-    // instruction re-enters EX, so it reads a registered value there.
+    // For non-load instructions, wb_rd_data is a registered FF (ex_wb_r.rd_data),
+    // so forwarding is unconditionally safe.
     //
-    // Non-load forwarding (ex_wb_r.rd_data is already a registered FF
-    // output) remains active and still meets timing with a full 10 ns window.
+    // For loads (load_uses_sram=1), wb_rd_data is computed combinatorially from
+    // dmem_resp_data (the SRAM registered output).  The SRAM captures the
+    // address at posedge N and presents stable data from posedge N onward,
+    // so the forward path (dmem_resp_data -> sign-extend -> fwd-mux -> ALU ->
+    // ex_wb_r latch) has a full clock cycle when dmem_resp_valid=1.  We
+    // therefore allow forwarding as soon as dmem_resp_valid is asserted.
     //
-    // AMO non-LR operations forward from amo_load_data (registered), so
-    // they are also safe and left enabled.
+    // When dmem_resp_valid=0 (SRAM has not responded yet) the load_use_stall
+    // below inserts a bubble and keeps the consumer in EX until the data
+    // arrives.  AMO non-LR operations forward from amo_load_data (registered)
+    // and are excluded from load_uses_sram.
     logic load_uses_sram;  // true when WB write-back data comes from live SRAM
     assign load_uses_sram = ex_wb_r.mem_read && (!ex_wb_r.is_amo || ex_wb_r.amo_op == AMO_LR);
 
@@ -590,7 +614,7 @@ module jv32_core #(
     always_comb begin
         fwd_rs1 = rs1_data;
         fwd_rs2 = rs2_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0 && !load_uses_sram) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0 && (!load_uses_sram || dmem_resp_valid)) begin
             if (ex_wb_r.rd_addr == dec_rs1) fwd_rs1 = wb_rd_data;
             if (ex_wb_r.rd_addr == dec_rs2) fwd_rs2 = wb_rd_data;
         end
@@ -627,6 +651,26 @@ module jv32_core #(
         endcase
     end
 
+    // Update L0 last-branch entry on each resolved branch.
+    // This is intentionally tiny and conservative: one entry, no tags beyond PC.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            bp_l0_valid  <= 1'b0;
+            bp_l0_pc     <= 32'h0;
+            bp_l0_target <= 32'h0;
+            bp_l0_taken  <= 1'b0;
+        end
+        else if (dbg_pc_we_i) begin
+            bp_l0_valid <= 1'b0;
+        end
+        else if (if_ex_r.valid && dec_branch && !ex_stall && !load_use_stall) begin
+            bp_l0_valid  <= 1'b1;
+            bp_l0_pc     <= pc_ex;
+            bp_l0_target <= branch_target;
+            bp_l0_taken  <= branch_taken;
+        end
+    end
+
     // Redirect PC
     logic [31:0] redirect_pc_ex;
     logic        redirect_ex;
@@ -635,8 +679,12 @@ module jv32_core #(
         redirect_pc_ex = 32'h0;
         if (if_ex_r.valid) begin
             if (dec_jal) begin
-                redirect_ex    = 1'b1;
-                redirect_pc_ex = pc_ex + dec_imm;
+                // If the front-end already pre-decoded this JAL (bp_taken=1),
+                // pc_if is already pointing at the target -- no EX redirect needed.
+                if (!if_ex_r.bp_taken) begin
+                    redirect_ex    = 1'b1;
+                    redirect_pc_ex = pc_ex + dec_imm;
+                end
             end
             if (dec_jalr) begin
                 redirect_ex    = 1'b1;
@@ -850,33 +898,23 @@ module jv32_core #(
             else if (dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
                       || (dbg_step_pending_r && trace_valid_r)) begin
-                // When EBREAK fires while a load is still waiting for its DMEM
-                // response (1-cycle TCM latency), delay halting by one cycle so
-                // the load writeback completes before dbg_halted_r suppresses
-                // wb_retire.  All other halt sources (halt_req, trigger, step)
-                // are unaffected by this guard.
-                if (!dbg_enter_debug || !(ex_wb_r.valid && ex_wb_r.mem_read && !dmem_resp_valid)) begin
-                    dbg_halted_r       <= 1'b1;
-                    trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
-                    trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
-                    // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
-                    dbg_step_pending_r <= 1'b0;
-                    // After a single-step halt, block re-resume until resumereq deasserts
-                    if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
-                end
-                // else: one-cycle delay; EBREAK stays in EX, load WB completes next cycle
+                dbg_halted_r       <= 1'b1;
+                trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
+                trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
+                // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
+                dbg_step_pending_r <= 1'b0;
+                // After a single-step halt, block re-resume until resumereq deasserts
+                if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
             end
         end
     end
 
-    // Load-use hazard: stall whenever WB holds a load/LR result (live SRAM
-    // data) and EX needs it.  The condition is intentionally NOT gated on
-    // !dmem_resp_valid: even for TCM loads that respond in one cycle, we
-    // must add one extra bubble so that (a) forwarding through the long
-    // SRAM->ALU path is never needed and (b) the register file is written
-    // before the dependent instruction re-reads it.  Non-LR AMO ops use
-    // amo_load_data (registered) and are therefore excluded.
-    assign load_use_stall = ex_wb_r.valid && load_uses_sram &&
+    // Load-use hazard: stall only when WB holds a load/LR result whose SRAM
+    // data is not yet available (dmem_resp_valid=0).  When dmem_resp_valid=1
+    // the load result is forwarded combinatorially via load_result -> wb_rd_data
+    // -> fwd_rs1/fwd_rs2 directly into the EX ALU, eliminating the bubble.
+    // Non-LR AMO ops use amo_load_data (registered) and are therefore excluded.
+    assign load_use_stall = ex_wb_r.valid && load_uses_sram && !dmem_resp_valid &&
                             ((ex_wb_r.rd_addr == dec_rs1 && dec_rs1 != 5'd0) ||
                              (ex_wb_r.rd_addr == dec_rs2 && dec_rs2 != 5'd0 &&
                               (!dec_alu_src || dec_mem_write || dec_branch || dec_is_amo)));
@@ -912,17 +950,89 @@ module jv32_core #(
     end
 
     // Dmem driver
-    logic dmem_stall;
+    logic        dmem_stall;
+    logic        sb_valid;
+    logic [31:0] sb_addr;
+    logic [31:0] sb_wdata;
+    logic [ 3:0] sb_wstrb;
+    logic        sb_fire;
+    logic        sb_commit_ex;
+
+    function automatic logic is_tcm_addr(input logic [31:0] addr);
+        logic hit_iram, hit_dram;
+        hit_iram = (addr & ~(32'(IRAM_SIZE) - 32'h1)) == (IRAM_BASE & ~(32'(IRAM_SIZE) - 32'h1));
+        hit_dram = (addr & ~(32'(DRAM_SIZE) - 32'h1)) == (DRAM_BASE & ~(32'(DRAM_SIZE) - 32'h1));
+        return hit_iram || hit_dram;
+    endfunction
+
+    // Relaxed store path: only for non-atomic stores into local TCM regions.
+    // These stores can retire without waiting on dmem_resp_valid.
+    // Loads/AMO and non-TCM stores remain strict and keep precise fault behavior.
+    assign sb_commit_ex = ex_wb_r.valid && ex_wb_r.mem_write && !ex_wb_r.is_amo && !irq_cancel && is_tcm_addr(
+        ex_wb_r.mem_addr
+    );
+
+    // D-path pre-advance: issue a TCM load request from EX (using mem_addr_ex) one
+    // cycle before the instruction enters WB.  The TCM SRAM responds with a 1-cycle
+    // registered latency, so the data is ready the moment the load reaches WB --
+    // eliminating the dmem_stall cycle that would otherwise occur.
+    //
+    // Conditions (all must hold):
+    //   - Load in EX with no address-exception
+    //   - Pipeline not stalled or redirected (no WB exception/mret/irq in flight)
+    //   - Store buffer idle (prevents D-bus contention)
+    //   - WB has no active memory op (prevents D-bus double-booking)
+    //   - Target address is TCM (AXI loads are not pre-advanced)
+    logic d_preload_valid;
+
+    // Helper: true when the D-load address is in DRAM (not IRAM).
+    // IRAM loads share the single-port SRAM with I-fetch.  Pre-advancing a DRAM
+    // load uses a separate SRAM and does not displace any I-fetch, so it is
+    // always safe to pre-advance.  Pre-advancing an IRAM load would steal the
+    // IRAM port 1 cycle early (outside the normal dmem_stall window where the
+    // pipeline is already frozen), creating a net-zero trade: the 1-cycle dmem_stall
+    // saving is offset by a 1-cycle I-fetch bubble.  Skip IRAM loads.
+    function automatic logic in_dram_addr(input logic [31:0] addr);
+        return (addr & ~(32'(DRAM_SIZE) - 32'h1)) == (DRAM_BASE & ~(32'(DRAM_SIZE) - 32'h1));
+    endfunction
+
+    // Base preload conditions (without WB-mem guard): used when stealing the SRAM
+    // port during the WB DRAM-load response cycle (consecutive DRAM loads).
+    logic d_preload_valid_base;
+    assign d_preload_valid_base = if_ex_r.valid && dec_mem_read && !ex_exception
+                                  && !ex_stall && !load_use_stall && !wb_redirect
+                                  && !sb_valid
+                                  && in_dram_addr(
+        mem_addr_ex
+    );
+
+    // Full d_preload guard: additionally requires WB to have no active memory op.
+    assign d_preload_valid = d_preload_valid_base
+                             && (!ex_wb_r.valid
+                                 || (!ex_wb_r.mem_read && !ex_wb_r.mem_write && !ex_wb_r.is_amo));
 
     always_comb begin
-        dmem_req_valid = 1'b0;
-        dmem_req_write = 1'b0;
-        dmem_req_addr  = 32'h0;
-        dmem_req_wdata = 32'h0;
-        dmem_req_wstrb = 4'h0;
-        dmem_stall     = 1'b0;
+        dmem_req_valid   = 1'b0;
+        dmem_req_write   = 1'b0;
+        dmem_req_addr    = 32'h0;
+        dmem_req_wdata   = 32'h0;
+        dmem_req_wstrb   = 4'h0;
+        dmem_stall       = 1'b0;
+        sb_fire          = 1'b0;
+        d_preload_active = 1'b0;
 
-        if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
+        // Drain the queued relaxed store independently from EX/WB progress.
+        if (sb_valid) begin
+            dmem_req_valid = 1'b1;
+            dmem_req_write = 1'b1;
+            dmem_req_addr  = sb_addr;
+            dmem_req_wdata = sb_wdata;
+            dmem_req_wstrb = sb_wstrb;
+            sb_fire        = dmem_resp_valid;
+            // If EX/WB currently needs memory, hold it until the older queued store drains.
+            if (ex_wb_r.valid && (ex_wb_r.mem_read || ex_wb_r.mem_write || ex_wb_r.is_amo)) dmem_stall = 1'b1;
+        end
+        else if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
             if (ex_wb_r.is_amo) begin
                 case (amo_state)
                     AMO_IDLE: begin
@@ -979,17 +1089,73 @@ module jv32_core #(
             end
             else if (ex_wb_r.mem_read) begin
                 dmem_req_valid = 1'b1;
-                dmem_req_addr  = ex_wb_r.mem_addr;
-                if (!dmem_resp_valid) dmem_stall = 1'b1;
+                if (!dmem_resp_valid) begin
+                    // First stall cycle: issue the SRAM read address normally.
+                    dmem_req_addr = ex_wb_r.mem_addr;
+                    dmem_stall    = 1'b1;
+                end
+                else if (d_preload_valid_base) begin
+                    // Response cycle: steal SRAM port for the next DRAM load
+                    // so it arrives 1 cycle earlier (consecutive DRAM loads).
+                    dmem_req_addr    = mem_addr_ex;
+                    d_preload_active = 1'b1;
+                end
+                else begin
+                    // Response cycle, no preload: re-drive old address
+                    // (spurious; jv32_top tracking gate suppresses it).
+                    dmem_req_addr = ex_wb_r.mem_addr;
+                end
             end
             else if (ex_wb_r.mem_write) begin
-                dmem_req_valid = 1'b1;
-                dmem_req_write = 1'b1;
-                dmem_req_addr = ex_wb_r.mem_addr;
-                dmem_req_wdata = ex_wb_r.store_data;
-                dmem_req_wstrb = ex_wb_r.mem_op == MEM_BYTE ? (4'b0001 << ex_wb_r.mem_addr[1:0]) :
-                                 ex_wb_r.mem_op == MEM_HALF ? (4'b0011 << ex_wb_r.mem_addr[1:0]) : 4'b1111;
-                if (!dmem_resp_valid) dmem_stall = 1'b1;
+                // TCM stores are enqueued and retired without waiting for a response.
+                // Non-TCM stores stay strict to preserve precise fault behavior.
+                if (sb_commit_ex) begin
+                    if (sb_valid) dmem_stall = 1'b1;
+                end
+                else begin
+                    dmem_req_valid = 1'b1;
+                    dmem_req_write = 1'b1;
+                    dmem_req_addr = ex_wb_r.mem_addr;
+                    dmem_req_wdata = ex_wb_r.store_data;
+                    dmem_req_wstrb = ex_wb_r.mem_op == MEM_BYTE ? (4'b0001 << ex_wb_r.mem_addr[1:0]) :
+                                     ex_wb_r.mem_op == MEM_HALF ? (4'b0011 << ex_wb_r.mem_addr[1:0]) : 4'b1111;
+                    if (!dmem_resp_valid) dmem_stall = 1'b1;
+                end
+            end
+            else begin
+                // Non-memory WB (ALU, branch, JAL, etc.): DRAM port is idle;
+                // allow d_preload for the next instruction if available.
+                if (d_preload_valid) begin
+                    dmem_req_valid = 1'b1;
+                    dmem_req_addr  = mem_addr_ex;
+                end
+            end
+        end
+        // D-path pre-advance: WB is empty — issue TCM load address from EX so
+        // the SRAM response is already valid when the instruction reaches WB.
+        else if (d_preload_valid) begin
+            dmem_req_valid = 1'b1;
+            dmem_req_addr  = mem_addr_ex;
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sb_valid <= 1'b0;
+            sb_addr  <= 32'h0;
+            sb_wdata <= 32'h0;
+            sb_wstrb <= 4'h0;
+        end
+        else begin
+            if (sb_fire) sb_valid <= 1'b0;
+
+            // Queue relaxed store on WB commit when the store queue is free.
+            if (wb_retire && sb_commit_ex && !sb_valid) begin
+                sb_valid <= 1'b1;
+                sb_addr <= ex_wb_r.mem_addr;
+                sb_wdata <= ex_wb_r.store_data;
+                sb_wstrb <= ex_wb_r.mem_op == MEM_BYTE ? (4'b0001 << ex_wb_r.mem_addr[1:0]) :
+                           ex_wb_r.mem_op == MEM_HALF ? (4'b0011 << ex_wb_r.mem_addr[1:0]) : 4'b1111;
             end
         end
     end
@@ -1002,7 +1168,7 @@ module jv32_core #(
             lr_valid      <= 1'b0;
             lr_addr       <= 32'h0;
         end
-        else if (ex_wb_r.valid && ex_wb_r.is_amo) begin
+        else if (ex_wb_r.valid && ex_wb_r.is_amo && !sb_valid) begin
             case (amo_state)
                 AMO_IDLE: begin
                     if (ex_wb_r.amo_op == AMO_LR && dmem_resp_valid) begin
@@ -1107,10 +1273,55 @@ module jv32_core #(
     // result, so any branch decision made here is meaningless.
     assign ex_flush = redirect_ex && !ex_stall && !load_use_stall;
 
+    // =====================================================================
+    // Branch predictor performance counters
+    // =====================================================================
+    // When TRACE_EN=1: combinatorial pulses, one per retiring branch/JAL/JALR.
+    // When TRACE_EN=0 + simulation (!SYNTHESIS): same, so testbench can print
+    //   stats even in TRACE_EN=0 builds.
+    // When TRACE_EN=0 + synthesis: all tied to 0 — no logic generated.
+    generate
+        if (TRACE_EN) begin : gen_perf_bp
+            logic ex_valid_retire;
+            assign ex_valid_retire  = if_ex_r.valid && !ex_stall && !load_use_stall && !ex_exception;
+
+            assign perf_bp_branch   = ex_valid_retire && dec_branch;
+            assign perf_bp_taken    = ex_valid_retire && dec_branch && branch_taken;
+            assign perf_bp_mispred  = ex_valid_retire && dec_branch && (branch_taken != if_ex_r.bp_taken);
+            assign perf_bp_jal      = ex_valid_retire && dec_jal;
+            assign perf_bp_jal_miss = ex_valid_retire && dec_jal && !if_ex_r.bp_taken;
+            assign perf_bp_jalr     = ex_valid_retire && dec_jalr;
+        end
+        else begin : gen_no_perf_bp
+`ifndef SYNTHESIS
+            // Simulation only: keep logic active so testbench stats remain valid
+            // even when TRACE_EN=0.  The `ifndef SYNTHESIS guard means the synthesis
+            // tool never sees these nets — gate count is unchanged.
+            logic ex_valid_retire;
+            assign ex_valid_retire  = if_ex_r.valid && !ex_stall && !load_use_stall && !ex_exception;
+
+            assign perf_bp_branch   = ex_valid_retire && dec_branch;
+            assign perf_bp_taken    = ex_valid_retire && dec_branch && branch_taken;
+            assign perf_bp_mispred  = ex_valid_retire && dec_branch && (branch_taken != if_ex_r.bp_taken);
+            assign perf_bp_jal      = ex_valid_retire && dec_jal;
+            assign perf_bp_jal_miss = ex_valid_retire && dec_jal && !if_ex_r.bp_taken;
+            assign perf_bp_jalr     = ex_valid_retire && dec_jalr;
+`else
+            // Synthesis with TRACE_EN=0: tie all counters to 0 (no logic added).
+            assign perf_bp_branch   = 1'b0;
+            assign perf_bp_taken    = 1'b0;
+            assign perf_bp_mispred  = 1'b0;
+            assign perf_bp_jal      = 1'b0;
+            assign perf_bp_jal_miss = 1'b0;
+            assign perf_bp_jalr     = 1'b0;
+`endif
+        end
+    endgenerate
+
     // wb_redirect: WB stage is redirecting the PC (exception/mret/irq).
     // When this fires, the instruction currently in IF/EX must be squashed
     // (not promoted to EX/WB), because it's on the wrong control-flow path.
-    logic wb_redirect;
+    // (declared as a forward reference above, near line 313)
     assign wb_redirect = wb_exception
                       || (ex_wb_r.valid && ex_wb_r.mret)
                       || (csr_irq_pending && ex_wb_r.valid
@@ -1132,17 +1343,8 @@ module jv32_core #(
                           dbg_resume_flush ? pc_if             :
                                              bp_redirect_pc;
 
-    // Expose flush so jv32_top can suppress stale TCM SRAM responses.
-    // With IFETCH_PREADVANCE the SRAM address is driven combinatorially in the
-    // same cycle bp_redirect fires, so the 1-cycle-later SRAM response already
-    // carries the correct branch-target data and must NOT be invalidated.
-    // Only genuine pipeline flushes (exception, EX mispredict, debug) need to
-    // suppress the in-flight response.
-`ifdef IFETCH_PREADVANCE
-    assign imem_flush = if_flush || dbg_pc_we_i || dbg_resume_flush;
-`else
+    // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
-`endif
 
     // =====================================================================
     // EX->WB Pipeline Register

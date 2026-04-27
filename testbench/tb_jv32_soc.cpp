@@ -310,6 +310,14 @@ int main(int argc, char** argv) {
     bool     timeout_hit = false;
     auto     time_begin  = std::chrono::steady_clock::now();
 
+    // Branch predictor performance counters
+    uint64_t bp_branches  = 0;   // conditional branches
+    uint64_t bp_taken     = 0;   // branches actually taken
+    uint64_t bp_mispred   = 0;   // branch mispredictions
+    uint64_t bp_jal       = 0;   // JAL instructions
+    uint64_t bp_jal_miss  = 0;   // JALs not pre-decoded (caused EX redirect)
+    uint64_t bp_jalr      = 0;   // JALR instructions (always cause EX redirect)
+
     while (!g_sigint && !g_exit_requested && !ctx->gotFinish() &&
            (max_cycles == 0 || cycle < max_cycles)) {
         if (g_sigint) break;
@@ -340,6 +348,14 @@ int main(int argc, char** argv) {
                                dut->trace_mem_data);
             }
         }
+
+        // Accumulate branch predictor stats each cycle.
+        if (dut->perf_bp_branch)   bp_branches++;
+        if (dut->perf_bp_taken)    bp_taken++;
+        if (dut->perf_bp_mispred)  bp_mispred++;
+        if (dut->perf_bp_jal)      bp_jal++;
+        if (dut->perf_bp_jal_miss) bp_jal_miss++;
+        if (dut->perf_bp_jalr)     bp_jalr++;
         // Emit IRQ-taken hint line (one cycle after interrupt is accepted).
         // insn=<instret> gives the total retirement count at this cycle so the
         // SW simulator can fire the interrupt at the exact same instruction.
@@ -394,6 +410,26 @@ int main(int argc, char** argv) {
 
     fprintf(stderr, "[RTL-SIM] %llu cycles, %llu instructions retired, CPI=%.3f\n",
             (unsigned long long)cycle, (unsigned long long)instret, cpi);
+
+    if (bp_branches > 0) {
+        double taken_pct   = 100.0 * (double)bp_taken    / (double)bp_branches;
+        double mispred_pct = 100.0 * (double)bp_mispred  / (double)bp_branches;
+        double correct_pct = 100.0 - mispred_pct;
+        fprintf(stderr, "[RTL-SIM] Branch predictor statistics (BTFNT+L0):\n");
+        fprintf(stderr, "[RTL-SIM]   Conditional branches   : %9llu  taken: %llu (%.1f%%)\n",
+                (unsigned long long)bp_branches,
+                (unsigned long long)bp_taken, taken_pct);
+        fprintf(stderr, "[RTL-SIM]   Mispredictions        : %9llu  rate:  %.1f%%  (accuracy: %.1f%%)\n",
+                (unsigned long long)bp_mispred, mispred_pct, correct_pct);
+        if (bp_jal > 0)
+            fprintf(stderr, "[RTL-SIM]   JAL (pre-decoded/miss): %9llu  miss:  %llu (%.1f%%)\n",
+                    (unsigned long long)bp_jal,
+                    (unsigned long long)bp_jal_miss,
+                    100.0 * (double)bp_jal_miss / (double)bp_jal);
+        if (bp_jalr > 0)
+            fprintf(stderr, "[RTL-SIM]   JALR (always 1-cycle) : %9llu\n",
+                    (unsigned long long)bp_jalr);
+    }
 
     fprintf(stderr, "[RTL-SIM] Run stats: wall=%.6f s, cycles=%llu, eff_freq=%.3f MHz, CPI=%.3f\n",
          elapsed_seconds,

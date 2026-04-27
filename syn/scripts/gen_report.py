@@ -829,7 +829,6 @@ def main():
     ap.add_argument("--fast-div",    default="?")
     ap.add_argument("--fast-shift",  default="?")
     ap.add_argument("--bp-en",       default="?")
-    ap.add_argument("--ifetch-preadvance", default="?")
     ap.add_argument("--iram-kb",     default="?")
     ap.add_argument("--dram-kb",     default="?")
     ap.add_argument("--clock-mhz",   default="?")
@@ -897,7 +896,6 @@ def main():
 | `FAST_DIV` | {args.fast_div} |
 | `FAST_SHIFT` | {args.fast_shift} |
 | `BP_EN` | {args.bp_en} |
-| `IFETCH_PREADVANCE` | {args.ifetch_preadvance} |
 
 ---
 
