@@ -908,9 +908,10 @@ module jv32_core #(
                 trigger_halt_r     <= 1'b0;  // clear trigger cause on resume
                 trigger_hit_r      <= '0;    // clear per-trigger hit bits on resume
             end
-            else if (dbg_enter_debug || trigger_match
+            else if ((dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
-                      || (dbg_step_pending_r && trace_valid_r)) begin
+                      || (dbg_step_pending_r && trace_valid_r))
+                      && !dmem_stall) begin
                 dbg_halted_r       <= 1'b1;
                 trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
                 trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
