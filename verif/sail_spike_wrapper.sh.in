@@ -3,7 +3,7 @@ set -eu
 
 if [ "${1:-}" = "--version" ]; then
     # ACT4 checks Sail version exactly; keep compatibility.
-    echo "0.10"
+    echo "0.11"
     exit 0
 fi
 

@@ -614,7 +614,7 @@ module jv32_core #(
     always_comb begin
         fwd_rs1 = rs1_data;
         fwd_rs2 = rs2_data;
-        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0 && (!load_uses_sram || dmem_resp_valid)) begin
+        if (ex_wb_r.valid && ex_wb_r.reg_we && ex_wb_r.rd_addr != 5'd0 && (!load_uses_sram || dmem_resp_valid_rd)) begin
             if (ex_wb_r.rd_addr == dec_rs1) fwd_rs1 = wb_rd_data;
             if (ex_wb_r.rd_addr == dec_rs2) fwd_rs2 = wb_rd_data;
         end
@@ -909,12 +909,30 @@ module jv32_core #(
         end
     end
 
+    // Distinguish read responses from write-ack pulses.
+    // When the store buffer fires a DRAM write, dram_used_by_core_d_d=1 makes
+    // dmem_resp_valid=1 the following cycle.  But the SRAM output carries the
+    // write-cycle data (NO_CHANGE = undefined/'x), not the load's read data.
+    // dmem_was_write_d tracks dmem_req_write one cycle back so we can gate
+    // all load-data uses on a clean read-only response flag.
+    //
+    // dmem_resp_valid        (unchanged) — still used for: sb_fire,
+    //                        strict-store dmem_stall, AMO_STORE_WAIT.
+    // dmem_resp_valid_rd     — load_use_stall, forwarding, read dmem_stall.
+    logic dmem_was_write_d;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) dmem_was_write_d <= 1'b0;
+        else dmem_was_write_d <= dmem_req_valid && dmem_req_write;
+    end
+    logic dmem_resp_valid_rd;
+    assign dmem_resp_valid_rd = dmem_resp_valid && !dmem_was_write_d;
+
     // Load-use hazard: stall only when WB holds a load/LR result whose SRAM
-    // data is not yet available (dmem_resp_valid=0).  When dmem_resp_valid=1
+    // data is not yet available (dmem_resp_valid_rd=0).  When dmem_resp_valid_rd=1
     // the load result is forwarded combinatorially via load_result -> wb_rd_data
     // -> fwd_rs1/fwd_rs2 directly into the EX ALU, eliminating the bubble.
     // Non-LR AMO ops use amo_load_data (registered) and are therefore excluded.
-    assign load_use_stall = ex_wb_r.valid && load_uses_sram && !dmem_resp_valid &&
+    assign load_use_stall = ex_wb_r.valid && load_uses_sram && !dmem_resp_valid_rd &&
                             ((ex_wb_r.rd_addr == dec_rs1 && dec_rs1 != 5'd0) ||
                              (ex_wb_r.rd_addr == dec_rs2 && dec_rs2 != 5'd0 &&
                               (!dec_alu_src || dec_mem_write || dec_branch || dec_is_amo)));
@@ -1089,8 +1107,9 @@ module jv32_core #(
             end
             else if (ex_wb_r.mem_read) begin
                 dmem_req_valid = 1'b1;
-                if (!dmem_resp_valid) begin
-                    // First stall cycle: issue the SRAM read address normally.
+                if (!dmem_resp_valid_rd) begin
+                    // First stall cycle (or stale write-ack): issue the SRAM
+                    // read address normally.
                     dmem_req_addr = ex_wb_r.mem_addr;
                     dmem_stall    = 1'b1;
                 end
@@ -1549,12 +1568,18 @@ module jv32_core #(
                     trace_irq_store_data <= 32'h0;
                 end
                 else if (trace_en) begin
-                    trace_irq_taken      <= irq_cancel && ex_wb_r.valid;
+                    // Gate on !ex_stall: the CSR only commits the interrupt when
+                    // wb_retire=1 (wb_valid=1 in jv32_csr).  If ex_stall=1 (e.g.
+                    // sb_valid draining while a DRAM load is in WB), irq_cancel is
+                    // asserted one cycle early before the interrupt is accepted.
+                    // Without this gate a spurious extra hint fires, causing the
+                    // software sim to replay two interrupts for one RTL event.
+                    trace_irq_taken      <= irq_cancel && !ex_stall;
                     trace_irq_cause      <= csr_irq_cause;
                     trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
                     // squashed-store: the interrupt fires in the 2nd WB cycle of a
                     // store (dmem_resp_valid=1 means the DRAM write already committed)
-                    trace_irq_store_we   <= irq_cancel && ex_wb_r.valid && ex_wb_r.mem_write && dmem_resp_valid;
+                    trace_irq_store_we   <= irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid;
                     trace_irq_store_addr <= ex_wb_r.mem_addr;
                     trace_irq_store_data <= trace_mem_data_c;
                 end
@@ -1617,10 +1642,10 @@ module jv32_core #(
                     trace_irq_store_data <= 32'h0;
                 end
                 else if (trace_en) begin
-                    trace_irq_taken      <= irq_cancel && ex_wb_r.valid;
+                    trace_irq_taken      <= irq_cancel && !ex_stall;
                     trace_irq_cause      <= csr_irq_cause;
                     trace_irq_epc        <= ex_wb_r.pc;
-                    trace_irq_store_we   <= irq_cancel && ex_wb_r.valid && ex_wb_r.mem_write && dmem_resp_valid;
+                    trace_irq_store_we   <= irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid;
                     trace_irq_store_addr <= ex_wb_r.mem_addr;
                     trace_irq_store_data <= trace_mem_data_c;
                 end
