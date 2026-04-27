@@ -90,6 +90,10 @@ module jv32_core #(
     // I-fetch flush: asserted on branch/jump/exception/mret/IRQ redirect.
     // Allows jv32_top to suppress the stale TCM response arriving one cycle later.
     output logic imem_flush,
+    // FENCE.I-specific flush: only for fence.i redirects.  jv32_top uses this
+    // to suppress the 1-cycle stale TCM response that arrives after a fence.i
+    // redirect WITHOUT adding a bubble to every other branch/jump redirect.
+    output logic fencei_iflush,
 
     // Trace (one entry per retired instruction)
     // trace_en=0 suppresses all trace outputs to save power.
@@ -713,6 +717,15 @@ module jv32_core #(
                         redirect_pc_ex = pc_ex + (if_ex_r.is_compressed ? 32'd2 : 32'd4);
                     end
                 end
+            end
+            if (dec_is_fence_i) begin
+                // FENCE.I: flush the fetch pipeline so subsequent instruction
+                // fetches see any data writes that preceded this instruction.
+                // Without this flush, pre-fetched stale instructions sitting in
+                // the RVC buffer would be executed instead of the newly written
+                // ones.  Redirect to PC+4 (fence.i is never compressed).
+                redirect_ex    = 1'b1;
+                redirect_pc_ex = pc_ex + 32'd4;
             end
         end
     end
@@ -1364,6 +1377,11 @@ module jv32_core #(
 
     // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
+    // fencei_iflush: 1 on the cycle fence.i fires its pipeline redirect.
+    // Used by jv32_top to gate the next SRAM I-fetch response (which was issued
+    // before the preceding store committed).  Only applies to fence.i — not to
+    // normal branches/JALR — so no performance penalty on other redirects.
+    assign fencei_iflush = if_ex_r.valid && dec_is_fence_i && !ex_stall && !load_use_stall;
 
     // =====================================================================
     // EX->WB Pipeline Register
@@ -1688,9 +1706,9 @@ module jv32_core #(
         end
     endgenerate
 
-    // Suppress unused warnings for WFI/fence/fence_i (treated as NOPs here)
+    // Suppress unused warnings for WFI/fence (treated as NOPs here)
     logic _unused;
-    assign _unused = &{1'b0, dec_is_wfi, dec_is_fence, dec_is_fence_i,
+    assign _unused = &{1'b0, dec_is_wfi, dec_is_fence,
                        ex_wb_r.csr_op, ex_wb_r.csr_addr, ex_wb_r.csr_wdata, ex_wb_r.csr_zimm,
                        ex_wb_r.redirect, ex_wb_r.redirect_pc};
 

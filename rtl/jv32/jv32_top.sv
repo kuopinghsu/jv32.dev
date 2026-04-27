@@ -261,6 +261,7 @@ module jv32_top #(
     logic        imem_resp_fault;     // AXI I-fetch returned non-OKAY response (DECERR)
     logic [31:0] imem_resp_fault_pc;  // exact request PC for the faulting AXI response
     logic        imem_flush_core;     // rvc_flush from core
+    logic        fencei_iflush_core;  // fence.i-specific redirect pulse
 
     logic        dmem_req_valid;
     logic        dmem_req_write;
@@ -326,6 +327,7 @@ module jv32_top #(
         .tdata1_i            (dbg_tdata1_i),
         .tdata2_i            (dbg_tdata2_i),
         .imem_flush          (imem_flush_core),
+        .fencei_iflush       (fencei_iflush_core),
         .dmem_req_valid      (dmem_req_valid),
         .dmem_req_write      (dmem_req_write),
         .dmem_req_addr       (dmem_req_addr),
@@ -699,12 +701,15 @@ module jv32_top #(
             // Was the D-path a write?
             dmem_was_write_d      <= dmem_req_write;
 
-            // IFETCH_PREADVANCE: the SRAM already sees the new (correct) address
-            // combinatorially in the same cycle as the flush fires, so the response
-            // arriving one cycle later is always valid — no stale echo to suppress.
-            // Keeping imem_flush_d=0 prevents the 1-cycle bubble that would otherwise
-            // occur after every correctly-predicted backward-taken branch.
-            imem_flush_d          <= 1'b0;
+            // FENCE.I: gate the stale SRAM I-fetch response that arrives the cycle
+            // after a fence.i redirect.  A fence.i write to IRAM (via the store
+            // buffer) commits to SRAM in the same cycle as the post-redirect
+            // re-fetch is issued, so the SRAM returns old (pre-write) data.  By
+            // holding imem_flush_d=1 for that one cycle we force a second fetch
+            // which returns the freshly-written instruction.  We only suppress
+            // here for fence.i (not all branches/jumps) to avoid a 1-cycle
+            // penalty on every other redirect.
+            imem_flush_d          <= fencei_iflush_core;
 
             // Register I-fetch address for imem_resp_pc
             imem_req_addr_d       <= imem_req_addr;
