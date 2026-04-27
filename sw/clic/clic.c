@@ -47,8 +47,8 @@
 // Spin-loop safety limits.
 // IRQ_LIMIT  : for interrupts that fire within a handful of cycles (MSI, MTI,
 //              and CLIC with bytes already in the RX FIFO).
-// UART_LIMIT : UART loopback byte arrives after ~8680 cycles at 115200 baud /
-//              100 MHz clock.  500000 gives a comfortable margin at CPI≈2.
+// UART_LIMIT : UART loopback byte arrives after ~6944 cycles at 115200 baud /
+//              80 MHz clock.  500000 gives a comfortable margin at CPI≈2.
 #define IRQ_LIMIT   20000u
 #define UART_LIMIT  500000u
 

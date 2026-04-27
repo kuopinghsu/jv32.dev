@@ -268,8 +268,8 @@ int main(void) {
     print_uint(instret_per_run);
     puts("\n");
 
-    /* Assuming 100 MHz clock */
-    #define MHZ 100
+    /* Assuming 80 MHz clock */
+    #define MHZ 80
     uint32_t usec_per_run = cycles_per_run / MHZ;
     if (usec_per_run > 0) {
         uint32_t dhrystones_per_sec = 1000000 / usec_per_run;
@@ -277,7 +277,7 @@ int main(void) {
 
         puts("Time/Run:     ");
         print_uint(usec_per_run);
-        puts(" us @ 100 MHz\n");
+        puts(" us @ 80 MHz\n");
 
         puts("Dhrystones/s: ");
         print_uint(dhrystones_per_sec);

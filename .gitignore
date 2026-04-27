@@ -61,6 +61,7 @@ __pycache__/
 
 # Doxygen generated output
 docs/doxygen/
+docs/stem*.png
 
 # FPGA
 /fpga/build

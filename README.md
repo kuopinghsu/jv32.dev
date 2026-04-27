@@ -15,6 +15,20 @@ J<sub>V</sub>32 is a compact **RV32IMAC** RISC-V system-on-chip for RTL simulati
 - **Debug:** JTAG / cJTAG debug transport integration
 - **Flows:** Verilator RTL simulation, trace comparison, arch tests, synthesis/P&R
 
+## Performance
+
+Measured on the Verilator RTL simulator at 80 MHz with maximum-performance settings
+(`ARCH=rv32ima_zicsr FAST_MUL=1 MUL_MC=0 FAST_DIV=1 FAST_SHIFT=1 BP_EN=1`).
+
+| Benchmark | Score | CPI |
+|---|---|---|
+| CoreMark 1.0 | **3.74 CoreMark/MHz** | 1.102 |
+| Dhrystone 2.1 | **1.42 DMIPS/MHz** | 1.340 |
+
+See [docs/performance_analysis.pdf](docs/performance_analysis.pdf) for the full analysis,
+including branch-predictor impact, compressed-instruction overhead, and CPI decomposition
+from RTL trace data.
+
 ## Repository Layout
 
 ```text
@@ -416,9 +430,9 @@ Configuration: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `TRACE_EN=1`, 
 
 | Metric | Value |
 |---|---|
-| **jv32_soc** total | **76,658 NAND2-eq** (61,173 µm²) |
-| ↳ jv32_core (logic only) | 45,554 NAND2-eq |
-| ↳ jtag_top | 15,837 NAND2-eq |
+| **jv32_soc** total | **78,090 NAND2-eq** (62,316 µm²) |
+| ↳ jv32_core (logic only) | 47,049 NAND2-eq |
+| ↳ jtag_top | 15,846 NAND2-eq |
 | Post-P&R flat total | **80,386 NAND2-eq** |
 
 ### Timing (post-route STA, tt_025C_1v10)
@@ -456,22 +470,22 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 | Module | NAND2 eq | Area (µm²) |
 |---|---:|---:|
-| `jv32_soc` | 37,137 | 29,635.59 |
-| ↳ `jv32_top` | 27,531 | 21,969.47 |
-| &nbsp;&nbsp;↳ `jv32_core` | 23,833 | 19,018.73 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 5,779 | 4,611.91 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,073 | 4,048.52 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,023 | 1,614.35 |
+| `jv32_soc` | 38,731 | 30,907.60 |
+| ↳ `jv32_top` | 29,191 | 23,294.42 |
+| &nbsp;&nbsp;↳ `jv32_core` | 25,491 | 20,342.08 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 5,765 | 4,600.47 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,048 | 4,028.04 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,041 | 1,628.72 |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 1,636 | 1,305.79 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 308 | 246.05 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 307 | 244.99 |
 | &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
 | ↳ `axi_clic` | 5,257 | 4,195.35 |
-| ↳ `axi_uart` | 3,774 | 3,011.65 |
-| ↳ `axi_xbar` | 562 | 448.48 |
+| ↳ `axi_uart` | 3,701 | 2,953.13 |
+| ↳ `axi_xbar` | 568 | 453.00 |
 | ↳ `axi_magic` | 0 | 0.00 |
-| **TOTAL** (logic, excl. SRAM macros) | **37,137** | **29,635.59** |
+| **TOTAL** (logic, excl. SRAM macros) | **38,731** | **30,907.60** |
 
-> The ~9,014 NAND2 gap between `jv32_core` (23,833) and the sum of its submodules (14,819) is pipeline logic
+> The ~10,694 NAND2 gap between `jv32_core` (25,491) and the sum of its submodules (14,797) is pipeline logic
 > instantiated directly in `jv32_core.sv`: pipeline registers (`if_ex_r`, `ex_wb_r`), PC control, forwarding
 > muxes, branch evaluation/redirect, hazard control, load/store alignment, exception detection, and debug FSM.
 
@@ -479,9 +493,9 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| `jv32_soc` | 2,548 | 2,234 | **87.7%** |
-| ↳ `jv32_top` | 1,720 | 1,477 | 85.9% |
-| &nbsp;&nbsp;↳ `jv32_core` | 1,372 | 1,206 | 87.9% |
+| `jv32_soc` | 2,674 | 2,358 | **88.2%** |
+| ↳ `jv32_top` | 1,856 | 1,612 | 86.9% |
+| &nbsp;&nbsp;↳ `jv32_core` | 1,508 | 1,341 | 88.9% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 480 | 480 | 100.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 336 | 208 | 61.9% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 51 | 51 | 100.0% |
@@ -489,7 +503,7 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 0 | 0 | 0.0% |
 | &nbsp;&nbsp;↳ `sram_1rw` | 1 | 0 | 0.0% |
 | ↳ `axi_clic` | 361 | 297 | 82.3% |
-| ↳ `axi_uart` | 396 | 393 | 99.2% |
+| ↳ `axi_uart` | 386 | 382 | 99.0% |
 | ↳ `axi_xbar` | 69 | 67 | 97.1% |
 | ↳ `axi_magic` | 0 | 0 | 0.0% |
 
@@ -502,23 +516,23 @@ SRAM macros (`sram_1rw_2048x32`) are treated as black-boxes and excluded from th
 
 | Module | NAND2 eq | Area (µm²) |
 |---|---:|---:|
-| `jv32_soc` | 76,658 | 61,173.08 |
-| ↳ `jv32_top` | 49,253 | 39,303.89 |
-| &nbsp;&nbsp;↳ `jv32_core` | 45,554 | 36,351.83 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 15,265 | 12,181.47 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 12,188 | 9,726.02 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,020 | 4,005.96 |
+| `jv32_soc` | 78,090 | 62,315.82 |
+| ↳ `jv32_top` | 50,749 | 40,497.44 |
+| &nbsp;&nbsp;↳ `jv32_core` | 47,049 | 37,545.10 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 15,238 | 12,160.19 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 12,190 | 9,727.35 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_csr` | 5,008 | 3,996.65 |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 2,046 | 1,632.97 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 313 | 250.04 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_decoder` | 314 | 250.57 |
 | &nbsp;&nbsp;↳ `sram_1rw` _(black-box)_ | 84 | 66.77 |
-| ↳ `jtag_top` | 15,837 | 12,637.66 |
-| &nbsp;&nbsp;↳ `jtag_tap` | 15,837 | 12,637.66 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_dtm` | 15,624 | 12,468.22 |
+| ↳ `jtag_top` | 15,846 | 12,645.37 |
+| &nbsp;&nbsp;↳ `jtag_tap` | 15,846 | 12,645.37 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_dtm` | 15,634 | 12,475.93 |
 | ↳ `axi_clic` | 5,281 | 4,214.24 |
-| ↳ `axi_uart` | 3,772 | 3,010.06 |
-| ↳ `axi_xbar` | 562 | 448.48 |
+| ↳ `axi_uart` | 3,693 | 2,947.28 |
+| ↳ `axi_xbar` | 568 | 453.00 |
 | ↳ `axi_magic` | 0 | 0.00 |
-| **TOTAL** (logic, excl. SRAM macros) | **76,658** | **61,173.08** |
+| **TOTAL** (logic, excl. SRAM macros) | **78,090** | **62,315.82** |
 
 ### Clock Gating — RV32EC=0
 
@@ -529,9 +543,9 @@ The synthesis flow applies **multi-bit hierarchical clock gating**: one ICG cell
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| `jv32_soc` | 5,498 | 4,466 | **81.2%** |
-| ↳ `jv32_top` | 2,788 | 2,540 | 91.1% |
-| &nbsp;&nbsp;↳ `jv32_core` | 2,440 | 2,269 | 93.0% |
+| `jv32_soc` | 5,624 | 4,590 | **81.6%** |
+| ↳ `jv32_top` | 2,924 | 2,675 | 91.5% |
+| &nbsp;&nbsp;↳ `jv32_core` | 2,576 | 2,404 | 93.3% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_regfile` | 992 | 992 | 100.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_alu` | 403 | 402 | 99.8% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_rvc` | 51 | 51 | 100.0% |
@@ -542,7 +556,7 @@ The synthesis flow applies **multi-bit hierarchical clock gating**: one ICG cell
 | &nbsp;&nbsp;↳ `jtag_tap` | 1,772 | 1,061 | 59.9% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ `jv32_dtm` | 1,756 | 1,050 | 59.8% |
 | ↳ `axi_clic` | 361 | 297 | 82.3% |
-| ↳ `axi_uart` | 396 | 393 | 99.2% |
+| ↳ `axi_uart` | 386 | 382 | 99.0% |
 | ↳ `axi_xbar` | 69 | 67 | 97.1% |
 | ↳ `axi_magic` | 0 | 0 | 0.0% |
 
@@ -580,6 +594,7 @@ These ~327 bits toggle continuously during debug accesses.  This is **architectu
 
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`
 - Generated PDF: `docs/jv32_soc_datasheet.pdf`
+- Performance analysis: [docs/performance_analysis.pdf](docs/performance_analysis.pdf)
 - FPGA implementation notes: [fpga/README.md](fpga/README.md)
 - ASIC flow notes: [syn/README.md](syn/README.md)
 - Full P&R results report: [syn/REPORT.md](syn/REPORT.md)

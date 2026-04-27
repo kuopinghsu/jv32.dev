@@ -34,9 +34,9 @@ static inline int jv_uart_rx_ready(void)
 
 /**
  * Set the baud-rate divisor at run-time.
- * @param baud_div  CLKS_PER_BIT − 1.  Examples at 100 MHz:
- *                  baud_div = 867  → 115200 baud
- *                  baud_div = 31   → 3.125 Mbaud
+ * @param baud_div  CLKS_PER_BIT − 1.  Examples at 80 MHz:
+ *                  baud_div = 694  → 115200 baud
+ *                  baud_div = 24   → 3.2 Mbaud
  *
  * The peripheral latches the new divisor immediately.  Any byte currently
  * in flight will be corrupted; flush the TX FIFO first if needed.

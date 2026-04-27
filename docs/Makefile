@@ -25,6 +25,7 @@ ADOC_FLAGS := -a toc \
               -a sectnums \
               -a icons=font \
               -a source-highlighter=rouge \
+	      -r asciidoctor-mathematical \
               -a pdf-fontsdir="$(HOME)/.local/share/fonts;GEM_FONTS_DIR" \
 			  -a pdf-themesdir=themes
 

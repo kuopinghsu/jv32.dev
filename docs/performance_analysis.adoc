@@ -5,7 +5,6 @@
 :toclevels: 3
 :sectnums:
 :source-highlighter: rouge
-:stem: latexmath
 :icons: font
 :imagesdir: .
 
@@ -446,10 +445,8 @@ BP_EN=1 TRACE=1`.
 The total CPI overhead is decomposed into two independent contributors by combining
 trace data with the hardware branch predictor counters:
 
-[stem]
-++++
-\text{CPI} = 1.0 \;(\text{ideal}) + \text{CPI}_{\text{redirect}} + \text{CPI}_{\text{mem-stall}}
-++++
+[.text-center]
+*CPI = 1.0 (ideal) + CPI~redirect~ + CPI~mem-stall~*
 
 [cols="3,1,1,1,1", options="header"]
 |===
@@ -471,9 +468,9 @@ trace data with the hardware branch predictor counters:
 |===
 
 Redirect stall contribution is calculated as:
-stem:[\text{CPI}_{\text{redirect}} = (\text{mispredictions} + \text{JALR count}) / \text{retired instructions}].
+CPI~redirect~ = (mispredictions + JALR count) / retired instructions.
 
-Memory stall contribution is the remainder: stem:[\text{CPI}_{\text{mem-stall}} = \text{CPI} - 1.0 - \text{CPI}_{\text{redirect}}].
+Memory stall contribution is the remainder: CPI~mem-stall~ = CPI − 1.0 − CPI~redirect~.
 
 ==== CoreMark Instruction Mix
 
@@ -560,7 +557,7 @@ dense load/store sequences with heavy pointer chasing — the loaded pointer is
 immediately used as the address of the next load, creating a load→address→load chain
 that incurs one stall per hop.  With 24.3 % loads and 15.5 % stores (40 % combined
 memory-access rate versus 26.6 % for CoreMark), load-use stalls dominate to such an
-extent that stem:[\text{CPI}_{\text{mem-stall}} = 0.297] vs 0.060 for CoreMark — a
+extent that CPI~mem-stall~ = 0.297 vs 0.060 for CoreMark — a
 5× difference.  The branch predictor contribution is nearly identical in absolute
 terms (0.042 vs 0.043 CPI) because both workloads have similar branch counts relative
 to total instructions.
