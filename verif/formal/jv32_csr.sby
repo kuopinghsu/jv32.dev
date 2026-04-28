@@ -1,0 +1,38 @@
+# ============================================================================
+# File: verif/formal/jv32_csr.sby
+# Project: JV32 RISC-V Processor
+# Description: SymbiYosys BMC task for jv32_csr.sv
+#
+# Properties checked (as SVA `assert` / `assume` in verif/formal/jv32_csr_bind.sv):
+#   1. mstatus_mie clears on exception / interrupt, restores on MRET
+#   2. mepc_o is always word-aligned (bit 0 == 0)
+#   3. MISA is read-only (write attempt does not change value)
+#   4. mie_reg only stores bits {11,7,3} (reserved bits stay 0)
+#   5. MTVEC bit 1 is always 0 (hardware clears it on write)
+#
+# Run:
+#   cd verif/formal && sby -f jv32_csr.sby
+# ============================================================================
+[options]
+mode bmc
+depth 20
+multiclock off
+
+[engines]
+smtbmc z3
+
+[script]
+# sby copies all [files] into <task>/src/ before running yosys,
+# so reference only basenames here.
+# SYNTHESIS silences $display macros in jv32_dbgmsg.svh.
+verilog_defaults -add -DSYNTHESIS
+read -formal jv32_pkg.sv
+read -formal jv32_csr.sv
+read -formal jv32_csr_bind.sv
+prep -top jv32_csr
+
+[files]
+../../rtl/jv32/jv32_dbgmsg.svh
+../../rtl/jv32/core/jv32_pkg.sv
+../../rtl/jv32/core/jv32_csr.sv
+jv32_csr_bind.sv
