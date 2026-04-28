@@ -43,7 +43,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |Feature |Specification
 
 |ISA
-|RV32IMAC_Zicsr_Zifencei (`misa = 0x4000_1105`)
+|RV32IMAC_Zicsr_Zifencei (`misa = 0x4000_1105`); optional Zba/Zbb/Zbs (`RV32B_EN=1`)
 
 |Pipeline
 |Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; BTFNT static branch predictor (`BP_EN=1`): 0-cycle penalty on correct prediction, 1-cycle penalty on misprediction
@@ -343,6 +343,15 @@ Unmapped addresses return AXI `DECERR` on reads and `DECERR` on writes.
 
 |Zifencei
 |Instruction-fetch fence (`FENCE.I`): flushes the IF stage and re-fetches from PC+4
+
+|Zba (optional, `RV32B_EN=1`)
+|Address generation: `SH1ADD`, `SH2ADD`, `SH3ADD` — shift-and-add for scaled pointer arithmetic
+
+|Zbb (optional, `RV32B_EN=1`)
+|Basic bit manipulation: `CLZ`, `CTZ`, `CPOP`, `ANDN`, `ORN`, `XNOR`, `MIN`/`MAX`/`MINU`/`MAXU`, `SEXT.B`, `SEXT.H`, `ZEXT.H`, `REV8`, `ORC.B`, `ROL`, `ROR`, `RORI`
+
+|Zbs (optional, `RV32B_EN=1`)
+|Single-bit instructions: `BCLR`, `BEXT`, `BINV`, `BSET` and their immediate variants (`BCLRI`, `BEXTI`, `BINVI`, `BSETI`)
 |===
 
 NOTE: Machine mode (M-mode) only. User mode and Supervisor mode are not implemented.

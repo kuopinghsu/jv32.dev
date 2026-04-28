@@ -33,6 +33,7 @@ static bool     clic_arb(uint32_t *out_id, uint8_t *out_level);
 #include <fcntl.h>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -205,11 +206,13 @@ struct IrqHint {
     uint32_t cause;
     uint32_t epc;
     uint64_t insn_count;  // total retirements in RTL at time of hint
+    uint32_t next_rtl_pc; // PC of first instruction retired after interrupt (0=unknown)
 };
 static std::deque<IrqHint> g_irq_hints;
 static bool g_hints_loaded      = false;  // true once --rtl-hints file is loaded
 static bool g_timer_irq_pending = false;  // set by hint; cleared when timer taken
-static uint32_t g_timer_irq_epc = 0;      // mepc to use when hint fires the timer
+static uint32_t g_timer_irq_epc      = 0; // mepc to use when hint fires the timer
+static uint32_t g_timer_irq_next_rtl_pc = 0; // actual next RTL PC (0=real ISR path)
 static bool g_msi_irq_pending   = false;  // set by hint; cleared when MSI taken
 static uint32_t g_msi_irq_epc   = 0;      // mepc to use when hint fires the MSI
 static bool     g_mei_irq_pending = false; // set by MEI hint; cleared when taken
@@ -279,10 +282,42 @@ static bool load_rtl_hints(const char* path) {
         uint64_t irq_insn = 0, irq_cyc = 0;
         if (sscanf(line, "! irq cause=0x%x epc=0x%x insn=%" SCNu64 " cycle=%" SCNu64,
                    &irq_cause, &irq_epc, &irq_insn, &irq_cyc) >= 3) {
-            g_irq_hints.push_back({irq_cause, irq_epc, irq_insn});
+            g_irq_hints.push_back({irq_cause, irq_epc, irq_insn, 0u});
         }
     }
     fclose(f);
+
+    // Second pass: find the actual first-retired PC after each interrupt.
+    // Trace lines have the format: "insn_count:cycle 0xPC ..."
+    // For each irq hint at insn=N, the next retired instruction is at insn=N+1.
+    // Build a lookup set of the needed insn counts, then scan.
+    if (!g_irq_hints.empty()) {
+        // Build map: needed_insn_count → hint index
+        std::unordered_map<uint64_t, size_t> needed;
+        needed.reserve(g_irq_hints.size());
+        for (size_t i = 0; i < g_irq_hints.size(); ++i)
+            needed[g_irq_hints[i].insn_count + 1] = i;
+
+        FILE* f2 = fopen(path, "r");
+        if (f2) {
+            setvbuf(f2, nullptr, _IOFBF, 4 * 1024 * 1024);
+            char line2[256];
+            while (fgets(line2, sizeof(line2), f2) && !needed.empty()) {
+                if (line2[0] == '!') continue;
+                uint64_t t_insn, t_cyc;
+                uint32_t t_pc;
+                if (sscanf(line2, "%" SCNu64 ":%" SCNu64 " 0x%x",
+                           &t_insn, &t_cyc, &t_pc) == 3) {
+                    auto it = needed.find(t_insn);
+                    if (it != needed.end()) {
+                        g_irq_hints[it->second].next_rtl_pc = t_pc;
+                        needed.erase(it);
+                    }
+                }
+            }
+            fclose(f2);
+        }
+    }
     return true;
 }
 
@@ -828,9 +863,11 @@ static bool check_interrupts() {
     if (!(csr_mstatus & MSTATUS_MIE) && !at_squash_pc) return false;
 
     // When RTL hints are loaded: timer fires only via g_timer_irq_pending (set
-    // by the hint mechanism below).  Without hints: fire naturally.
+    // by the hint mechanism below).  Without hints, or once all hints have been
+    // consumed (g_irq_hints empty), fire naturally so vTaskDelay() never hangs.
+    bool all_irq_hints_done = g_hints_loaded && g_irq_hints.empty() && !g_timer_irq_pending;
     bool timer_irq = g_timer_irq_pending ||
-                     (!g_hints_loaded &&
+                     ((!g_hints_loaded || all_irq_hints_done) &&
                       mtime >= mtimecmp &&
                       mtimecmp != 0xFFFFFFFFFFFFFFFFULL);
     bool soft_irq  = (msip != 0);
@@ -859,73 +896,45 @@ static bool check_interrupts() {
                 if (clicint_ie[n]) { clic_id = n; clic_level = clicint_ctl[n]; break; }
             }
         }
-        uint32_t trap_pc = (g_hints_loaded && g_mei_irq_epc) ? g_mei_irq_epc : pc;
+        uint32_t trap_pc = (g_hints_loaded && g_mei_irq_epc && pc == g_mei_irq_epc)
+                            ? g_mei_irq_epc : pc;
         take_clic_trap(clic_id, clic_level, trap_pc);
         return true;
     } else if ((csr_mie & MIP_MTIP) && timer_irq) {
+        bool hint_triggered = g_timer_irq_pending;  // set by hint, not natural timer
         g_timer_irq_pending = false;  // consumed
-        // Use the hint's epc as mepc when available (matches RTL pipeline
-        // behaviour where mepc = interrupted/squashed instruction PC).
-        uint32_t trap_pc = (g_hints_loaded && g_timer_irq_epc) ? g_timer_irq_epc : pc;
+        uint32_t hint_next = g_timer_irq_next_rtl_pc;
+        g_timer_irq_next_rtl_pc = 0;
+
+        // Compute where a normal interrupt would redirect to (mtvec / vectored).
+        uint32_t mtvec_base = csr_mtvec & ~3u;
+        uint32_t expected_irq_pc = (csr_mtvec & 1u)
+            ? mtvec_base + 4u * (CAUSE_TIMER_INT & 0x7FFFFFFFu)
+            : mtvec_base;
 
         // Detect "spurious ISR due to load-use stall" (jv32 microarch quirk):
-        // When the timer IRQ fires while a load instruction is in WB AND the
-        // following instruction has a RAW dependency on the loaded register,
-        // jv32's load_use_stall makes if_stall=1 at the same cycle irq_cancel
-        // fires.  The CSR takes the interrupt (mepc=load.pc, MIE=0) but
-        // pc_if is NOT redirected to mtvec — instead the pipeline resumes
-        // from pc_if which is stuck pointing past the load instruction.
-        // We replicate this: update CSRs as if interrupted but set PC to
-        // epc + instr_size (skip the load) instead of mtvec.
-        if (g_hints_loaded && g_timer_irq_epc) {
-            // Decode the instruction at epc
-            uint32_t epc = trap_pc;
-            uint16_t ehalf0 = (uint16_t)mem_read(epc & ~1u, 2);
-            uint32_t einstr;
-            uint32_t einstr_size;
-            if ((ehalf0 & 3u) != 3u) {
-                einstr      = expand_rvc(ehalf0);
-                einstr_size = 2u;
-            } else {
-                uint16_t ehalf1 = (uint16_t)mem_read((epc & ~1u) + 2u, 2);
-                einstr      = ((uint32_t)ehalf1 << 16) | ehalf0;
-                einstr_size = 4u;
-            }
-            uint32_t eopcode = einstr & 0x7Fu;
-            if (eopcode == 0x03u) {  // LOAD
-                uint32_t erd = (einstr >> 7) & 0x1Fu;
-                if (erd != 0u) {
-                    // Check if next instruction has a RAW hazard on erd
-                    uint32_t next_pc = epc + einstr_size;
-                    uint16_t nhalf0 = (uint16_t)mem_read(next_pc & ~1u, 2);
-                    uint32_t ninstr;
-                    if ((nhalf0 & 3u) != 3u) {
-                        ninstr = expand_rvc(nhalf0);
-                    } else {
-                        uint16_t nhalf1 = (uint16_t)mem_read((next_pc & ~1u) + 2u, 2);
-                        ninstr = ((uint32_t)nhalf1 << 16) | nhalf0;
-                    }
-                    uint32_t nrs1 = (ninstr >> 15) & 0x1Fu;
-                    uint32_t nrs2 = (ninstr >> 20) & 0x1Fu;
-                    if (nrs1 == erd || nrs2 == erd) {
-                        // Spurious ISR: update CSRs but redirect to epc+size
-                        DBG(1, "spurious_isr: load-use stall at epc=0x%08x, "
-                               "skip load, pc->0x%08x\n",
-                               (unsigned)epc, (unsigned)next_pc);
-                        uint32_t mie_bit = (csr_mstatus >> 3) & 1u;
-                        csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
-                                    | (mie_bit ? MSTATUS_MPIE : 0u)
-                                    | MSTATUS_MPP;
-                        csr_mcause = CAUSE_TIMER_INT;
-                        csr_mepc   = epc & ~1u;
-                        csr_mtval  = 0u;
-                        pc = next_pc;
-                        return true;
-                    }
-                }
-            }
+        // When irq_cancel fires while load_use_stall=1 in the jv32 pipeline,
+        // pc_if is frozen and NOT redirected to mtvec.  The RTL trace will show
+        // the next instruction at a PC other than mtvec.  We use the recorded
+        // next_rtl_pc as ground truth: if it differs from the expected IRQ target
+        // it's a spurious ISR — update CSRs as normal but set PC to next_rtl_pc.
+        if (hint_triggered && hint_next != 0 && hint_next != expected_irq_pc) {
+            DBG(1, "spurious_isr: epc=0x%08x next_rtl_pc=0x%08x\n",
+                (unsigned)g_timer_irq_epc, (unsigned)hint_next);
+            uint32_t epc = (pc == g_timer_irq_epc) ? g_timer_irq_epc : pc;
+            uint32_t mie_bit = (csr_mstatus >> 3) & 1u;
+            csr_mstatus = (csr_mstatus & ~(MSTATUS_MIE | MSTATUS_MPIE))
+                        | (mie_bit ? MSTATUS_MPIE : 0u)
+                        | MSTATUS_MPP;
+            csr_mcause = CAUSE_TIMER_INT;
+            csr_mepc   = epc & ~1u;
+            csr_mtval  = 0u;
+            pc = hint_next;
+            return true;
         }
 
+        uint32_t trap_pc = (g_hints_loaded && g_timer_irq_epc && pc == g_timer_irq_epc)
+                           ? g_timer_irq_epc : pc;
         take_trap(CAUSE_TIMER_INT, 0, trap_pc);
         return true;
     } else if ((csr_mie & MIP_MSIP) && soft_irq) {
@@ -1844,8 +1853,9 @@ int main(int argc, char **argv) {
         // Suppress natural timer firing (above) while a hint is pending so the
         // interrupt fires at exactly the same instruction as in the RTL.
         if (!g_irq_hints.empty() && insn_count >= g_irq_hints.front().insn_count) {
-            uint32_t hint_epc   = g_irq_hints.front().epc;
-            uint32_t hint_cause = g_irq_hints.front().cause;
+            uint32_t hint_epc        = g_irq_hints.front().epc;
+            uint32_t hint_cause      = g_irq_hints.front().cause;
+            uint32_t hint_next_rtlpc = g_irq_hints.front().next_rtl_pc;
             g_irq_hints.pop_front();
             // Timer interrupt (cause = 0x8000_0007): set mtime = mtimecmp so
             // that check_interrupts() fires on the very next step().
@@ -1854,8 +1864,9 @@ int main(int argc, char **argv) {
                 DBG(2, "[irq] tick at insn=%llu epc=0x%08x hint_idx=%zu\n",
                     (unsigned long long)insn_count, (unsigned)hint_epc, g_hint_idx);
                 mtime = mtimecmp;        // keep mtime in sync at tick boundaries
-                g_timer_irq_pending = true;  // fire on the very next step()
-                g_timer_irq_epc     = hint_epc;
+                g_timer_irq_pending     = true;  // fire on the very next step()
+                g_timer_irq_epc         = hint_epc;
+                g_timer_irq_next_rtl_pc = hint_next_rtlpc;
             } else if ((hint_cause & 0x8000007Fu) == 0x80000003u) {
                 // MSI hint: fire on the very next step() at hint_epc.
                 // The RTL squashes the instruction at hint_epc (typically a

@@ -30,7 +30,12 @@ SIZE    := $(CROSS)-size
 # Architecture flags: ARCH and ABI are computed and exported by the root Makefile
 # based on RV32E_EN / RV32M_EN / AMO_EN.  Defaults below apply when sw/Makefile
 # is invoked standalone (e.g. make -C sw build TEST=hello).
-ARCH    ?= rv32imac_zicsr
+# When RV32B_EN=1 (Zba/Zbb/Zbs enabled), append the B-extension sub-extensions.
+ifeq ($(RV32B_EN),1)
+  ARCH  ?= rv32imac_zicsr_zba_zbb_zbs
+else
+  ARCH  ?= rv32imac_zicsr
+endif
 ABI     ?= ilp32
 
 CFLAGS  := -march=$(ARCH) -mabi=$(ABI)

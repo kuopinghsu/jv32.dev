@@ -71,7 +71,7 @@ package jv32_pkg;
     localparam bit          RV32M_EN       = 1;              // 1=M-extension (mul/div), 0=illegal
     localparam bit          JTAG_EN        = 1;              // 1=JTAG debug port present, 0=no JTAG
     localparam bit          TRACE_EN       = 1;              // 1=trace outputs active, 0=tied to 0 in synthesis
-    localparam bit          ZB_EN          = 1;              // 1=Zba/Zbb/Zbs bit-manip extensions, 0=illegal
+    localparam bit          RV32B_EN       = 1;              // 1=Zba/Zbb/Zbs bit-manip extensions, 0=illegal
     localparam int unsigned IRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned AXI_DATA_WIDTH = 32;             // 32-bit AXI data bus

@@ -67,7 +67,7 @@ module jv32_soc #(
     parameter bit                 FAST_SHIFT      = 1'b1,
     parameter bit                 BP_EN           = 1'b1,
     parameter bit                 RAS_EN          = 1'b1,        // 1=RAS enabled; 0=JALR always 1-cycle
-    parameter bit                 ZB_EN           = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 RV32B_EN        = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter bit          [31:0] BOOT_ADDR       = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE       = 32'h8000_0000,
     parameter bit          [31:0] DRAM_BASE       = 32'hC000_0000
@@ -624,7 +624,7 @@ module jv32_soc #(
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
         .RAS_EN    (RAS_EN),
-        .ZB_EN     (ZB_EN),
+        .RV32B_EN  (RV32B_EN),
         .N_TRIGGERS(N_TRIGGERS),
         .IRAM_SIZE (IRAM_SIZE),
         .DRAM_SIZE (DRAM_SIZE),

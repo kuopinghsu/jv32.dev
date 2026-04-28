@@ -673,14 +673,96 @@ would eliminate the load-use stall entirely; the current 3-stage design accepts 
 stall as the price of a simpler, shorter pipeline with lower absolute clock-cycle
 count for non-memory-intensive code.
 
+=== B-Extension (Zba/Zbb/Zbs) Impact Analysis
+
+When `RV32B_EN=1` (the default), the core implements three RISC-V bit-manipulation
+sub-extensions:
+
+* **Zba** (address generation): `SH1ADD`, `SH2ADD`, `SH3ADD` — scaled shift-and-add
+  for computing array element addresses in a single instruction.
+* **Zbb** (basic bit manipulation): `CLZ`, `CTZ`, `CPOP`, `ANDN`/`ORN`/`XNOR`,
+  `MIN`/`MAX`/`MINU`/`MAXU`, `SEXT.B`/`SEXT.H`/`ZEXT.H`, `REV8`, `ORC.B`,
+  `ROL`/`ROR`/`RORI`.
+* **Zbs** (single-bit): `BCLR`, `BEXT`, `BINV`, `BSET` and their immediate forms.
+
+The GCC compiler (`-march=rv32ima_zicsr_zba_zbb_zbs`) emits these instructions when
+the extension is specified, replacing multi-instruction sequences.  The principal
+benefits are reduced instruction count and shorter code size.  Each B instruction
+executes in a single cycle with the same pipeline stall rules as ALU instructions.
+
+==== Results Table
+
+[cols="3,1,1,1,1,1,1", options="header"]
+|===
+| Configuration
+| CoreMark/MHz | CoreMark CPI
+| CoreMark insns
+| DMIPS/MHz | Dhry CPI
+| Dhry insns
+
+| `rv32ima` + Zba/Zbb/Zbs *(B-ext, max perf)*
+| *3.78* | 1.105 | 1,018,934
+| 1.41 | 1.328 | 342,289
+
+| `rv32ima` (no B-ext baseline)
+| 3.75 | 1.101 | 1,033,494
+| 1.42 | 1.326 | 344,468
+
+| `rv32imac` + Zba/Zbb/Zbs *(B-ext + compressed)*
+| 3.70 | 1.127 | 1,019,805
+| 1.41 | 1.339 | 342,289
+
+| `rv32imac` (no B-ext)
+| 3.67 | 1.123 | 1,035,785
+| 1.41 | 1.342 | 344,468
+|===
+
+All configurations use `FAST_MUL=1 MUL_MC=0 FAST_DIV=1 FAST_SHIFT=1 BP_EN=1 RAS_EN=1`.
+Total cycle counts: rv32ima+B = 1,125,868; rv32ima = 1,137,626;
+rv32imac+B = 1,149,474; rv32imac = 1,162,781.
+
+==== Analysis
+
+*CoreMark* — B-extension impact on `rv32ima`:
+
+* Retired instructions: 1,033,494 → 1,018,934 (**−1.4 %**).  The compiler replaces
+  multi-instruction bit-test, rotate, and address-computation sequences with single
+  B instructions; the dominant substitution in CoreMark is array indexing using
+  `SH2ADD`/`SH3ADD` and bitmask operations using `ANDN`/`ORN`.
+* Total cycles: 1,137,626 → 1,125,868 (**−1.0 %**).  The smaller instruction count
+  reduces pipeline pressure; CPI rises marginally (1.101 → 1.105) because the
+  denser instruction stream produces slightly more load-use proximity, but the
+  absolute cycle reduction dominates.
+* **CoreMark/MHz gain: 3.75 → 3.78 (+0.8 %)**.
+
+With compressed instructions (`rv32imac`) the gain is nearly identical at **+0.9 %**
+(3.665 → 3.697), confirming that B-extension benefit is orthogonal to RVC.
+
+*Dhrystone* — B-extension impact on `rv32ima`:
+
+* Retired instructions: 344,468 → 342,289 (−0.6 %).  Dhrystone's string operations
+  (`strcpy`, `strcmp`) and simple arithmetic loop benefit less from Zba/Zbb/Zbs than
+  CoreMark's array-indexed workload.
+* Total cycles: 456,914 → 454,707 (−0.5 %).
+* CPI: 1.326 → 1.328 (within noise; the DMIPS firmware integer-rounds to 1.41 vs
+  1.42, a truncation artefact of the benchmark's own reporting).
+* **Net Dhrystone gain: negligible** — the Dhrystone instruction mix does not heavily
+  exercise the instructions covered by Zba/Zbb/Zbs.
+
 === Summary Table
 
 [cols="3,1,1,1,1", options="header"]
 |===
 | Configuration | CoreMark/MHz | CoreMark CPI | DMIPS/MHz | Dhry CPI
 
-| `rv32ima`, BP=1+RAS, FAST_MUL=1 MUL_MC=0, FAST_DIV=1, FAST_SHIFT=1 *(max perf)*
-| *3.75* | *1.101* | *1.42* | *1.326*
+| `rv32ima` + Zba/Zbb/Zbs, BP=1+RAS, FAST_MUL=1 MUL_MC=0, FAST_DIV=1, FAST_SHIFT=1 *(B-ext, max perf)*
+| *3.78* | *1.105* | *1.41* | *1.328*
+
+| `rv32ima`, BP=1+RAS, FAST_MUL=1 MUL_MC=0, FAST_DIV=1, FAST_SHIFT=1 *(no B-ext baseline)*
+| 3.75 | 1.101 | 1.42 | 1.326
+
+| `rv32imac` + Zba/Zbb/Zbs, BP=1+RAS *(B-ext + compressed)*
+| 3.70 | 1.127 | 1.41 | 1.339
 
 | `rv32ima`, BP=1 (no RAS), same arithmetic settings
 | 3.74 | 1.102 | 1.42 | 1.340
@@ -695,7 +777,8 @@ count for non-memory-intensive code.
 [cols="3,1,1", options="header"]
 |===
 | Feature | CoreMark gain | Dhrystone gain
+| B-extension (Zba/Zbb/Zbs) | +0.8 % CoreMark | negligible
 | Branch predictor (BTFNT + L0 + JAL pre-decode) | +5.3 % CPI | +6.9 % CPI
-| Return Address Stack (8-entry RAS) | +0.1 % CPI | +1.0 % CPI
+| Return Address Stack (2-entry RAS) | +0.1 % CPI | +1.0 % CPI
 | Uncompressed vs compressed (rv32ima vs rv32imac) | +2.0 % CPI (simulation only) | +1.1 % CPI (simulation only)
 |===

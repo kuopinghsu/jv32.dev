@@ -28,7 +28,6 @@ CSR_FILE    = os.path.join(CORE_DIR, 'jv32_csr.sv')
 DBGMSG_FILE = os.path.join(RTL_DIR,  'jv32_dbgmsg.svh')
 OUT_FILE    = os.path.join(SCRIPT_DIR, 'jv32_csr_flat.sv')
 
-
 # ---------------------------------------------------------------------------
 # Formal assertions to inject before "endmodule" in jv32_csr
 # ---------------------------------------------------------------------------
@@ -154,11 +153,9 @@ FORMAL_PROPS = r"""
 `endif // FORMAL
 """
 
-
 def read_file(path):
     with open(path, 'r', encoding='utf-8') as f:
         return f.readlines()
-
 
 def process_pkg(lines, dbgmsg_lines):
     """
@@ -182,7 +179,6 @@ def process_pkg(lines, dbgmsg_lines):
             result.append(line)
     return result
 
-
 def process_csr(lines):
     """
     Process jv32_csr.sv lines:
@@ -200,7 +196,6 @@ def process_csr(lines):
         else:
             result.append(line)
     return result
-
 
 def main():
     pkg_lines    = read_file(PKG_FILE)
@@ -231,7 +226,6 @@ def main():
         f.writelines(out)
 
     print(f'Generated: {OUT_FILE}', file=sys.stderr)
-
 
 if __name__ == '__main__':
     main()

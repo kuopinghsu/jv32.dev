@@ -43,7 +43,7 @@ module jv32_alu #(
     parameter bit MUL_MC     = 1'b1,  // 1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)
     parameter bit FAST_DIV   = 1'b0,
     parameter bit FAST_SHIFT = 1'b1,
-    parameter bit ZB_EN      = 1'b1   // 1=Zba/Zbb/Zbs enabled; 0=only base ops (synthesized away)
+    parameter bit RV32B_EN   = 1'b1   // 1=Zba/Zbb/Zbs enabled; 0=only base ops (synthesized away)
 ) (
     input  logic           clk,
     input  logic           rst_n,
@@ -491,7 +491,7 @@ module jv32_alu #(
     logic        zb_ready;
 
     generate
-        if (!ZB_EN) begin : gen_no_zb
+        if (!RV32B_EN) begin : gen_no_zb
             assign zb_result = 32'h0;
             assign zb_ready  = 1'b1;
         end
@@ -677,7 +677,7 @@ module jv32_alu #(
             ALU_REM:    result = result_rem;
             ALU_REMU:   result = result_remu;
             // Zba/Zbb/Zbs: routed through zb_result
-            default:    result = ZB_EN ? zb_result : 32'd0;
+            default:    result = RV32B_EN ? zb_result : 32'd0;
         endcase
     end
 

@@ -77,7 +77,7 @@ module jv32_top #(
     parameter bit                 BP_EN      = 1'b1,
     parameter bit                 RAS_EN     = 1'b1,        // 1=Return Address Stack; 0=JALR always 1-cycle
     parameter bit                 AMO_EN     = 1'b1,
-    parameter bit                 ZB_EN      = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 RV32B_EN   = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
@@ -288,7 +288,7 @@ module jv32_top #(
         .BP_EN     (BP_EN),
         .RAS_EN    (RAS_EN),
         .AMO_EN    (AMO_EN),
-        .ZB_EN     (ZB_EN),
+        .RV32B_EN  (RV32B_EN),
         .N_TRIGGERS(N_TRIGGERS),
         .BOOT_ADDR (BOOT_ADDR),
         .IRAM_BASE (IRAM_BASE),

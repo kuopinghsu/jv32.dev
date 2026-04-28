@@ -89,14 +89,26 @@ module jv32_csr_props #(
     );
 
     // -----------------------------------------------------------------------
-    // P6: MISA is read-only — writing CSR_MISA does not change csr_rdata
-    //     for the MISA address in the next cycle.
+    // P6: MISA is read-only — whenever CSR_MISA is addressed, csr_rdata
+    //     always returns the fixed MISA_VAL (no write can change it).
     // -----------------------------------------------------------------------
+    localparam bit [31:0] MISA_VAL_EXP = {
+        2'b01,           // [31:30] MXL = 1 (RV32)
+        4'b0, 13'b0,     // [29:13]
+        RV32M_EN,        // [12] M
+        3'b0,            // [11:9]
+        ~RV32E_EN,       // [8]  I
+        3'b0,            // [7:5]
+        RV32E_EN,        // [4]  E
+        1'b0,            // [3]
+        1'b1,            // [2]  C
+        1'b0,            // [1]
+        AMO_EN           // [0]  A
+    };
+
     p6_misa_readonly: assert property (
         @(posedge clk) disable iff (!rst_n)
-        (csr_we && (csr_addr == 12'h301))  // write to CSR_MISA
-        |=> (csr_rdata == $past(csr_rdata, 1, csr_addr == 12'h301))
-            || (csr_addr != 12'h301)        // rdata sampled when addressing MISA
+        (csr_addr == 12'h301) |-> (csr_rdata == MISA_VAL_EXP)
     );
 
     // -----------------------------------------------------------------------
@@ -109,11 +121,11 @@ module jv32_csr_props #(
 
     // -----------------------------------------------------------------------
     // P8: After MRET (non-tail-chain), MIE is restored from MPIE
-    //     (clic_irq=0 path — simple case assumed by constraining clic_irq=0)
+    //     (clic_irq=0 path -- simple case assumed by constraining clic_irq=0)
     // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
-    // Cover: show a complete exception → MRET cycle is reachable
+    // Cover: show a complete exception -> MRET cycle is reachable
     // -----------------------------------------------------------------------
     c1_exception_then_mret: cover property (
         @(posedge clk) disable iff (!rst_n)

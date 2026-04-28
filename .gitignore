@@ -79,5 +79,10 @@ rtos/zephyr/build.*
 
 /verif/work
 
-syn/pdk/.nangate_home
-syn/slpp_all
+# SymbiYosys formal verification working directories and generated files
+/verif/formal/jv32_*/
+/verif/formal/*_flat.sv
+
+/syn/pdk/.nangate_home
+/syn/slpp_all
+/slpp_all

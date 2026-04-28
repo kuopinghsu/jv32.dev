@@ -8,7 +8,7 @@ J<sub>V</sub>32 is a compact **RV32IMAC** RISC-V system-on-chip for RTL simulati
 
 ## Highlights
 
-- **ISA:** RV32IMAC with `Zicsr` / `Zifencei`
+- **ISA:** RV32IMAC with `Zicsr` / `Zifencei`; optional B-extension (`Zba` / `Zbb` / `Zbs`)
 - **Core:** 3-stage single-issue pipeline (`IF → EX → WB`)
 - **Memory:** tightly-coupled `IRAM` and `DRAM`
 - **Peripherals:** UART, CLIC/CLINT-style interrupt block, simulation magic device
@@ -18,16 +18,16 @@ J<sub>V</sub>32 is a compact **RV32IMAC** RISC-V system-on-chip for RTL simulati
 ## Performance
 
 Measured on the Verilator RTL simulator at 80 MHz with maximum-performance settings
-(`ARCH=rv32ima_zicsr FAST_MUL=1 MUL_MC=0 FAST_DIV=1 FAST_SHIFT=1 BP_EN=1`).
+(`ARCH=rv32ima_zicsr_zba_zbb_zbs FAST_MUL=1 MUL_MC=0 FAST_DIV=1 FAST_SHIFT=1 BP_EN=1`).
 
 | Benchmark | Score | CPI |
 |---|---|---|
-| CoreMark 1.0 | **3.74 CoreMark/MHz** | 1.102 |
-| Dhrystone 2.1 | **1.42 DMIPS/MHz** | 1.340 |
+| CoreMark 1.0 | **3.78 CoreMark/MHz** | 1.105 |
+| Dhrystone 2.1 | **1.41 DMIPS/MHz** | 1.328 |
 
 See [docs/performance_analysis.pdf](docs/performance_analysis.pdf) for the full analysis,
-including branch-predictor impact, compressed-instruction overhead, and CPI decomposition
-from RTL trace data.
+including branch-predictor impact, B-extension impact, compressed-instruction overhead,
+and CPI decomposition from RTL trace data.
 
 ## Repository Layout
 
@@ -91,6 +91,42 @@ cd openocd && ./bootstrap
 ./configure --prefix=/usr/local --disable-werror --enable-internal-jimtcl
 make -j$(nproc) && sudo make install
 ```
+
+### Formal Verification (required for `make -C verif/formal`)
+
+| Tool | Min version | Notes |
+|---|---|---|
+| [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build/releases) | 2024-01+ | All-in-one bundle containing Yosys, SymbiYosys, Z3, Boolector, and related solvers; **recommended install method** |
+| [Yosys](https://github.com/YosysHQ/yosys) | 0.36+ | RTL synthesis front-end for formal; included in OSS CAD Suite |
+| [SymbiYosys (`sby`)](https://github.com/YosysHQ/sby) | 0.36+ | BMC/induction task runner; included in OSS CAD Suite |
+| [Z3](https://github.com/Z3Prover/z3) | 4.12+ | SMT solver back-end used by `smtbmc`; included in OSS CAD Suite |
+
+**Quick install via OSS CAD Suite (Linux x86-64):**
+
+```bash
+# Download and extract the latest nightly release
+SUITE_VER=$(curl -s https://api.github.com/repos/YosysHQ/oss-cad-suite-build/releases/latest \
+            | grep tag_name | cut -d'"' -f4)
+wget https://github.com/YosysHQ/oss-cad-suite-build/releases/download/${SUITE_VER}/oss-cad-suite-linux-x64-${SUITE_VER#*-}.tgz
+tar xf oss-cad-suite-linux-x64-*.tgz -C ~/opt
+# Add to PATH (add this line to ~/.bashrc for permanent use)
+source ~/opt/oss-cad-suite/environment
+```
+
+**Alternative — install individual packages (Ubuntu/Debian):**
+
+> **Note:** `sby` is not a Python package and cannot be installed via pip.
+> Install it from source using `make install`:
+
+```bash
+# Yosys and Z3 from apt (Ubuntu 22.04+)
+sudo apt install yosys z3
+# SymbiYosys (sby) from GitHub source — uses make install, not pip
+git clone https://github.com/YosysHQ/sby && cd sby && sudo make install
+```
+
+> The `apt` Yosys may be too old for some formal features. If you encounter issues,
+> prefer the OSS CAD Suite bundle above.
 
 ### ASIC Synthesis and P&R (required for `make -C syn synth`)
 
@@ -195,6 +231,7 @@ When `RV32EC=0` (the default), each flag can be set independently:
 | `RV32E_EN` | `0` | `1` = RV32E (16 GPRs); `0` = RV32I (32 GPRs) |
 | `RV32M_EN` | `1` | `1` = include M-extension (MUL/DIV); `0` = illegal trap on MUL/DIV |
 | `AMO_EN` | `1` | `1` = include A-extension (atomic ops); `0` = illegal trap on AMO |
+| `RV32B_EN` | `1` | `1` = include B-extension (Zba/Zbb/Zbs); `0` = bit-manipulation instructions trap as illegal |
 | `JTAG_EN` | `1` | `1` = include JTAG debug interface; `0` = remove from synthesis |
 | `TRACE_EN` | `1` | `1` = trace output registers present; `0` = outputs tied to 0 |
 
@@ -327,6 +364,7 @@ SPIKE=$(HOME)/opt/riscv/bin/spike
 | `Zicsr` | Control and status register instructions |
 | `Zifencei` | Instruction-fetch fence |
 | `Zicntr` | Base counters and timers (`cycle`, `time`, `instret`) |
+| `Zba` / `Zbb` / `Zbs` | B-extension: address generation, basic bit manipulation, single-bit instructions (enabled by `RV32B_EN=1`) |
 | `Sm` | Machine-mode privileged architecture |
 
 Supervisor mode (`S`), PMP, and virtual-memory extensions are excluded because JV32 is M-mode only

@@ -29,7 +29,7 @@ export VERIBLE_FORMAT
 export RV32E_EN
 export RV32M_EN
 export AMO_EN
-export ZB_EN
+export RV32B_EN
 export RAS_EN
 export SPIKE
 
@@ -156,8 +156,8 @@ endif
 ifdef RAS_EN
   VERILATOR_FLAGS += -pvalue+RAS_EN=$(RAS_EN)
 endif
-ifdef ZB_EN
-  VERILATOR_FLAGS += -pvalue+ZB_EN=$(ZB_EN)
+ifdef RV32B_EN
+  VERILATOR_FLAGS += -pvalue+RV32B_EN=$(RV32B_EN)
 endif
 ifdef IRAM_SIZE
   VERILATOR_FLAGS += -pvalue+IRAM_SIZE=$(IRAM_SIZE)
@@ -238,7 +238,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) ZB_EN=$(ZB_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -810,12 +810,14 @@ compare-freertos-%: $(BUILD_DIR)/freertos-%.elf $(JV32SIM) build-rtl
 	@echo ""
 	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
 	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
+	    $(TIMEOUT_ARG) \
 	    $(BUILD_DIR)/freertos-$*.elf 2>/dev/null \
 	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
 	@echo ""
 	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
 	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
 	    --rtl-hints $(RTL_TRACE_FILE) \
+	    $(SIM_MAX_INSNS_ARG) \
 	    $(BUILD_DIR)/freertos-$*.elf \
 	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
 	@echo ""
@@ -894,7 +896,7 @@ ARCH_TEST_PASSTHROUGH = \
     $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
     $(if $(WORKDIR),WORKDIR=$(WORKDIR),) \
     $(if $(JOBS),JOBS=$(JOBS),) \
-    ZB_EN=$(ZB_EN) \
+    RV32B_EN=$(RV32B_EN) \
     RAS_EN=$(RAS_EN) \
     SPIKE=$(SPIKE)
 

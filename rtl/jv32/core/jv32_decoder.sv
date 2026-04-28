@@ -32,7 +32,7 @@ module jv32_decoder #(
     parameter bit AMO_EN   = 1'b1,  // 1=full A-extension; 0=AMO ops decode as illegal
     parameter bit RV32E_EN = 1'b0,  // 1=RV32E (16 GPRs): rs/rd[4] -> illegal
     parameter bit RV32M_EN = 1'b1,  // 1=M-extension; 0=MUL/DIV opcodes -> illegal
-    parameter bit ZB_EN    = 1'b1   // 1=Zba/Zbb/Zbs; 0=those encodings decode as illegal
+    parameter bit RV32B_EN = 1'b1   // 1=Zba/Zbb/Zbs; 0=those encodings decode as illegal
 ) (
     input logic [31:0] instr,
     input logic        valid,
@@ -153,7 +153,7 @@ module jv32_decoder #(
                                 7'h00:   alu_op = ALU_SLL;
                                 // Zbb: CLZ/CTZ/CPOP/SEXT.B/SEXT.H (funct7=0x30)
                                 7'h30: begin
-                                    if (!ZB_EN) begin
+                                    if (!RV32B_EN) begin
                                         illegal = 1'b1;
                                     end
                                     else begin
@@ -169,17 +169,17 @@ module jv32_decoder #(
                                 end
                                 // Zbs: BSETI (funct7=0x14)
                                 7'h14: begin
-                                    if (!ZB_EN) illegal = 1'b1;
+                                    if (!RV32B_EN) illegal = 1'b1;
                                     else alu_op = ALU_BSET;
                                 end
                                 // Zbs: BCLRI (funct7=0x24)
                                 7'h24: begin
-                                    if (!ZB_EN) illegal = 1'b1;
+                                    if (!RV32B_EN) illegal = 1'b1;
                                     else alu_op = ALU_BCLR;
                                 end
                                 // Zbs: BINVI (funct7=0x34)
                                 7'h34: begin
-                                    if (!ZB_EN) illegal = 1'b1;
+                                    if (!RV32B_EN) illegal = 1'b1;
                                     else alu_op = ALU_BINV;
                                 end
                                 default: illegal = 1'b1;
@@ -191,22 +191,22 @@ module jv32_decoder #(
                                 7'h20:   alu_op = ALU_SRA;
                                 // Zbb: RORI (funct7=0x30)
                                 7'h30: begin
-                                    if (!ZB_EN) illegal = 1'b1;
+                                    if (!RV32B_EN) illegal = 1'b1;
                                     else alu_op = ALU_ROR;
                                 end
                                 // Zbb: ORC.B (funct7=0x14, shamt=0x07)
                                 7'h14: begin
-                                    if (!ZB_EN || instr[24:20] != 5'h07) illegal = 1'b1;
+                                    if (!RV32B_EN || instr[24:20] != 5'h07) illegal = 1'b1;
                                     else alu_op = ALU_ORCB;
                                 end
                                 // Zbb: REV8 (funct7=0x34, shamt=0x18)
                                 7'h34: begin
-                                    if (!ZB_EN || instr[24:20] != 5'h18) illegal = 1'b1;
+                                    if (!RV32B_EN || instr[24:20] != 5'h18) illegal = 1'b1;
                                     else alu_op = ALU_REV8;
                                 end
                                 // Zbs: BEXTI (funct7=0x24)
                                 7'h24: begin
-                                    if (!ZB_EN) illegal = 1'b1;
+                                    if (!RV32B_EN) illegal = 1'b1;
                                     else alu_op = ALU_BEXT;
                                 end
                                 default: illegal = 1'b1;
@@ -252,91 +252,91 @@ module jv32_decoder #(
                             {
                                 7'h10, 3'b010
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_SH1ADD;
                             {
                                 7'h10, 3'b100
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_SH2ADD;
                             {
                                 7'h10, 3'b110
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_SH3ADD;
                             // Zbb: logical-with-negate, min/max, rotate
                             {
                                 7'h20, 3'b100
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_XNOR;
                             {
                                 7'h20, 3'b110
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_ORN;
                             {
                                 7'h20, 3'b111
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_ANDN;
                             {
                                 7'h05, 3'b100
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_MIN;
                             {
                                 7'h05, 3'b101
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_MINU;
                             {
                                 7'h05, 3'b110
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_MAX;
                             {
                                 7'h05, 3'b111
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_MAXU;
                             {
                                 7'h30, 3'b001
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_ROL;
                             {
                                 7'h30, 3'b101
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_ROR;
                             // Zbb: ZEXT.H (rs2 must be x0; rs2_addr check below)
                             {
                                 7'h04, 3'b100
                             } : begin
-                                if (!ZB_EN || rs2_addr != 5'd0) illegal = 1'b1;
+                                if (!RV32B_EN || rs2_addr != 5'd0) illegal = 1'b1;
                                 else alu_op = ALU_ZEXTH;
                             end
                             // Zbs: single-bit ops
                             {
                                 7'h14, 3'b001
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_BSET;
                             {
                                 7'h24, 3'b001
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_BCLR;
                             {
                                 7'h24, 3'b101
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_BEXT;
                             {
                                 7'h34, 3'b001
                             } :
-                            if (!ZB_EN) illegal = 1'b1;
+                            if (!RV32B_EN) illegal = 1'b1;
                             else alu_op = ALU_BINV;
                             default: illegal = 1'b1;
                         endcase

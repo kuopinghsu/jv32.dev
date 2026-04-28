@@ -28,7 +28,7 @@ module jv32_core #(
     parameter bit                 BP_EN      = 1'b1,
     parameter bit                 RAS_EN     = 1'b1,  // 1=Return Address Stack enabled; 0=JALR always 1-cycle
     parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
-    parameter bit                 ZB_EN      = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 RV32B_EN   = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
     parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
@@ -139,9 +139,9 @@ module jv32_core #(
 
     localparam logic [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;
 
-    // ZB_EN=1 only valid when not RV32E. Enforced here so child modules
+    // RV32B_EN=1 only valid when not RV32E. Enforced here so child modules
     // see a single clean parameter without needing to know about RV32E_EN.
-    localparam bit ZB_ACTIVE = ZB_EN && !RV32E_EN;
+    localparam bit ZB_ACTIVE = RV32B_EN && !RV32E_EN;
 
     // =====================================================================
     // RVC expander
@@ -239,7 +239,7 @@ module jv32_core #(
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
-        .ZB_EN     (ZB_ACTIVE)
+        .RV32B_EN  (ZB_ACTIVE)
     ) u_alu (
         .clk          (clk),
         .rst_n        (rst_n),
@@ -282,7 +282,7 @@ module jv32_core #(
         .AMO_EN  (AMO_EN),
         .RV32E_EN(RV32E_EN),
         .RV32M_EN(RV32M_EN),
-        .ZB_EN   (ZB_ACTIVE)
+        .RV32B_EN(ZB_ACTIVE)
     ) u_decoder (
         .instr     (if_ex_r.instr),
         .valid     (if_ex_r.valid),

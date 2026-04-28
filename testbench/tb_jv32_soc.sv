@@ -23,7 +23,7 @@ module tb_jv32_soc #(
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
     parameter bit                 RAS_EN     = 1'b1,
-    parameter bit                 ZB_EN      = 1'b1,
+    parameter bit                 RV32B_EN   = 1'b1,
     parameter logic        [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter logic        [31:0] IRAM_BASE  = 32'h8000_0000,
     parameter logic        [31:0] DRAM_BASE  = 32'hC000_0000
@@ -386,7 +386,7 @@ module tb_jv32_soc #(
         .FAST_SHIFT     (FAST_SHIFT),
         .BP_EN          (BP_EN),
         .RAS_EN         (RAS_EN),
-        .ZB_EN          (ZB_EN),
+        .RV32B_EN       (RV32B_EN),
         .IRAM_BASE      (IRAM_BASE),
         .DRAM_BASE      (DRAM_BASE)
     ) u_soc (

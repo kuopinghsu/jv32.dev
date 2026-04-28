@@ -126,6 +126,7 @@ arch-test-setup: $(ACT_SENTINEL)
 # EXCLUDE_EXTENSIONS rationale:
 #   Sm              — machine-mode CSR tests; excluded pending Sail CSR model alignment
 #   S               — supervisor mode; JV32 is M-mode only
+#   ExceptionsSm    — supervisor-mode exception tests; JV32 is M-mode only
 #   InterruptsSm    — interrupt timing tests; JV32 CLIC quirks not yet modelled
 #   ExceptionsZalrsc/Zaamo — LR/SC and AMO exception tests; not yet validated
 #   ExceptionsZc    — uses rv32ifdc march (F/D unimplemented); Sail segfaults on this config
@@ -148,14 +149,14 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	echo "[arch-test] Work directory: $(WORKDIR)"; \
 	echo "[arch-test] Phase 1/3: building RTL simulator"; \
 	echo "=========================================="; \
-	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) ZB_EN=$(ZB_EN) RAS_EN=$(RAS_EN) build-rtl; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) RV32B_EN=$(RV32B_EN) RAS_EN=$(RAS_EN) build-rtl; \
 	echo "=========================================="; \
 	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
 	echo "=========================================="; \
 	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
-            EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
+            EXCLUDE_EXTENSIONS=Sm,S,ExceptionsSm,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS); \
 	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
