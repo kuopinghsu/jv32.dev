@@ -20,7 +20,7 @@
 ## Software / RTOS
 
 - [ ] **Zephyr RTOS port** — only FreeRTOS is currently supported. A Zephyr port (requires a HAL layer and device tree) would broaden software ecosystem validation.
-- [ ] **C++ standard library / newlib integration test** — `sw/cpp/` exists but there is no test verifying STL containers or exception unwinding on the ABI.
+- [x] **C++ standard library / newlib integration test** — `sw/cpp/cpp_test.cpp` tests 42 checks covering: global constructors (`.init_array` sequencing), `std::vector<int>` (heap via `_sbrk`→`malloc`), `std::array`, `std::sort`/`is_sorted`, `std::find`/`find_if`, `std::fill`/`iota`, `std::accumulate`, `std::min_element`/`max_element`, `std::transform`, `operator new`/`delete` (linked list + array), placement new, and move semantics (`std::move`, move constructor, `vector<MoveOnly>`). All 42 checks PASS on both RTL and ISS. Compiled with `-fno-exceptions -fno-rtti` (the standard embedded C++ mode; full exception unwinding exceeds the 128 KB IRAM budget). See `sw/cpp/makefile.mak` for the GCC 15 hosted-mode fix (`filter-out -ffreestanding`).
 
 ## Synthesis / Physical Design
 
