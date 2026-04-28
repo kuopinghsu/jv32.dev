@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  IP-XACT 2.1 Register Map for JV32 SoC
+  Standard: IEEE 1685-2014 (IP-XACT 2.1)
+
+  Peripherals covered:
+    UART      base 0x2001_0000
+    CLIC      base 0x0200_0000   (includes CLINT-compatible timer/software-IRQ)
+    Magic     base 0x4000_0000   (simulation only)
+
+  Machine CSRs are listed as a separate memoryMap entry (addressUnitBits=1,
+  baseAddress=0) using the 12-bit CSR address space defined by RISC-V.
+-->
+<spirit:component
+    xmlns:spirit="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009
+                        http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009/index.xsd">
+
+  <spirit:vendor>kuoping</spirit:vendor>
+  <spirit:library>jv32</spirit:library>
+  <spirit:name>jv32_soc</spirit:name>
+  <spirit:version>1.2</spirit:version>
+
+  <!-- ===================================================================
+       Memory Maps
+       =================================================================== -->
+  <spirit:memoryMaps>
+
+    <!-- ---------------------------------------------------------------
+         UART  (base 0x2001_0000)
+         --------------------------------------------------------------- -->
+    <spirit:memoryMap>
+      <spirit:name>UART</spirit:name>
+      <spirit:description>JV32 UART peripheral — 8N1, configurable baud, TX/RX FIFOs, IRQ</spirit:description>
+      <spirit:addressBlock>
+        <spirit:name>uart_regs</spirit:name>
+        <spirit:baseAddress>0x20010000</spirit:baseAddress>
+        <spirit:range>0x20</spirit:range>
+        <spirit:width>32</spirit:width>
+        <spirit:usage>register</spirit:usage>
+
+        <!-- DATA — 0x00 -->
+        <spirit:register>
+          <spirit:name>DATA</spirit:name>
+          <spirit:description>TX FIFO write (write) / RX FIFO read (read)</spirit:description>
+          <spirit:addressOffset>0x00</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>DATA</spirit:name>
+            <spirit:description>Write: push byte to TX FIFO; Read: pop byte from RX FIFO</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- STATUS — 0x04 -->
+        <spirit:register>
+          <spirit:name>STATUS</spirit:name>
+          <spirit:description>UART status flags (read-only)</spirit:description>
+          <spirit:addressOffset>0x04</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:field>
+            <spirit:name>TX_BUSY</spirit:name>
+            <spirit:description>1 = TX FIFO is full (cannot accept more data)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>TX_FULL</spirit:name>
+            <spirit:description>1 = TX FIFO full flag</spirit:description>
+            <spirit:bitOffset>1</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>RX_READY</spirit:name>
+            <spirit:description>1 = RX FIFO has data available (not empty)</spirit:description>
+            <spirit:bitOffset>2</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>RX_OVERRUN</spirit:name>
+            <spirit:description>1 = RX FIFO full (incoming bytes will be lost)</spirit:description>
+            <spirit:bitOffset>3</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- IE — 0x08 -->
+        <spirit:register>
+          <spirit:name>IE</spirit:name>
+          <spirit:description>Interrupt Enable</spirit:description>
+          <spirit:addressOffset>0x08</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>RX_READY_IE</spirit:name>
+            <spirit:description>1 = assert IRQ when RX FIFO is not empty (RX_READY)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>TX_EMPTY_IE</spirit:name>
+            <spirit:description>1 = assert IRQ when TX FIFO is empty</spirit:description>
+            <spirit:bitOffset>1</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- IS — 0x0C -->
+        <spirit:register>
+          <spirit:name>IS</spirit:name>
+          <spirit:description>Interrupt Status (level, read-only)</spirit:description>
+          <spirit:addressOffset>0x0C</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:field>
+            <spirit:name>RX_READY</spirit:name>
+            <spirit:description>1 = RX FIFO not empty (interrupt source; level-triggered)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>TX_EMPTY</spirit:name>
+            <spirit:description>1 = TX FIFO empty (interrupt source)</spirit:description>
+            <spirit:bitOffset>1</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- LEVEL — 0x10 -->
+        <!-- Split register: read returns FIFO counts; write sets baud-rate divisor -->
+        <spirit:register>
+          <spirit:name>LEVEL</spirit:name>
+          <spirit:description>Read: FIFO fill levels ([31:16]=tx_count, [15:0]=rx_count). Write: baud-rate divisor (bits[15:0] = CLKS_PER_BIT-1; latched immediately).</spirit:description>
+          <spirit:addressOffset>0x10</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>RX_COUNT</spirit:name>
+            <spirit:description>Number of bytes currently in RX FIFO (read path)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>16</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>TX_COUNT</spirit:name>
+            <spirit:description>Number of bytes currently in TX FIFO (read path)</spirit:description>
+            <spirit:bitOffset>16</spirit:bitOffset>
+            <spirit:bitWidth>16</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- CTRL — 0x14 -->
+        <spirit:register>
+          <spirit:name>CTRL</spirit:name>
+          <spirit:description>UART control register</spirit:description>
+          <spirit:addressOffset>0x14</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>LOOPBACK_EN</spirit:name>
+            <spirit:description>1 = internal TX→RX loopback (for hardware test)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- CAPABILITY — 0x18 -->
+        <spirit:register>
+          <spirit:name>CAPABILITY</spirit:name>
+          <spirit:description>UART capability register (read-only). [7:0]=TX FIFO depth; [15:8]=RX FIFO depth; [31:16]=UART version (0x0001).</spirit:description>
+          <spirit:addressOffset>0x18</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:field>
+            <spirit:name>TX_DEPTH</spirit:name>
+            <spirit:description>TX FIFO depth in entries (= FIFO_DEPTH parameter, default 16)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>RX_DEPTH</spirit:name>
+            <spirit:description>RX FIFO depth in entries (= FIFO_DEPTH parameter, default 16)</spirit:description>
+            <spirit:bitOffset>8</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>VERSION</spirit:name>
+            <spirit:description>UART hardware version (0x0001)</spirit:description>
+            <spirit:bitOffset>16</spirit:bitOffset>
+            <spirit:bitWidth>16</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+      </spirit:addressBlock>
+    </spirit:memoryMap>
+
+    <!-- ---------------------------------------------------------------
+         CLIC / CLINT  (base 0x0200_0000)
+         --------------------------------------------------------------- -->
+    <spirit:memoryMap>
+      <spirit:name>CLIC</spirit:name>
+      <spirit:description>JV32 CLIC with CLINT-compatible timer and software IRQ</spirit:description>
+      <spirit:addressBlock>
+        <spirit:name>clint_regs</spirit:name>
+        <spirit:baseAddress>0x02000000</spirit:baseAddress>
+        <spirit:range>0x5000</spirit:range>
+        <spirit:width>32</spirit:width>
+        <spirit:usage>register</spirit:usage>
+
+        <!-- MSIP — 0x0000 -->
+        <spirit:register>
+          <spirit:name>MSIP</spirit:name>
+          <spirit:description>Machine Software Interrupt Pending</spirit:description>
+          <spirit:addressOffset>0x0000</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MSIP</spirit:name>
+            <spirit:description>Write 1 to assert software interrupt; write 0 to clear</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- MTIME_LO — 0x4000 -->
+        <spirit:register>
+          <spirit:name>MTIME_LO</spirit:name>
+          <spirit:description>Machine timer lower 32 bits (mtime[31:0]); increments every clock cycle</spirit:description>
+          <spirit:addressOffset>0x4000</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MTIME_LO</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>32</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- MTIME_HI — 0x4004 -->
+        <spirit:register>
+          <spirit:name>MTIME_HI</spirit:name>
+          <spirit:description>Machine timer upper 32 bits (mtime[63:32])</spirit:description>
+          <spirit:addressOffset>0x4004</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MTIME_HI</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>32</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- MTIMECMP_LO — 0x4008 -->
+        <spirit:register>
+          <spirit:name>MTIMECMP_LO</spirit:name>
+          <spirit:description>Machine timer compare lower 32 bits; timer IRQ fires when mtime >= mtimecmp</spirit:description>
+          <spirit:addressOffset>0x4008</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MTIMECMP_LO</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>32</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- MTIMECMP_HI — 0x400C -->
+        <spirit:register>
+          <spirit:name>MTIMECMP_HI</spirit:name>
+          <spirit:description>Machine timer compare upper 32 bits</spirit:description>
+          <spirit:addressOffset>0x400C</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MTIMECMP_HI</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>32</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!--
+          CLICINT[0..15] — base 0x1000, stride 4
+          Each entry: [0]=ip(RO), [1]=ie(RW), [23:16]=ctl/priority(RW)
+          Only CLICINT[0] is enumerated explicitly; [1..15] follow the same
+          layout at offsets 0x1004..0x103C.
+        -->
+        <spirit:register>
+          <spirit:name>CLICINT0</spirit:name>
+          <spirit:description>CLIC interrupt register for external IRQ line 0</spirit:description>
+          <spirit:addressOffset>0x1000</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:dim>16</spirit:dim>
+          <spirit:dimIncrement>4</spirit:dimIncrement>
+          <spirit:field>
+            <spirit:name>IP</spirit:name>
+            <spirit:description>Interrupt pending (read-only; driven by ext_irq_i)</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>IE</spirit:name>
+            <spirit:description>Interrupt enable</spirit:description>
+            <spirit:bitOffset>1</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>CTL</spirit:name>
+            <spirit:description>Interrupt priority/level (bits [23:16] of the CLICINT word)</spirit:description>
+            <spirit:bitOffset>16</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+      </spirit:addressBlock>
+    </spirit:memoryMap>
+
+    <!-- ---------------------------------------------------------------
+         Magic (simulation)  (base 0x4000_0000)
+         --------------------------------------------------------------- -->
+    <spirit:memoryMap>
+      <spirit:name>MAGIC</spirit:name>
+      <spirit:description>Simulation Magic device — console output and exit control (not synthesised)</spirit:description>
+      <spirit:addressBlock>
+        <spirit:name>magic_regs</spirit:name>
+        <spirit:baseAddress>0x40000000</spirit:baseAddress>
+        <spirit:range>0x08</spirit:range>
+        <spirit:width>32</spirit:width>
+        <spirit:usage>register</spirit:usage>
+
+        <!-- CONSOLE — 0x000 -->
+        <spirit:register>
+          <spirit:name>CONSOLE</spirit:name>
+          <spirit:description>Write a character (byte) to simulation stdout</spirit:description>
+          <spirit:addressOffset>0x00</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>write-only</spirit:access>
+          <spirit:field>
+            <spirit:name>CHAR</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>write-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <!-- EXIT — 0x004 -->
+        <spirit:register>
+          <spirit:name>EXIT</spirit:name>
+          <spirit:description>Write exit code to trigger simulation termination</spirit:description>
+          <spirit:addressOffset>0x04</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>write-only</spirit:access>
+          <spirit:field>
+            <spirit:name>EXIT_CODE</spirit:name>
+            <spirit:description>HTIF-encoded exit: write 1 = pass (exit code 0); write (code&lt;&lt;1)|1 = fail with code. RTL calls sim_request_exit(value&gt;&gt;1). Writing 0 has no effect.</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>32</spirit:bitWidth>
+            <spirit:access>write-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+      </spirit:addressBlock>
+    </spirit:memoryMap>
+
+    <!-- ---------------------------------------------------------------
+         Machine CSRs  (12-bit CSR address space)
+         --------------------------------------------------------------- -->
+    <spirit:memoryMap>
+      <spirit:name>CSR</spirit:name>
+      <spirit:description>JV32 M-mode Control and Status Registers (RISC-V 12-bit CSR address space)</spirit:description>
+      <spirit:addressBlock>
+        <spirit:name>csr_regs</spirit:name>
+        <spirit:baseAddress>0x000</spirit:baseAddress>
+        <spirit:range>0x1000</spirit:range>
+        <spirit:width>32</spirit:width>
+        <spirit:usage>register</spirit:usage>
+
+        <spirit:register>
+          <spirit:name>MSTATUS</spirit:name>
+          <spirit:description>Machine status register</spirit:description>
+          <spirit:addressOffset>0x300</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MIE</spirit:name>
+            <spirit:description>Machine interrupt enable (global)</spirit:description>
+            <spirit:bitOffset>3</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MPIE</spirit:name>
+            <spirit:description>Previous MIE value (saved on trap entry)</spirit:description>
+            <spirit:bitOffset>7</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MPP</spirit:name>
+            <spirit:description>Machine previous privilege mode (always 2'b11 for M-only)</spirit:description>
+            <spirit:bitOffset>11</spirit:bitOffset>
+            <spirit:bitWidth>2</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MISA</spirit:name>
+          <spirit:description>Machine ISA register (read-only: 0x4000_1105 = RV32IMAC)</spirit:description>
+          <spirit:addressOffset>0x301</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:reset>
+            <spirit:value>0x40001105</spirit:value>
+          </spirit:reset>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MIE</spirit:name>
+          <spirit:description>Machine interrupt enable register</spirit:description>
+          <spirit:addressOffset>0x304</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MSIE</spirit:name>
+            <spirit:description>Machine software interrupt enable</spirit:description>
+            <spirit:bitOffset>3</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MTIE</spirit:name>
+            <spirit:description>Machine timer interrupt enable</spirit:description>
+            <spirit:bitOffset>7</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MEIE</spirit:name>
+            <spirit:description>Machine external interrupt enable</spirit:description>
+            <spirit:bitOffset>11</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MTVEC</spirit:name>
+          <spirit:description>Machine trap-handler base address</spirit:description>
+          <spirit:addressOffset>0x305</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>MODE</spirit:name>
+            <spirit:description>Vectoring mode: 0=direct, 1=vectored, 3=CLIC</spirit:description>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>2</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>BASE</spirit:name>
+            <spirit:description>Trap handler base address [31:2] (4-byte aligned)</spirit:description>
+            <spirit:bitOffset>2</spirit:bitOffset>
+            <spirit:bitWidth>30</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MTVT</spirit:name>
+          <spirit:description>CLIC trap-handler vector table base address</spirit:description>
+          <spirit:addressOffset>0x307</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MSCRATCH</spirit:name>
+          <spirit:description>Machine scratch register</spirit:description>
+          <spirit:addressOffset>0x340</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MEPC</spirit:name>
+          <spirit:description>Machine exception program counter</spirit:description>
+          <spirit:addressOffset>0x341</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MCAUSE</spirit:name>
+          <spirit:description>Machine trap cause</spirit:description>
+          <spirit:addressOffset>0x342</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>EXCEPTION_CODE</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>31</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>INTERRUPT</spirit:name>
+            <spirit:description>1 = interrupt; 0 = exception</spirit:description>
+            <spirit:bitOffset>31</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MTVAL</spirit:name>
+          <spirit:description>Machine bad address or instruction</spirit:description>
+          <spirit:addressOffset>0x343</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MIP</spirit:name>
+          <spirit:description>Machine interrupt pending (read-only view)</spirit:description>
+          <spirit:addressOffset>0x344</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:field>
+            <spirit:name>MSIP</spirit:name>
+            <spirit:bitOffset>3</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MTIP</spirit:name>
+            <spirit:bitOffset>7</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+          <spirit:field>
+            <spirit:name>MEIP</spirit:name>
+            <spirit:bitOffset>11</spirit:bitOffset>
+            <spirit:bitWidth>1</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MNXTI</spirit:name>
+          <spirit:description>CLIC next-interrupt CSR (atomically claim + return handler PC)</spirit:description>
+          <spirit:addressOffset>0x345</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MINTTHRESH</spirit:name>
+          <spirit:description>CLIC interrupt-level threshold; interrupts below this level are masked</spirit:description>
+          <spirit:addressOffset>0x347</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+          <spirit:field>
+            <spirit:name>TH</spirit:name>
+            <spirit:bitOffset>0</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-write</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MCOUNTINHIBIT</spirit:name>
+          <spirit:description>Counter inhibit: bit0=cycle, bit2=instret</spirit:description>
+          <spirit:addressOffset>0x320</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MCYCLE</spirit:name>
+          <spirit:description>Machine cycle counter (lower 32 bits)</spirit:description>
+          <spirit:addressOffset>0xB00</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MINSTRET</spirit:name>
+          <spirit:description>Machine instructions-retired counter (lower 32 bits)</spirit:description>
+          <spirit:addressOffset>0xB02</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MCYCLEH</spirit:name>
+          <spirit:description>Machine cycle counter (upper 32 bits)</spirit:description>
+          <spirit:addressOffset>0xB80</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MINSTRETH</spirit:name>
+          <spirit:description>Machine instructions-retired counter (upper 32 bits)</spirit:description>
+          <spirit:addressOffset>0xB82</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-write</spirit:access>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MINTSTATUS</spirit:name>
+          <spirit:description>CLIC current interrupt status (read-only)</spirit:description>
+          <spirit:addressOffset>0xFB1</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:field>
+            <spirit:name>MIL</spirit:name>
+            <spirit:description>Current machine interrupt level</spirit:description>
+            <spirit:bitOffset>24</spirit:bitOffset>
+            <spirit:bitWidth>8</spirit:bitWidth>
+            <spirit:access>read-only</spirit:access>
+          </spirit:field>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MVENDORID</spirit:name>
+          <spirit:description>Machine vendor ID (read-only: 0x00000000)</spirit:description>
+          <spirit:addressOffset>0xF11</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:reset><spirit:value>0x00000000</spirit:value></spirit:reset>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MARCHID</spirit:name>
+          <spirit:description>Machine architecture ID (read-only: 0x00000000)</spirit:description>
+          <spirit:addressOffset>0xF12</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:reset><spirit:value>0x00000000</spirit:value></spirit:reset>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MIMPID</spirit:name>
+          <spirit:description>Machine implementation ID (read-only: 0x00000000)</spirit:description>
+          <spirit:addressOffset>0xF13</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:reset><spirit:value>0x00000000</spirit:value></spirit:reset>
+        </spirit:register>
+
+        <spirit:register>
+          <spirit:name>MHARTID</spirit:name>
+          <spirit:description>Machine hardware thread ID (read-only: 0x00000000)</spirit:description>
+          <spirit:addressOffset>0xF14</spirit:addressOffset>
+          <spirit:size>32</spirit:size>
+          <spirit:access>read-only</spirit:access>
+          <spirit:reset><spirit:value>0x00000000</spirit:value></spirit:reset>
+        </spirit:register>
+
+      </spirit:addressBlock>
+    </spirit:memoryMap>
+
+  </spirit:memoryMaps>
+
+</spirit:component>

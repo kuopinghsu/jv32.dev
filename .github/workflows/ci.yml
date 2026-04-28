@@ -1,0 +1,174 @@
+# JV32 CI — lint + regression
+#
+# Runs on every push/PR to main/master.
+#
+# Tool installation notes:
+#   - Verilator: built from source (requires 5.x; Ubuntu apt provides 4.x only).
+#   - RISC-V toolchain: downloaded from the xPack release.  Adjust the URL/PATH
+#     if you use a different distribution.
+#   - Optional linters (Verible, svlint): disabled in CI by default to keep
+#     the workflow fast; enable by setting VERIBLE / SVLINT in env.config.
+
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+# Cancel in-flight runs for the same ref when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # xPack riscv-none-elf-gcc release to use.
+  XPACK_TAG: v13.2.0-2
+  XPACK_VER: 13.2.0-2
+
+jobs:
+  # -------------------------------------------------------------------------
+  # lint: Verilator lint-only pass + Python style checks
+  # -------------------------------------------------------------------------
+  lint:
+    name: RTL Lint
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false   # do NOT recurse into riscv-arch-test → llvm-project
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            make python3 \
+            autoconf flex bison \
+            libfl2 libfl-dev zlib1g-dev help2man ccache
+
+      - name: Cache Verilator build
+        uses: actions/cache@v4
+        id: cache-verilator
+        with:
+          path: /opt/verilator
+          key: verilator-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Build and install Verilator 5.x
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --depth=1 --branch stable /tmp/verilator
+          cd /tmp/verilator
+          autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v4
+        id: cache-riscv
+        with:
+          path: /opt/riscv-none-elf
+          key: riscv-none-elf-${{ env.XPACK_TAG }}-${{ runner.os }}
+
+      - name: Download xPack RISC-V toolchain
+        if: steps.cache-riscv.outputs.cache-hit != 'true'
+        run: |
+          URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/${XPACK_TAG}/xpack-riscv-none-elf-gcc-${XPACK_VER}-linux-x64.tar.gz"
+          curl -fsSL "$URL" | sudo tar -xz -C /opt
+          sudo mv /opt/xpack-riscv-none-elf-gcc-${XPACK_VER} /opt/riscv-none-elf
+
+      - name: Add RISC-V toolchain to PATH
+        run: echo "/opt/riscv-none-elf/bin" >> $GITHUB_PATH
+
+      - name: Configure env.config
+        run: |
+          cp env.config.template env.config
+          sed -i "s|^RISCV_PREFIX=.*|RISCV_PREFIX=/opt/riscv-none-elf/bin/riscv-none-elf-|" env.config
+          sed -i "s|^VERILATOR=.*|VERILATOR=/opt/verilator/bin/verilator|" env.config
+          # Disable optional linters (not installed in CI)
+          sed -i "s|^VERIBLE=.*|VERIBLE=None|" env.config
+          sed -i "s|^VERIBLE_FORMAT=.*|VERIBLE_FORMAT=None|" env.config
+          sed -i "s|^SVLINT=.*|SVLINT=None|" env.config
+
+      - name: Run RTL lint
+        run: make lint
+
+  # -------------------------------------------------------------------------
+  # regression: build RTL sim + run compare-all trace checks
+  # -------------------------------------------------------------------------
+  regression:
+    name: Trace Regression
+    runs-on: ubuntu-22.04
+    # Run in parallel with lint; does not depend on it.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            make python3 \
+            autoconf flex bison \
+            libfl2 libfl-dev zlib1g-dev help2man ccache
+
+      - name: Cache Verilator build
+        uses: actions/cache@v4
+        id: cache-verilator
+        with:
+          path: /opt/verilator
+          key: verilator-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Build and install Verilator 5.x
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --depth=1 --branch stable /tmp/verilator
+          cd /tmp/verilator
+          autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v4
+        id: cache-riscv
+        with:
+          path: /opt/riscv-none-elf
+          key: riscv-none-elf-${{ env.XPACK_TAG }}-${{ runner.os }}
+
+      - name: Download xPack RISC-V toolchain
+        if: steps.cache-riscv.outputs.cache-hit != 'true'
+        run: |
+          URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/${XPACK_TAG}/xpack-riscv-none-elf-gcc-${XPACK_VER}-linux-x64.tar.gz"
+          curl -fsSL "$URL" | sudo tar -xz -C /opt
+          sudo mv /opt/xpack-riscv-none-elf-gcc-${XPACK_VER} /opt/riscv-none-elf
+
+      - name: Add RISC-V toolchain to PATH
+        run: echo "/opt/riscv-none-elf/bin" >> $GITHUB_PATH
+
+      - name: Configure env.config
+        run: |
+          cp env.config.template env.config
+          sed -i "s|^RISCV_PREFIX=.*|RISCV_PREFIX=/opt/riscv-none-elf/bin/riscv-none-elf-|" env.config
+          sed -i "s|^VERILATOR=.*|VERILATOR=/opt/verilator/bin/verilator|" env.config
+          sed -i "s|^VERIBLE=.*|VERIBLE=None|" env.config
+          sed -i "s|^VERIBLE_FORMAT=.*|VERIBLE_FORMAT=None|" env.config
+          sed -i "s|^SVLINT=.*|SVLINT=None|" env.config
+
+      - name: Build RTL simulator
+        run: make build-rtl
+
+      - name: Run trace-comparison regression
+        run: make compare-all
