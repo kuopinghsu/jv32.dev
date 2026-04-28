@@ -1862,6 +1862,7 @@ Key signals to observe:
 * **TCM**: `jv32_top.imem_req_valid`, `jv32_top.imem_resp_valid`, `jv32_top.dmem_req_valid`
 * **AXI master**: `jv32_top.m_axi_arvalid`, `jv32_top.m_axi_rvalid`
 * **Interrupts**: `jv32_soc.timer_irq`, `jv32_soc.clic_irq`
+* **Heartbeat**: `jv32_soc.heartbeat_o` — toggles every 2^24 retired instructions; a slow square wave indicating the core is making forward progress
 
 ==== Instruction Trace
 
@@ -2368,6 +2369,70 @@ Active only when `TRACE_EN=1`. All outputs change on the rising edge of `clk` an
 |32
 |Interrupt pipeline — store data
 |===
+
+=== Branch Predictor Observability (`perf_bp_*`)
+
+One-cycle pulse outputs that count branch-predictor events.  Active only with `BP_EN=1`; tied to `0` otherwise.  Intended for performance counters in a testbench or external logic analyser.
+
+[cols="1,1,1,3"]
+.Branch Predictor Observability Pins
+|===
+|Signal |I/O |Width |Description
+
+|`perf_bp_branch`
+|Output
+|1
+|A conditional branch retired this cycle
+
+|`perf_bp_taken`
+|Output
+|1
+|The conditional branch was taken
+
+|`perf_bp_mispred`
+|Output
+|1
+|Branch prediction was wrong (EX-stage redirect)
+
+|`perf_bp_jal`
+|Output
+|1
+|A JAL instruction retired this cycle
+
+|`perf_bp_jal_miss`
+|Output
+|1
+|JAL was not pre-decoded (caused an EX-stage redirect)
+
+|`perf_bp_jalr`
+|Output
+|1
+|A JALR instruction retired this cycle (always causes an EX-stage redirect)
+|===
+
+=== Heartbeat Output
+
+`heartbeat_o` is a glitch-free single-bit output derived directly from bit 24 of the `minstret` counter inside `jv32_csr`.  It requires no external logic, no clock-domain crossing, and is always present regardless of `TRACE_EN` or `BP_EN`.
+
+[cols="1,1,1,3"]
+.Heartbeat Pin
+|===
+|Signal |I/O |Width |Description
+
+|`heartbeat_o`
+|Output
+|1
+|`minstret[24]` — toggles every 2^24 retired instructions.  One complete low→high→low period spans 2 × 2^24 × CPI clock cycles (≈ 42 M cycles at CPI 2.5, 80 MHz → ~530 ms).  Can be connected to an LED or logic analyser trigger to confirm the core is retiring instructions.
+|===
+
+The toggle period in seconds is:
+
+[stem]
+++++
+T = \frac{2 \times 2^{24} \times \overline{\mathrm{CPI}}}{f_{\mathrm{clk}}}
+++++
+
+At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, `T ≈ 420 ms`.
 
 === External AXI Master Interface (`ext_axi_*`)
 

@@ -71,19 +71,21 @@ static const uint32_t MAGIC_BASE = 0x40000000U;
 // ============================================================================
 // CSR addresses
 // ============================================================================
-#define CSR_MSTATUS    0x300
-#define CSR_MISA       0x301
-#define CSR_MIE        0x304
-#define CSR_MTVEC      0x305
-#define CSR_MTVT       0x307
-#define CSR_MSCRATCH   0x340
-#define CSR_MEPC       0x341
-#define CSR_MCAUSE     0x342
-#define CSR_MTVAL      0x343
-#define CSR_MIP        0x344
-#define CSR_MNXTI      0x345
-#define CSR_MINTTHRESH 0x347
-#define CSR_MINTSTATUS 0xFB1
+#define CSR_MSTATUS       0x300
+#define CSR_MISA          0x301
+#define CSR_MIE           0x304
+#define CSR_MTVEC         0x305
+#define CSR_MTVT          0x307
+#define CSR_MSTATUSH      0x310  // RV32 high mstatus bits (all 0)
+#define CSR_MCOUNTINHIBIT 0x320  // counter inhibit
+#define CSR_MSCRATCH      0x340
+#define CSR_MEPC          0x341
+#define CSR_MCAUSE        0x342
+#define CSR_MTVAL         0x343
+#define CSR_MIP           0x344
+#define CSR_MNXTI         0x345
+#define CSR_MINTTHRESH    0x347
+#define CSR_MINTSTATUS    0xFB1
 #define CSR_MCYCLE     0xB00
 #define CSR_MINSTRET   0xB02
 #define CSR_MCYCLEH    0xB80
@@ -383,9 +385,11 @@ static const char* csr_name_from_addr(uint32_t csr_addr) {
     case CSR_MCAUSE:    return "mcause";
     case CSR_MTVAL:     return "mtval";
     case CSR_MIP:       return "mip";
-    case CSR_MNXTI:     return "mnxti";
-    case CSR_MINTTHRESH:return "mintthresh";
-    case CSR_MINTSTATUS:return "mintstatus";
+    case CSR_MSTATUSH:      return "mstatush";
+    case CSR_MCOUNTINHIBIT: return "mcountinhibit";
+    case CSR_MNXTI:         return "mnxti";
+    case CSR_MINTTHRESH:    return "mintthresh";
+    case CSR_MINTSTATUS:    return "mintstatus";
     case CSR_MCYCLE:    return "mcycle";
     case CSR_MCYCLEH:   return "mcycleh";
     case CSR_MINSTRET:  return "minstret";
@@ -669,10 +673,26 @@ static uint32_t consume_hint(uint32_t csr_addr, uint32_t fallback_val) {
     return fallback_val;
 }
 
+static bool csr_known(uint32_t csr) {
+    switch (csr) {
+    case CSR_MSTATUS: case CSR_MISA:    case CSR_MIE:       case CSR_MTVEC:
+    case CSR_MTVT:    case CSR_MSTATUSH: case CSR_MCOUNTINHIBIT:
+    case CSR_MSCRATCH: case CSR_MEPC:   case CSR_MCAUSE:    case CSR_MTVAL:
+    case CSR_MIP:     case CSR_MNXTI:   case CSR_MINTTHRESH: case CSR_MINTSTATUS:
+    case CSR_MCYCLE:  case CSR_MCYCLEH: case CSR_MINSTRET:  case CSR_MINSTRETH:
+    case CSR_CYCLE:   case CSR_TIME:    case CSR_INSTRET:
+    case CSR_CYCLEH:  case CSR_TIMEH:   case CSR_INSTRETH:
+    case CSR_MVENDORID: case CSR_MARCHID: case CSR_MIMPID: case CSR_MHARTID:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static uint32_t read_csr(uint32_t csr) {
     switch (csr) {
-    case CSR_MSTATUS:   return csr_mstatus | MSTATUS_MPP;  // MPP always M-mode
-    case CSR_MISA:      return 0x40001105u;  // RV32IMAC
+    case CSR_MSTATUS:       return csr_mstatus | MSTATUS_MPP;  // MPP always M-mode
+    case CSR_MISA:          return 0x40001105u;  // RV32IMAC
     case CSR_MIE:       return csr_mie;
     case CSR_MTVEC:     return csr_mtvec;
     case CSR_MTVT:      return csr_mtvt;
@@ -702,9 +722,12 @@ static uint32_t read_csr(uint32_t csr) {
     case CSR_MARCHID:   return 0x0u;
     case CSR_MIMPID:    return 0x1u;
     case CSR_MHARTID:   return 0x0u;
-    case CSR_MINTTHRESH:return csr_mintthresh;
-    case CSR_MINTSTATUS:return (uint32_t)csr_mintstatus << 24;
-    default:            return 0;
+    case CSR_MINTTHRESH:    return csr_mintthresh;
+    case CSR_MINTSTATUS:    return (uint32_t)csr_mintstatus << 24;
+    case CSR_MSTATUSH:      return 0u;   // RV32 little-endian M-mode: all bits 0
+    case CSR_MCOUNTINHIBIT: return 0u;   // counters always running in sim
+    case CSR_MNXTI:         return 0u;   // CLIC: simplified (no pending interrupt)
+    default:                return 0;
     }
 }
 
@@ -729,7 +752,10 @@ static void write_csr(uint32_t csr, uint32_t val) {
     case CSR_MCYCLEH:    csr_mcycle   = (csr_mcycle & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
     case CSR_MINSTRET:   csr_minstret = (csr_minstret & 0xFFFFFFFF00000000ULL) | val; break;
     case CSR_MINSTRETH:  csr_minstret = (csr_minstret & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
-    case CSR_MINTTHRESH: csr_mintthresh = (uint8_t)val; break;
+    case CSR_MINTTHRESH:    csr_mintthresh = (uint8_t)val; break;
+    case CSR_MSTATUSH:      break;  // all bits read-only 0 in RV32
+    case CSR_MCOUNTINHIBIT: break;  // ignored in sim (counters always run)
+    case CSR_MNXTI:         break;  // CLIC: write side-effects not modelled
     default: break;
     }
 }
@@ -1472,9 +1498,9 @@ static void step() {
             case 1: result = (uint32_t)(((int64_t)(int32_t)a * (int64_t)(int32_t)b) >> 32); break; // MULH
             case 2: result = (uint32_t)(((int64_t)(int32_t)a * (uint64_t)(uint32_t)b) >> 32); break; // MULHSU
             case 3: result = (uint32_t)(((uint64_t)a * (uint64_t)b) >> 32); break; // MULHU
-            case 4: result = (b == 0) ? 0xFFFFFFFFu : (uint32_t)((int32_t)a / (int32_t)b); break; // DIV
+            case 4: result = (b == 0) ? 0xFFFFFFFFu : ((a == 0x80000000u && (int32_t)b == -1) ? 0x80000000u : (uint32_t)((int32_t)a / (int32_t)b)); break; // DIV
             case 5: result = (b == 0) ? 0xFFFFFFFFu : a / b;                 break; // DIVU
-            case 6: result = (b == 0) ? a : (uint32_t)((int32_t)a % (int32_t)b); break; // REM
+            case 6: result = (b == 0) ? a : ((a == 0x80000000u && (int32_t)b == -1) ? 0u : (uint32_t)((int32_t)a % (int32_t)b)); break; // REM
             case 7: result = (b == 0) ? a : a % b;                            break; // REMU
             default: break;
             }
@@ -1558,6 +1584,20 @@ static void step() {
             // CSR instructions
             bool is_imm = (funct3 & 4u) != 0;
             uint32_t csr_addr = instr >> 20;
+
+            // Unknown CSR -> illegal instruction
+            if (!csr_known(csr_addr)) {
+                exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
+                break;
+            }
+            // Write to read-only CSR (bits[11:10]==11) -> illegal
+            // (CSRRW/CSRRWI always writes; CSRRS/CSRRC only when rs1/zimm != 0)
+            if ((csr_addr >> 10) == 3u &&
+                ((funct3 & 3u) == 1u || rs1 != 0u)) {
+                exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
+                break;
+            }
+
             uint32_t old_val  = read_csr(csr_addr);
             uint32_t src      = is_imm ? rs1 : a;  // rs1 field as zimm or reg value
 

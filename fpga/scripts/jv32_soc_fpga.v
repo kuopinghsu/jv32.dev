@@ -33,6 +33,9 @@ module jv32_soc_fpga #(
     input  wire clk,
     input  wire rst_n,
 
+    // Heartbeat LED (minstret[24])
+    output wire heartbeat_o,
+
     // UART
     output wire uart_tx_o,
     input  wire uart_rx_i,
@@ -100,7 +103,14 @@ module jv32_soc_fpga #(
         .trace_mem_we         (), .trace_mem_re         (), .trace_mem_addr      (),
         .trace_mem_data       (), .trace_irq_taken      (), .trace_irq_cause     (),
         .trace_irq_epc        (),
-        .trace_irq_store_we   (), .trace_irq_store_addr (), .trace_irq_store_data()
+        .trace_irq_store_we   (), .trace_irq_store_addr (), .trace_irq_store_data(),
+
+        // ── Heartbeat ─────────────────────────────────────────────────────
+        .heartbeat_o          (heartbeat_o),
+
+        // ── Branch predictor observability (unused on FPGA) ───────────────
+        .perf_bp_branch       (), .perf_bp_taken      (), .perf_bp_mispred   (),
+        .perf_bp_jal          (), .perf_bp_jal_miss   (), .perf_bp_jalr       ()
     );
 
 endmodule

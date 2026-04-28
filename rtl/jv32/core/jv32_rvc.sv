@@ -66,7 +66,9 @@ module jv32_rvc #(
     logic [31:0] hold_pc;
     logic        hold_from_split;  // hold was set from split32 path; don't re-advance pc_if on output
     logic        init_offset;
-    logic        stale_rsp;        // 1 cycle after mr=1: SRAM echoes the old word, must discard
+    /* verilator coverage_off */  // stale_rsp is architecturally always 0 (IFETCH_PREADVANCE)
+    logic        stale_rsp;  // 1 cycle after mr=1: SRAM echoes the old word, must discard
+    /* verilator coverage_on */
 
     function automatic logic [31:0] c_sext6(input logic [5:0] v);
         c_sext6 = {{26{v[5]}}, v};
@@ -199,12 +201,14 @@ module jv32_rvc #(
                                 f1     = ci[12];
                                 f2_low = ci[6:5];
                                 if (!f1)
-                                    case (f2_low)
+                                    case (f2_low)  // 2-bit field: default unreachable
                                         2'h0: expand_c = {7'h20, rs2_p, rd_p, 3'h0, rd_p, 7'h33};
                                         2'h1: expand_c = {7'h00, rs2_p, rd_p, 3'h4, rd_p, 7'h33};
                                         2'h2: expand_c = {7'h00, rs2_p, rd_p, 3'h6, rd_p, 7'h33};
                                         2'h3: expand_c = {7'h00, rs2_p, rd_p, 3'h7, rd_p, 7'h33};
+                                        /* verilator coverage_off */  // f2_low is 2-bit: 0-3 exhaustive
                                         default: expand_c = 32'h0;
+                                        /* verilator coverage_on */
                                     endcase
                                 else if (RVM23_EN)
                                     case (f2_low)
@@ -219,13 +223,17 @@ module jv32_rvc #(
                                     endcase
                                 else expand_c = 32'h0;
                             end
+                            /* verilator coverage_off */  // funct2 is 2-bit: 0-3 exhaustive
                             default: expand_c = 32'h0;
+                            /* verilator coverage_on */
                         endcase
                     end
                     3'h5:    expand_c = enc_jal(5'd0, c_j_off(ci));
                     3'h6:    expand_c = enc_br(3'h0, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci));
                     3'h7:    expand_c = enc_br(3'h1, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci));
+                    /* verilator coverage_off */  // funct3 is 3-bit: 0-7 exhaustive
                     default: expand_c = 32'h0;
+                    /* verilator coverage_on */
                 endcase
             end
 

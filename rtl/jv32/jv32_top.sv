@@ -221,6 +221,9 @@ module jv32_top #(
     output logic perf_bp_jal_miss,
     output logic perf_bp_jalr,
 
+    // Heartbeat: toggles every 2^24 retired instructions (= minstret[24])
+    output logic heartbeat_o,
+
     // mtime from platform timer (for time/timeh CSR)
     input logic [63:0] mtime_i
 );
@@ -364,6 +367,7 @@ module jv32_top #(
         .perf_bp_jal_miss    (perf_bp_jal_miss),
         .perf_bp_jalr        (perf_bp_jalr),
         .d_preload_active    (d_preload_active),
+        .heartbeat_o         (heartbeat_o),
         .mtime_i             (mtime_i)
     );
 

@@ -6,6 +6,7 @@
 
 `timescale 1ns / 1ps
 
+/* verilator coverage_off */
 module tb_jv32_soc #(
     parameter int unsigned        CLK_FREQ   = 80_000_000,
     parameter int unsigned        BAUD_RATE  = 115_200,
@@ -59,6 +60,7 @@ module tb_jv32_soc #(
     output logic perf_bp_jal,
     output logic perf_bp_jal_miss,
     output logic perf_bp_jalr,
+    output logic heartbeat_o,
 
     // DPI-C memory init
     input  logic uart_rx_i,
@@ -478,7 +480,9 @@ module tb_jv32_soc #(
         .perf_bp_mispred     (perf_bp_mispred),
         .perf_bp_jal         (perf_bp_jal),
         .perf_bp_jal_miss    (perf_bp_jal_miss),
-        .perf_bp_jalr        (perf_bp_jalr)
+        .perf_bp_jalr        (perf_bp_jalr),
+        .heartbeat_o         (heartbeat_o)
     );
 
 endmodule
+/* verilator coverage_on */

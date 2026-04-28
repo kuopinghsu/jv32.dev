@@ -8,6 +8,9 @@
 
 #include <verilated.h>
 #include <verilated_fst_c.h>
+#if VM_COVERAGE
+#include <verilated_cov.h>
+#endif
 #include "Vtb_jv32_soc.h"
 #include "elfloader.h"
 
@@ -227,6 +230,9 @@ int main(int argc, char** argv) {
             timeout_seconds = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
             timeout_seconds = (uint64_t)strtoull(argv[i] + 10, nullptr, 10);
+        } else if (argv[i][0] == '+') {
+            // +verilator+... Verilator runtime args (e.g. +verilator+coverage+file+<path>)
+            // are handled by ctx->commandArgs() below; skip in manual parser.
         } else if (!elf_path) {
             elf_path = argv[i];
         } else {
@@ -438,6 +444,10 @@ int main(int argc, char** argv) {
          cpi);
 
     dut->final();
+
+#if VM_COVERAGE
+    VerilatedCov::write(ctx->coverageFilename());
+#endif
 
     delete dut;
     delete ctx;

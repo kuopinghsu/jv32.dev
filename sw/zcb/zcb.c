@@ -48,9 +48,10 @@ static int g_fail = 0;
     } \
 } while (0)
 
-/* Source data for load tests */
-static volatile uint8_t  src_b[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-static volatile uint16_t src_h[4] = {0xCAFE, 0x8001, 0x7FFF, 0x0000};
+/* Source data for load tests — uninitialised (BSS) to avoid misaligned .data
+ * LMA that would fault in the crt0 word-copy loop.  Filled at runtime. */
+static volatile uint8_t  src_b[4];
+static volatile uint16_t src_h[4];
 
 /* Destination buffers for store tests */
 static volatile uint8_t  dst_b[4];
@@ -153,6 +154,10 @@ static void test_zcb_arith(void)
 /* ── main ─────────────────────────────────────────────────────────────────── */
 int main(void)
 {
+    /* Initialise source buffers at runtime (BSS avoids misaligned .data LMA). */
+    src_b[0] = 0xDE; src_b[1] = 0xAD; src_b[2] = 0xBE; src_b[3] = 0xEF;
+    src_h[0] = 0xCAFE; src_h[1] = 0x8001; src_h[2] = 0x7FFF; src_h[3] = 0x0000;
+
     jv_puts("zcb: Zcb compressed instruction coverage test\n");
 
     test_zcb_loads();

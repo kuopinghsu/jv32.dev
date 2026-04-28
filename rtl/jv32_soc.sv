@@ -175,7 +175,11 @@ module jv32_soc #(
     output logic perf_bp_mispred,
     output logic perf_bp_jal,
     output logic perf_bp_jal_miss,
-    output logic perf_bp_jalr
+    output logic perf_bp_jalr,
+
+    // Heartbeat: toggles every 2^24 retired instructions (= minstret[24]).
+    // One full toggle period = 2 * 2^24 * CPI clock cycles.
+    output logic heartbeat_o
 );
     import jv32_pkg::*;
 
@@ -748,6 +752,7 @@ module jv32_soc #(
         .perf_bp_jal         (perf_bp_jal),
         .perf_bp_jal_miss    (perf_bp_jal_miss),
         .perf_bp_jalr        (perf_bp_jalr),
+        .heartbeat_o         (heartbeat_o),
         .mtime_i             (clic_mtime)
     );
 

@@ -15,7 +15,7 @@
 ## Verification
 
 - [x] **Formal verification (SymbiYosys)** — `verif/formal/` contains a full BMC flow for `jv32_csr.sv`: `gen_flat_csr.py` generates a Yosys-compatible flat SV file and injects 7 assertion properties (MEPC alignment, MTVEC bit-1 zero, MIE reserved-bit mask, MIE clears on exception/IRQ, MISA read-only, MPIE captures pre-trap MIE). Run with `make -C verif/formal csr` (PASS in ~23 s, depth 20, engine: `smtbmc --nopresat --unroll z3`).
-- [ ] **Coverage-driven simulation** — add Verilator functional coverage (`$coverage_control`) or SystemVerilog covergroups to the testbench to show which instruction/hazard combinations haven't been exercised.
+- [x] **Coverage-driven simulation** — added `build-rtl-cov` (builds with Verilator `--coverage`) and `coverage` target (runs all SW tests, collects per-test `.dat` files, merges and annotates with `verilator_coverage`). Run with `make coverage`; annotated line/toggle report written to `build/coverage/annotated/`.
 
 ## Software / RTOS
 

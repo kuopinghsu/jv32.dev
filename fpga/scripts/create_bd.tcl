@@ -94,6 +94,7 @@ create_bd_port -dir O                              soc_tms_oe
 create_bd_port -dir O                              soc_tdo_o
 create_bd_port -dir I                              uart_rx_i
 create_bd_port -dir O                              uart_tx_o
+create_bd_port -dir O                              heartbeat_o
 
 # ---------------------------------------------------------------------------
 # Clock chain:  clk_in1 → clk_wiz_0 → proc_sys_reset_0 / u_soc
@@ -138,6 +139,11 @@ connect_bd_net [get_bd_pins u_soc/jtag_pin3_tdo_o]  [get_bd_ports soc_tdo_o]
 # ---------------------------------------------------------------------------
 connect_bd_net [get_bd_ports uart_rx_i]      [get_bd_pins u_soc/uart_rx_i]
 connect_bd_net [get_bd_pins u_soc/uart_tx_o] [get_bd_ports uart_tx_o]
+
+# ---------------------------------------------------------------------------
+# Heartbeat LED
+# ---------------------------------------------------------------------------
+connect_bd_net [get_bd_pins u_soc/heartbeat_o] [get_bd_ports heartbeat_o]
 
 # ---------------------------------------------------------------------------
 # Validate and save

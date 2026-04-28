@@ -40,6 +40,9 @@
 
 #include <verilated.h>
 #include <verilated_fst_c.h>
+#if VM_COVERAGE
+#include <verilated_cov.h>
+#endif
 #include "Vtb_jv32_soc.h"
 #include "elfloader.h"
 
@@ -290,6 +293,8 @@ int main(int argc, char **argv) {
             g_tck_half_clks = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--idle-clks")     && i+1 < argc)
             g_idle_clks     = atoi(argv[++i]);
+        else if (argv[i][0] == '+')
+            ; // +verilator+... runtime args handled by ctx->commandArgs() below
         else if (!elf_path)
             elf_path = argv[i];
         else {
@@ -431,6 +436,9 @@ int main(int argc, char **argv) {
     close(client_fd);
     close(server_fd);
     if (g_tfp) { g_tfp->flush(); g_tfp->close(); }
+#if VM_COVERAGE
+    VerilatedCov::write(ctx->coverageFilename());
+#endif
     g_dut->final();
     delete g_dut;
     delete ctx;

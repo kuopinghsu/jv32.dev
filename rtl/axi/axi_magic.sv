@@ -39,6 +39,7 @@
 // DPI-C import for exit notification
 import "DPI-C" function void sim_request_exit(input int exit_code);
 
+/* verilator coverage_off */
 module axi_magic (
     input logic clk,
     input logic rst_n,
@@ -422,5 +423,6 @@ module axi_magic (
 `endif  // ASSERTION
 
 endmodule
+/* verilator coverage_on */
 `endif  // SYNTHESIS
 

@@ -132,6 +132,9 @@ module jv32_core #(
     // D-preload active during WB DRAM response cycle (consecutive loads; used by jv32_top tracking)
     output logic d_preload_active,
 
+    // Heartbeat: toggles every 2^24 retired instructions (= minstret[24])
+    output logic heartbeat_o,
+
     // mtime from platform timer (for time/timeh CSR)
     input logic [63:0] mtime_i
 );
@@ -400,6 +403,7 @@ module jv32_core #(
         .irq_pending    (csr_irq_pending),
         .irq_cause      (csr_irq_cause),
         .irq_pc         (csr_irq_pc),
+        .heartbeat_o    (heartbeat_o),
         .instret_inc    (trace_valid_r),
         .mtime_i        (mtime_i)
     );

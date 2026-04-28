@@ -7,6 +7,7 @@
 // Useful for testing UART transmit and receive functionality.
 // ============================================================================
 
+/* verilator coverage_off */
 module uart_loopback (
     input  logic        clk,
     input  logic        rst_n,
@@ -177,3 +178,4 @@ module uart_loopback (
     end
 
 endmodule
+/* verilator coverage_on */

@@ -85,6 +85,9 @@ module jv32_csr #(
     output logic [31:0] irq_cause,
     output logic [31:0] irq_pc,
 
+    // Heartbeat: toggles every 2^24 retired instructions (= minstret[24])
+    output logic heartbeat_o,
+
     // Instruction-retired pulse
     input logic instret_inc,
 
@@ -376,8 +379,9 @@ module jv32_csr #(
         end
     end
 
-    assign mtvec_o = mtvec_reg;
-    assign mepc_o  = mepc_reg;
+    assign mtvec_o     = mtvec_reg;
+    assign mepc_o      = mepc_reg;
+    assign heartbeat_o = minstret_cnt[24];
 
     // Suppress unused
     logic _unused;

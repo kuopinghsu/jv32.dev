@@ -60,6 +60,15 @@ set_false_path -from [get_ports uart_rx_i]
 set_false_path -to [get_ports uart_tx_o]
 
 # -----------------------------------------------------------------------------
+# Heartbeat LED – LED6 on H9, 3.3 V LVCMOS33 (HR bank)
+# minstret[24]: toggles every 2^24 retired instructions (~420 ms at 80 MHz / CPI 1.25)
+# Slow output – false path is appropriate.
+# -----------------------------------------------------------------------------
+set_property PACKAGE_PIN H9 [get_ports heartbeat_o]
+set_property IOSTANDARD LVCMOS33 [get_ports heartbeat_o]
+set_false_path -to [get_ports heartbeat_o]
+
+# -----------------------------------------------------------------------------
 # Reset synchronizer – LUTAR-1 suppression
 # -----------------------------------------------------------------------------
 # rst_n_pre = rst_n & ~dbg_ndmreset is a 2-input LUT that drives the async CLR

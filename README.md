@@ -628,6 +628,36 @@ The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`). 
 
 These ~327 bits toggle continuously during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.
 
+## Coverage
+
+Verilator line + branch coverage measured by running all `sw/` tests and 7 JTAG debug scenarios
+(`make coverage`).  Testbench wrappers (`tb_jv32_soc`, `uart_loopback`) and the simulation-only
+`axi_magic` device are excluded with `/* verilator coverage_off */`.
+
+**Overall (2026-04-28):** lines **90.1%** · branches **69.9%** · expressions **80.5%** · toggles **69.7%**
+
+| Module | Lines | Branch |
+|---|---:|---:|
+| `jv32_alu.sv` | 97.7% | — |
+| `jv32_regfile.sv` | 100.0% | — |
+| `jv32_rvc.sv` | 97.1% | — |
+| `jv32_decoder.sv` | 95.5% | — |
+| `jv32_top.sv` | 95.5% | — |
+| `axi_uart.sv` | 94.3% | — |
+| `jv32_core.sv` | 92.8% | — |
+| `axi_xbar.sv` | 92.3% | — |
+| `axi_clic.sv` | 91.8% | — |
+| `jv32_csr.sv` | 90.2% | — |
+| `jtag_tap.sv` | 89.3% | — |
+| `jtag_top.sv` | 87.1% | — |
+| `jv32_soc.sv` | 84.9% | — |
+| `jv32_dtm.sv` | 75.5% | — |
+| `sram_1rw.sv` | 100.0% | — |
+
+> `jv32_dtm` is lower because JTAG tests cover the halt/resume, programbuf, SBA, step, abstract
+> register, trigger, and debug-error flows but leave several rarely-exercised error-recovery paths
+> untested.  Run `make coverage` to regenerate; HTML report is written to `build/coverage/html/`.
+
 ## Documentation
 
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`

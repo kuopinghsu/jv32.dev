@@ -19,6 +19,9 @@
 //   uart_tx_o     J14   TX
 //   uart_rx_i     G12   RX
 //
+//   Heartbeat LED (LVCMOS33)
+//   heartbeat_o   H9    LED6 — toggles every 2^24 retired instructions
+//
 // Parameters
 // ----------
 //   USE_CJTAG  0 (default) = 4-wire JTAG
@@ -47,7 +50,10 @@ module jv32_fpga_top #(
 
     // UART
     output logic uart_tx_o,
-    input  logic uart_rx_i
+    input  logic uart_rx_i,
+
+    // Heartbeat LED – H9, LVCMOS33 (LED6)
+    output logic heartbeat_o
 );
 
     // -----------------------------------------------------------------------
@@ -67,7 +73,8 @@ module jv32_fpga_top #(
         .soc_tms_oe   (soc_tms_oe),
         .soc_tdo_o    (soc_tdo_o),
         .uart_rx_i    (uart_rx_i),
-        .uart_tx_o    (uart_tx_o)
+        .uart_tx_o    (uart_tx_o),
+        .heartbeat_o  (heartbeat_o)
     );
 
     // -----------------------------------------------------------------------

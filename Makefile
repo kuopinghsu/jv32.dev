@@ -226,12 +226,14 @@ VPI_SOURCES = \
     $(TB_DIR)/elfloader.cpp
 
 # VPI build output binaries
-VPI_TARGET_JTAG  = $(BUILD_DIR)/jv32vpi_jtag
-VPI_TARGET_CJTAG = $(BUILD_DIR)/jv32vpi_cjtag
+VPI_TARGET_JTAG     = $(BUILD_DIR)/jv32vpi_jtag
+VPI_TARGET_CJTAG    = $(BUILD_DIR)/jv32vpi_cjtag
+VPI_TARGET_JTAG_COV = $(BUILD_DIR)/jv32vpi_jtag_cov
 
 # VERILATOR_FLAGS with any caller-supplied USE_CJTAG stripped out, so VPI
 # build targets can set USE_CJTAG precisely without risk of duplication.
-VERILATOR_FLAGS_VPI = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_FLAGS))
+VERILATOR_FLAGS_VPI     = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_FLAGS))
+VERILATOR_COV_FLAGS_VPI = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_COV_FLAGS))
 
 # Output binary
 BUILD_TARGET = $(BUILD_DIR)/jv32soc
@@ -246,10 +248,11 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
 	lint-verible lint-svlint format-rtl sim-build compare-% compare-all arch-test-% FORCE \
-        build-vpi-jtag build-vpi-cjtag \
+        build-vpi-jtag build-vpi-cjtag build-vpi-jtag-cov \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
-        submodule-init extra-tests openocd-test syn fpga
+        submodule-init extra-tests openocd-test syn fpga \
+        build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
 all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all extra-tests arch-test-run openocd-test
@@ -357,6 +360,28 @@ $(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
 	@echo "=========================================="
 	@echo "VPI cJTAG testbench: $(VPI_TARGET_CJTAG)"
 	@echo "=========================================="
+
+build-vpi-jtag-cov: $(VPI_TARGET_JTAG_COV)
+$(VPI_TARGET_JTAG_COV): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES) $(COV_PARAMS_STAMP)
+	@echo "=========================================="
+	@echo "Building JV32 VPI testbench (JTAG, coverage)"
+	@echo "=========================================="
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)/objdir_vpi_jtag_cov
+	$(VERILATOR) $(VERILATOR_COV_FLAGS_VPI) \
+	    -pvalue+USE_CJTAG=0 \
+	    -Mdir $(BUILD_DIR)/objdir_vpi_jtag_cov \
+	    -o ../jv32vpi_jtag_cov \
+	    -I$(CORE_DIR) \
+	    -I$(JV32_DIR) \
+	    -I$(AXI_DIR) \
+	    -I$(MEM_DIR) \
+	    -I$(RTL_DIR) \
+	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES) \
+	    $(VPI_SOURCES)
+	@echo ""
+	@echo "VPI JTAG coverage testbench: $(VPI_TARGET_JTAG_COV)"
 
 # ============================================================================
 # Lint
@@ -943,6 +968,122 @@ fpga:
 	@$(MAKE) -C fpga --no-print-directory impl
 
 # ============================================================================
+# Coverage-driven simulation (Verilator line + toggle coverage)
+# ============================================================================
+# Build the RTL simulator with --coverage, run every SW test to collect
+# per-test .dat files, merge them, and emit an annotated source report.
+#
+# Usage:
+#   make coverage              # run all SW tests, write build/coverage/
+#   make coverage TIMEOUT=300  # override per-test wall-clock timeout
+# ============================================================================
+COV_DIR          = $(BUILD_DIR)/coverage
+COV_TARGET       = $(BUILD_DIR)/jv32soc_cov
+COV_PARAMS_STAMP = $(BUILD_DIR)/.build_params_cov
+
+# Coverage build flags: same as VERILATOR_FLAGS but with --coverage appended
+VERILATOR_COV_FLAGS = $(VERILATOR_FLAGS) --coverage
+
+$(COV_PARAMS_STAMP): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s' "$(RTL_BUILD_PARAMS)" | cmp -s - $@ || printf '%s' "$(RTL_BUILD_PARAMS)" > $@
+
+build-rtl-cov: $(COV_TARGET)
+
+$(COV_TARGET): $(RTL_SOURCES) $(TB_SV_SOURCES) $(TB_SOURCES) $(COV_PARAMS_STAMP)
+	@echo "=========================================="
+	@echo "Building JV32 SoC with Verilator (coverage)"
+	@echo "=========================================="
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)/objdir_cov
+	$(VERILATOR) $(VERILATOR_COV_FLAGS) \
+	    -Mdir $(BUILD_DIR)/objdir_cov \
+	    -o ../jv32soc_cov \
+	    -I$(CORE_DIR) \
+	    -I$(JV32_DIR) \
+	    -I$(AXI_DIR) \
+	    -I$(MEM_DIR) \
+	    -I$(RTL_DIR) \
+	    $(RTL_SOURCES) \
+	    $(TB_SV_SOURCES) \
+	    $(TB_SOURCES)
+	@echo ""
+	@echo "Coverage build complete: $(COV_TARGET)"
+
+coverage: build-rtl-cov build-vpi-jtag-cov sw-all sw-hello
+	@echo "=========================================="
+	@echo "Coverage run: $(SW_TEST_COUNT) SW tests + JTAG tests"
+	@echo "=========================================="
+	@mkdir -p $(COV_DIR)/dat
+	@for test in $(SW_TESTS); do \
+		printf "  %-20s ... " "$$test"; \
+		$(COV_TARGET) \
+		    $(TIMEOUT_ARG) \
+		    +verilator+coverage+file+$(abspath $(COV_DIR)/dat/$$test.dat) \
+		    $(BUILD_DIR)/$$test.elf 2>/dev/null; \
+		echo "done"; \
+	done
+	@echo ""
+	@echo "Running JTAG coverage tests..."
+	@JTAG_COV_PORT=5556; \
+	OPENOCD_DIR=$(abspath openocd); \
+	OPENOCD=$${OPENOCD:-openocd}; \
+	for t in halt_resume programbuf sba step abstract_regs triggers debug_errors; do \
+	    printf "  [jtag-cov] %-20s ... " "$$t"; \
+	    $(VPI_TARGET_JTAG_COV) \
+	        $(BUILD_DIR)/hello.elf \
+	        --port $$JTAG_COV_PORT \
+	        +verilator+coverage+file+$(abspath $(COV_DIR)/dat/jtag_$$t.dat) \
+	        >/dev/null 2>&1 & VPI_PID=$$!; \
+	    for _i in $$(seq 1 60); do \
+	        ss -tnl 2>/dev/null | grep -q ":$$JTAG_COV_PORT " && break; \
+	        sleep 0.1; \
+	    done; \
+	    ( cd "$$OPENOCD_DIR" && \
+	      $$OPENOCD -d0 \
+	          -c "gdb_port disabled" \
+	          -f jv32.cfg \
+	          -c "jtag_vpi set_port $$JTAG_COV_PORT" \
+	          -c init \
+	          -c "source test_$$t.tcl" \
+	          -c shutdown \
+	    ) >/dev/null 2>&1; \
+	    OCD_RC=$$?; \
+	    for _k in $$(seq 1 40); do \
+	        kill -0 $$VPI_PID 2>/dev/null || break; \
+	        sleep 0.1; \
+	    done; \
+	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	    for _j in $$(seq 1 30); do \
+	        ss -tnl 2>/dev/null | grep -q ":$$JTAG_COV_PORT " || break; \
+	        sleep 0.1; \
+	    done; \
+	    if [ $$OCD_RC -eq 0 ]; then echo "done"; else echo "FAIL (rc=$$OCD_RC)"; fi; \
+	done
+	@echo ""
+	@echo "Generating annotated coverage report..."
+	@mkdir -p $(COV_DIR)/annotated
+	@verilator_coverage \
+	    --annotate $(COV_DIR)/annotated \
+	    --annotate-min 1 \
+	    $(COV_DIR)/dat/*.dat
+	@echo ""
+	@echo "Generating HTML coverage report (genhtml)..."
+	@mkdir -p $(COV_DIR)/html
+	@verilator_coverage \
+	    --write-info $(COV_DIR)/coverage.info \
+	    $(COV_DIR)/dat/*.dat
+	@genhtml --output-directory $(COV_DIR)/html \
+	    --title "JV32 RTL Coverage" \
+	    --legend \
+	    $(COV_DIR)/coverage.info
+	@echo ""
+	@echo "=========================================="
+	@echo "Annotated report : $(COV_DIR)/annotated/"
+	@echo "HTML report      : $(COV_DIR)/html/index.html"
+	@echo "=========================================="
+
+# ============================================================================
 clean:
 	@rm -rf $(BUILD_DIR)
 	@$(MAKE) -C $(SW_DIR) --no-print-directory clean
@@ -1033,6 +1174,9 @@ help:
 	@echo "  arch-test-<tgt>      Forward <tgt> to verif/Makefile (see make -C verif help)"
 	@echo "  openocd-test         Build VPI testbenches + run OpenOCD JTAG & cJTAG tests"
 	@echo "                       (requires patched OpenOCD: github.com/kuopinghsu/openocd)"
+	@echo "  coverage             Build coverage-instrumented sim and run all SW tests;"
+	@echo "                       writes annotated line/toggle report to build/coverage/"
+	@echo "  build-rtl-cov        Build Verilator simulator with --coverage (used by coverage)"
 	@echo "  syn                  ASIC synthesis + P&R via OpenLane2 / Nangate 45nm"
 	@echo "  fpga                 FPGA build via Vivado ML Standard Edition (free license)"
 	@echo "                       (runs synth + place-and-route + bitstream via 'impl')"
