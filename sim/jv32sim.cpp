@@ -1132,8 +1132,8 @@ static uint32_t expand_rvc(uint16_t ci) {
                         uint32_t sub = (ci >> 2) & 7u;
                         if (sub == 0) // c.zext.b: andi rd, rd, 255
                             return (0xFF << 20) | (rd_p2 << 15) | (7u << 12) | (rd_p2 << 7) | 0x13u;
-                        if (sub == 4) // c.zext.h: if Zbb: slli rd,rd,16 + srli rd,rd,16 — simplify to NOP
-                            return 0x00000013u;     // addi x0,x0,0 NOP
+                        if (sub == 4) // c.zext.h: ZEXT.H rd = (funct7=0x04, rs2=x0, funct3=4) -> zext.h rd,rd
+                            return (0x04u<<25)|(0u<<20)|(rd_p2<<15)|(4u<<12)|(rd_p2<<7)|0x33u;
                         if (sub == 5) // c.not: xori rd, rd, -1
                             return (0xFFF << 20) | (rd_p2 << 15) | (4u << 12) | (rd_p2 << 7) | 0x13u;
                         return 0x00000013u; // NOP
@@ -1406,14 +1406,48 @@ static void step() {
         case 4: result = a ^ imm;                               break; // XORI
         case 6: result = a | imm;                               break; // ORI
         case 7: result = a & imm;                               break; // ANDI
-        case 1: // SLLI
-            if (funct7 == 0) result = a << (imm & 0x1Fu);
-            else { exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; }
+        case 1: // SLLI / Zbb unary (CLZ/CTZ/CPOP/SEXT.B/SEXT.H) / Zbs BCLRI/BINVI/BSETI
+            if (funct7 == 0x00) {
+                result = a << (imm & 0x1Fu);         // SLLI
+            } else if (funct7 == 0x30) { // Zbb: CLZ / CTZ / CPOP / SEXT.B / SEXT.H
+                switch (rs2) { // shamt field doubles as op selector
+                case 0: { uint32_t n=0; for(int i=31;i>=0;i--){if((a>>i)&1){n=(uint32_t)(31-i);goto clz_done;}} n=32; clz_done: result=n; break; } // CLZ
+                case 1: { uint32_t n=0; for(int i=0;i<=31;i++){if((a>>i)&1){n=(uint32_t)i;goto ctz_done;}} n=32; ctz_done: result=n; break; } // CTZ
+                case 2: { uint32_t n=0; for(int i=0;i<=31;i++) n+=(a>>i)&1u; result=n; break; } // CPOP
+                case 4: result = (uint32_t)sign_extend(a & 0xFFu, 8);   break; // SEXT.B
+                case 5: result = (uint32_t)sign_extend(a & 0xFFFFu, 16); break; // SEXT.H
+                default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
+                }
+            } else if (funct7 == 0x14) { // Zbs: BSETI
+                result = a | (1u << (imm & 0x1Fu));
+            } else if (funct7 == 0x24) { // Zbs: BCLRI
+                result = a & ~(1u << (imm & 0x1Fu));
+            } else if (funct7 == 0x34) { // Zbs: BINVI
+                result = a ^ (1u << (imm & 0x1Fu));
+            } else {
+                exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;
+            }
             break;
-        case 5: // SRLI / SRAI
-            if      (funct7 == 0x00) result = a >> (imm & 0x1Fu);
-            else if (funct7 == 0x20) result = (uint32_t)((int32_t)a >> (imm & 0x1Fu));
-            else { exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; }
+        case 5: // SRLI / SRAI / Zbb RORI / Zbb ORC.B / Zbb REV8 / Zbs BEXTI
+            if      (funct7 == 0x00) { result = a >> (imm & 0x1Fu); // SRLI
+            } else if (funct7 == 0x20) { result = (uint32_t)((int32_t)a >> (imm & 0x1Fu)); // SRAI
+            } else if (funct7 == 0x30) { // Zbb: RORI
+                { uint32_t n=imm&0x1Fu; result=(a>>n)|(a<<(32u-n)); }
+            } else if (funct7 == 0x14 && rs2 == 7)  { // Zbb: ORC.B (shamt=0x07)
+                result = (a & 0xFF000000u ? 0xFF000000u : 0u)
+                       | (a & 0x00FF0000u ? 0x00FF0000u : 0u)
+                       | (a & 0x0000FF00u ? 0x0000FF00u : 0u)
+                       | (a & 0x000000FFu ? 0x000000FFu : 0u);
+            } else if (funct7 == 0x34 && rs2 == 24) { // Zbb: REV8 (shamt=0x18)
+                result = ((a & 0x000000FFu) << 24)
+                       | ((a & 0x0000FF00u) << 8)
+                       | ((a & 0x00FF0000u) >> 8)
+                       | ((a & 0xFF000000u) >> 24);
+            } else if (funct7 == 0x24) { // Zbs: BEXTI
+                result = (a >> (imm & 0x1Fu)) & 1u;
+            } else {
+                exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;
+            }
             break;
         default: break;
         }
@@ -1448,6 +1482,32 @@ static void step() {
             case 0x105: result = (uint32_t)((int32_t)a >> (b & 0x1Fu));  break; // SRA
             case 0x006: result = a | b;                                  break; // OR
             case 0x007: result = a & b;                                  break; // AND
+            // Zba: address generation  (funct7=0x10)
+            case 0x082: result = (a << 1) + b;                           break; // SH1ADD
+            case 0x084: result = (a << 2) + b;                           break; // SH2ADD
+            case 0x086: result = (a << 3) + b;                           break; // SH3ADD
+            // Zbb: logical-with-negate (funct7=0x20, reuses funct7 of SUB/SRA)
+            case 0x104: result = a ^ ~b;                                 break; // XNOR
+            case 0x106: result = a | ~b;                                 break; // ORN
+            case 0x107: result = a & ~b;                                 break; // ANDN
+            // Zbb: min/max             (funct7=0x05)
+            case 0x02C: result = ((int32_t)a < (int32_t)b) ? a : b;      break; // MIN
+            case 0x02D: result = (a < b) ? a : b;                        break; // MINU
+            case 0x02E: result = ((int32_t)a > (int32_t)b) ? a : b;      break; // MAX
+            case 0x02F: result = (a > b) ? a : b;                        break; // MAXU
+            // Zbb: rotate              (funct7=0x30)
+            case 0x181: { uint32_t n=b&0x1Fu; result=(a<<n)|(a>>(32u-n)); break; } // ROL
+            case 0x185: { uint32_t n=b&0x1Fu; result=(a>>n)|(a<<(32u-n)); break; } // ROR
+            // Zbb: ZEXT.H              (funct7=0x04, rs2 must be x0)
+            case 0x024:
+                if (rs2 == 0) result = a & 0xFFFFu;
+                else { exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; }
+                break; // ZEXT.H
+            // Zbs: single-bit ops      (funct7=0x14/0x24/0x34)
+            case 0x0A1: result = a | (1u << (b & 0x1Fu));                break; // BSET
+            case 0x121: result = a & ~(1u << (b & 0x1Fu));               break; // BCLR
+            case 0x125: result = (a >> (b & 0x1Fu)) & 1u;                break; // BEXT
+            case 0x1A1: result = a ^ (1u << (b & 0x1Fu));                break; // BINV
             default:
                 exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
                 break;

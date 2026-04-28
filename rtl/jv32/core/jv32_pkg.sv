@@ -71,6 +71,7 @@ package jv32_pkg;
     localparam bit          RV32M_EN       = 1;              // 1=M-extension (mul/div), 0=illegal
     localparam bit          JTAG_EN        = 1;              // 1=JTAG debug port present, 0=no JTAG
     localparam bit          TRACE_EN       = 1;              // 1=trace outputs active, 0=tied to 0 in synthesis
+    localparam bit          ZB_EN          = 1;              // 1=Zba/Zbb/Zbs bit-manip extensions, 0=illegal
     localparam int unsigned IRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned AXI_DATA_WIDTH = 32;             // 32-bit AXI data bus
@@ -96,27 +97,55 @@ package jv32_pkg;
     } opcode_e;
 
     // ========================================================================
-    // ALU operations - RV32IM subset (no B-ext, no FPU)
+    // ALU operations - RV32IM + optional Zba/Zbb/Zbs
     // ========================================================================
-    typedef enum logic [4:0] {
-        ALU_ADD,
-        ALU_SUB,
-        ALU_SLL,
-        ALU_SLT,
-        ALU_SLTU,
-        ALU_XOR,
-        ALU_SRL,
-        ALU_SRA,
-        ALU_OR,
-        ALU_AND,
-        ALU_MUL,
-        ALU_MULH,
-        ALU_MULHSU,
-        ALU_MULHU,
-        ALU_DIV,
-        ALU_DIVU,
-        ALU_REM,
-        ALU_REMU
+    typedef enum logic [5:0] {
+        // Base RV32I / M-extension
+        ALU_ADD,     // 0
+        ALU_SUB,     // 1
+        ALU_SLL,     // 2
+        ALU_SLT,     // 3
+        ALU_SLTU,    // 4
+        ALU_XOR,     // 5
+        ALU_SRL,     // 6
+        ALU_SRA,     // 7
+        ALU_OR,      // 8
+        ALU_AND,     // 9
+        ALU_MUL,     // 10
+        ALU_MULH,    // 11
+        ALU_MULHSU,  // 12
+        ALU_MULHU,   // 13
+        ALU_DIV,     // 14
+        ALU_DIVU,    // 15
+        ALU_REM,     // 16
+        ALU_REMU,    // 17
+        // Zba — address generation
+        ALU_SH1ADD,  // 18  rd = (rs1 << 1) + rs2
+        ALU_SH2ADD,  // 19  rd = (rs1 << 2) + rs2
+        ALU_SH3ADD,  // 20  rd = (rs1 << 3) + rs2
+        // Zbb — basic bit manipulation
+        ALU_CLZ,    // 21  count leading zeros
+        ALU_CTZ,    // 22  count trailing zeros
+        ALU_CPOP,   // 23  popcount
+        ALU_ANDN,   // 24  rs1 & ~rs2
+        ALU_ORN,    // 25  rs1 | ~rs2
+        ALU_XNOR,   // 26  rs1 ^ ~rs2
+        ALU_MIN,    // 27  signed min
+        ALU_MINU,   // 28  unsigned min
+        ALU_MAX,    // 29  signed max
+        ALU_MAXU,   // 30  unsigned max
+        ALU_SEXTB,  // 31  sign-extend byte
+        ALU_SEXTH,  // 32  sign-extend halfword
+        ALU_ZEXTH,  // 33  zero-extend halfword
+        ALU_ROL,    // 34  rotate left  (also used for RORI with imm operand)
+        ALU_ROR,    // 35  rotate right (also used for RORI with imm operand)
+        ALU_ORCB,   // 36  or-combine bytes
+        ALU_REV8,   // 37  byte-reverse
+        // Zbs — single-bit operations
+        ALU_BCLR,  // 38  bit clear  (also used for BCLRI)
+        ALU_BEXT,  // 39  bit extract (also used for BEXTI)
+        ALU_BINV,  // 40  bit invert  (also used for BINVI)
+        ALU_BSET   // 41  bit set     (also used for BSETI)
     } alu_op_e;
 
     // ========================================================================
@@ -233,7 +262,8 @@ package jv32_pkg;
         logic [31:0] instr;          // expanded 32-bit instruction
         logic [31:0] orig_instr;     // original encoding (16-bit zero-ext for RVC)
         logic        is_compressed;  // was originally 16-bit RVC
-        logic        bp_taken;       // front-end pre-redirected: BTFNT taken-branch or JAL
+        logic        bp_taken;       // front-end pre-redirected: BTFNT taken-branch, JAL, or RAS pop
+        logic [31:0] bp_pred_pc;     // predicted target PC when bp_taken=1 (RAS pop return address)
         logic        ifetch_fault;   // AXI DECERR on I-fetch -> EXC_INSTR_ACCESS_FAULT
     } if_ex_t;
 

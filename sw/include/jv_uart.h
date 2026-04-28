@@ -149,14 +149,14 @@ static inline void jv_uart_irq_disable(uint32_t mask)
 }
 
 /**
- * Read (and clear) the interrupt status register (level-triggered, W1C).
- * @return  Snapshot of IS before clearing.
+ * Read the interrupt status register (IS is level-triggered; it clears
+ * automatically when the FIFO condition resolves — no explicit write-clear
+ * is needed or supported by the hardware).
+ * @return  Current value of IS: bit[0]=rx_ready, bit[1]=tx_empty.
  */
 static inline uint32_t jv_uart_irq_status(void)
 {
-    uint32_t s = JV_UART_IS;
-    JV_UART_IS = s;   /* W1C */
-    return s;
+    return JV_UART_IS;
 }
 
 /* ── loopback ────────────────────────────────────────────────────────────── */

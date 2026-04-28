@@ -42,9 +42,7 @@ module jv32_rvc #(
     input  logic [31:0] imem_resp_pc,
     input  logic        stall,
     input  logic        flush,
-    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [31:0] flush_pc,
-    /* verilator lint_on UNUSEDSIGNAL */
     output logic        instr_valid,
     output logic [31:0] instr_data,
     output logic [31:0] orig_instr,
@@ -86,7 +84,6 @@ module jv32_rvc #(
         c_sext12 = {{20{v[11]}}, v};
     endfunction
 
-    /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic [31:0] c_j_off(input logic [15:0] ci);
         c_j_off = c_sext12({ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3], 1'b0});
     endfunction
@@ -103,17 +100,14 @@ module jv32_rvc #(
                                            input logic [31:0] im);
         enc_br = {im[12], im[10:5], rs2, rs1, f3, im[4:1], im[11], 7'h63};
     endfunction
-    /* verilator lint_on UNUSEDSIGNAL */
 
     function automatic logic [31:0] expand_c(input logic [15:0] ci);
         logic [1:0] quad, funct2;
         logic [2:0] funct3;
         logic [4:0] rd_rs1, rs2, rd_p, rs1_p, rs2_p;
         logic [11:0] nzuimm12, uimm12;
-        /* verilator lint_off UNUSEDSIGNAL */
         logic [31:0] nzimm, imm;
         logic [31:0] _sext;  // intermediate for bit-slicing function results
-        /* verilator lint_on UNUSEDSIGNAL */
         logic        f1;
         logic [ 1:0] f2_low;
 

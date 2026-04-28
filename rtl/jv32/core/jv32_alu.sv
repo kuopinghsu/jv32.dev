@@ -42,14 +42,15 @@ module jv32_alu #(
     parameter bit FAST_MUL   = 1'b1,
     parameter bit MUL_MC     = 1'b1,  // 1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)
     parameter bit FAST_DIV   = 1'b0,
-    parameter bit FAST_SHIFT = 1'b1
+    parameter bit FAST_SHIFT = 1'b1,
+    parameter bit ZB_EN      = 1'b1   // 1=Zba/Zbb/Zbs enabled; 0=only base ops (synthesized away)
 ) (
     input  logic           clk,
     input  logic           rst_n,
 `ifndef SYNTHESIS
     input  alu_op_e        alu_op,
 `else
-    input  logic    [ 4:0] alu_op,
+    input  logic    [ 5:0] alu_op,
 `endif
     input  logic    [31:0] operand_a,
     input  logic    [31:0] operand_b,
@@ -484,6 +485,175 @@ module jv32_alu #(
     endgenerate
 
     // ========================================================================
+    // Zba / Zbb / Zbs Logic
+    // ========================================================================
+    logic [31:0] zb_result;
+    logic        zb_ready;
+
+    generate
+        if (!ZB_EN) begin : gen_no_zb
+            assign zb_result = 32'h0;
+            assign zb_ready  = 1'b1;
+        end
+        else begin : gen_zb
+            // ------------------------------------------------------------------
+            // Rotate left/right.
+            // FAST_SHIFT=1 : barrel combinatorial (1 cycle, shares barrel tree
+            //                built in gen_barrel_shift).
+            // FAST_SHIFT=0 : serial 1-bit-per-cycle rotator (same latency as
+            //                serial shifter; shares the ready handshake style).
+            // ------------------------------------------------------------------
+            logic [31:0] result_rol, result_ror;
+            logic rot_ready;
+
+            if (FAST_SHIFT == 1) begin : gen_zb_fast_rot
+                logic [4:0] rot_amt;
+                assign rot_amt    = operand_b[4:0];
+                assign result_rol = (operand_a << rot_amt) | (operand_a >> (5'(32) - rot_amt));
+                assign result_ror = (operand_a >> rot_amt) | (operand_a << (5'(32) - rot_amt));
+                assign rot_ready  = 1'b1;
+            end
+            else begin : gen_zb_slow_rot
+                logic [4:0] rot_count, rot_total;
+                logic [31:0] rot_val;
+                logic [31:0] rot_res;
+                logic rot_active, rot_valid;
+                logic rot_left;
+
+                logic is_rot_op;
+                assign is_rot_op = (alu_op == ALU_ROL || alu_op == ALU_ROR);
+
+                logic [31:0] rot_next_val;
+                assign rot_next_val = rot_left ? {rot_val[30:0], rot_val[31]} : {rot_val[0], rot_val[31:1]};
+
+                always_ff @(posedge clk or negedge rst_n) begin
+                    if (!rst_n) begin
+                        rot_count  <= 5'd0;
+                        rot_total  <= 5'd0;
+                        rot_val    <= 32'd0;
+                        rot_res    <= 32'd0;
+                        rot_active <= 1'b0;
+                        rot_valid  <= 1'b0;
+                        rot_left   <= 1'b0;
+                    end
+                    else begin
+                        if (rot_valid && !result_hold) rot_valid <= 1'b0;
+                        if (is_rot_op && !rot_active && !rot_valid && !operand_stall) begin
+                            rot_left <= (alu_op == ALU_ROL);
+                            if (operand_b[4:0] == 5'd0) begin
+                                rot_res   <= operand_a;
+                                rot_valid <= 1'b1;
+                            end
+                            else begin
+                                rot_count  <= 5'd0;
+                                rot_total  <= operand_b[4:0];
+                                rot_val    <= operand_a;
+                                rot_active <= 1'b1;
+                            end
+                        end
+                        else if (rot_active) begin
+                            rot_val <= rot_next_val;
+                            if (rot_count + 1 >= rot_total) begin
+                                rot_res    <= rot_next_val;
+                                rot_valid  <= 1'b1;
+                                rot_active <= 1'b0;
+                            end
+                            else rot_count <= rot_count + 1;
+                        end
+                    end
+                end
+
+                assign result_rol = rot_valid ? rot_res : rot_val;
+                assign result_ror = rot_valid ? rot_res : rot_val;
+                assign rot_ready  = !is_rot_op || (!rot_active && (operand_stall || rot_valid));
+            end
+
+            // ------------------------------------------------------------------
+            // CLZ (count leading zeros)
+            // ------------------------------------------------------------------
+            logic [5:0] clz_count;
+            always_comb begin
+                clz_count = 6'd32;
+                for (int i = 0; i <= 31; i++) begin
+                    if (operand_a[i]) clz_count = 6'(31 - i);
+                end
+            end
+
+            // ------------------------------------------------------------------
+            // CTZ (count trailing zeros)
+            // ------------------------------------------------------------------
+            logic [5:0] ctz_count;
+            always_comb begin
+                ctz_count = 6'd32;
+                for (int i = 31; i >= 0; i--) begin
+                    if (operand_a[i]) ctz_count = 6'(i);
+                end
+            end
+
+            // ------------------------------------------------------------------
+            // CPOP (population count)
+            // ------------------------------------------------------------------
+            logic [5:0] cpop_count;
+            always_comb begin
+                cpop_count = 6'd0;
+                for (int i = 0; i <= 31; i++) cpop_count = cpop_count + 6'(operand_a[i]);
+            end
+
+            // ------------------------------------------------------------------
+            // ORC.B (or-combine: OR all bits of each byte, broadcast to byte)
+            // ------------------------------------------------------------------
+            logic [31:0] orcb_result;
+            assign orcb_result = {
+                {8{|operand_a[31:24]}}, {8{|operand_a[23:16]}}, {8{|operand_a[15:8]}}, {8{|operand_a[7:0]}}
+            };
+
+            // ------------------------------------------------------------------
+            // REV8 (byte-reverse)
+            // ------------------------------------------------------------------
+            logic [31:0] rev8_result;
+            assign rev8_result = {operand_a[7:0], operand_a[15:8], operand_a[23:16], operand_a[31:24]};
+
+            // ------------------------------------------------------------------
+            // Zb result mux
+            // ------------------------------------------------------------------
+            always_comb begin
+                case (alu_op)
+                    // Zba
+                    ALU_SH1ADD: zb_result = (operand_a << 1) + operand_b;
+                    ALU_SH2ADD: zb_result = (operand_a << 2) + operand_b;
+                    ALU_SH3ADD: zb_result = (operand_a << 3) + operand_b;
+                    // Zbb
+                    ALU_CLZ:    zb_result = {26'd0, clz_count};
+                    ALU_CTZ:    zb_result = {26'd0, ctz_count};
+                    ALU_CPOP:   zb_result = {26'd0, cpop_count};
+                    ALU_ANDN:   zb_result = operand_a & ~operand_b;
+                    ALU_ORN:    zb_result = operand_a | ~operand_b;
+                    ALU_XNOR:   zb_result = operand_a ^ ~operand_b;
+                    ALU_MIN:    zb_result = ($signed(operand_a) < $signed(operand_b)) ? operand_a : operand_b;
+                    ALU_MINU:   zb_result = (operand_a < operand_b) ? operand_a : operand_b;
+                    ALU_MAX:    zb_result = ($signed(operand_a) > $signed(operand_b)) ? operand_a : operand_b;
+                    ALU_MAXU:   zb_result = (operand_a > operand_b) ? operand_a : operand_b;
+                    ALU_SEXTB:  zb_result = {{24{operand_a[7]}},  operand_a[7:0]};
+                    ALU_SEXTH:  zb_result = {{16{operand_a[15]}}, operand_a[15:0]};
+                    ALU_ZEXTH:  zb_result = {16'd0, operand_a[15:0]};
+                    ALU_ROL:    zb_result = result_rol;
+                    ALU_ROR:    zb_result = result_ror;
+                    ALU_ORCB:   zb_result = orcb_result;
+                    ALU_REV8:   zb_result = rev8_result;
+                    // Zbs
+                    ALU_BCLR:   zb_result = operand_a & ~(32'd1 << operand_b[4:0]);
+                    ALU_BEXT:   zb_result = {31'd0, operand_a[operand_b[4:0]]};
+                    ALU_BINV:   zb_result = operand_a ^ (32'd1 << operand_b[4:0]);
+                    ALU_BSET:   zb_result = operand_a | (32'd1 << operand_b[4:0]);
+                    default:    zb_result = 32'd0;
+                endcase
+            end
+
+            assign zb_ready = rot_ready;
+        end
+    endgenerate
+
+    // ========================================================================
     // Output Mux
     // ========================================================================
     always_comb begin
@@ -506,11 +676,12 @@ module jv32_alu #(
             ALU_DIVU:   result = result_divu;
             ALU_REM:    result = result_rem;
             ALU_REMU:   result = result_remu;
-            default:    result = 32'd0;
+            // Zba/Zbb/Zbs: routed through zb_result
+            default:    result = ZB_EN ? zb_result : 32'd0;
         endcase
     end
 
-    assign ready = div_ready && mul_ready && shift_ready;
+    assign ready = div_ready && mul_ready && shift_ready && zb_ready;
 
 `ifndef SYNTHESIS
     // Suppress unused clk/rst_n warnings for all-combinatorial configurations

@@ -11,7 +11,7 @@
 //   0x02000000  CLIC  (MSIP, mtime, mtimecmp — compatible with CLINT layout)
 //   Unmapped regions → AXI DECERR → EXC_LOAD/STORE_ACCESS_FAULT (cause=5/7) in JV32 core
 {
-  "$schema": "/opt/riscv/share/sail-riscv/sail_riscv_config_schema.json",
+  "$schema": "/usr/local/share/sail-riscv/sail_riscv_config_schema.json",
   "base": {
     "xlen": 32,
     "E": false,
@@ -21,6 +21,11 @@
     "writable_hpm_counters": {
       "len": 32,
       // JV32 has no HPM counters (only mcycle and minstret, always counting)
+      "value": "0x00000000"
+    },
+    // JV32 has no S-mode, so all scounteren bits are read-only zero
+    "scounteren_writable_bits": {
+      "len": 32,
       "value": "0x00000000"
     },
     "xtval_nonzero": {
@@ -52,6 +57,9 @@
       "fcsr_rm": "Fcsr_RM_Illegal",
       "pmpcfg_write_only": "PMP_ClearPermissions",
       "xenvcfg_cbie": "Xenvcfg_ClearPermissions",
+      // JV32 bit[1] of mtvec is hardwired 0; MODE values 2+ are effectively
+      // treated as if the write is ignored (old value retained).
+      "xtvec_mode": "Xtvec_Ignore",
       "rv32zdinx_odd_register": "Zdinx_Illegal"
     }
   },
@@ -69,10 +77,15 @@
       // JV32 raises EXC_LOAD_ADDR_MISALIGNED (cause=4) or
       // EXC_STORE_ADDR_MISALIGNED (cause=6) for any misaligned load or store.
       // Hardware does NOT transparently split misaligned accesses.
-      "supported": false,
+      "exceptions": {
+        "load_store": { "Some": "AlignmentException" },
+        "vector": { "None": null },
+        "lrsc": "AccessFault",  // LRSC_MISALIGNED_BEHAVIOR: always raise access fault
+        "amo": "AccessFault"
+      },
+      "allowed_within_exp": 0,
       "byte_by_byte": false,
-      "order_decreasing": false,
-      "allowed_within_exp": 0
+      "order_decreasing": false
     },
     "translation": {
       "dirty_update": false
@@ -92,6 +105,7 @@
         "base": { "len": 64, "value": "0x02000000" },
         "size": { "len": 64, "value": "0x200000" },
         "attributes": {
+          "mem_type": "IOMemory",
           "cacheable": false,
           "coherent": true,
           "executable": false,
@@ -99,17 +113,25 @@
           "writable": true,
           "read_idempotent": false,
           "write_idempotent": false,
-          "misaligned_fault": "AlignmentFault",
+          "misaligned_exceptions": {
+            "load_store": { "Some": "AlignmentException" },
+            "vector": { "None": null },
+            "amo": "AccessFault"
+          },
+          "atomic_support": "AMONone",
           "reservability": "RsrvNone",
-          "supports_cbo_zero": false
+          "supports_cbo_zero": false,
+          "supports_pte_read": false,
+          "supports_pte_write": false
         },
         "include_in_device_tree": false
       },
-      // UART: 0x20010000-0x200100FF (AXI mask 0xFFFFFF00 → 256 bytes)
+      // UART: 0x20010000 (rounded to 4KB page for Sail region alignment requirement)
       {
         "base": { "len": 64, "value": "0x20010000" },
-        "size": { "len": 64, "value": "0x100" },
+        "size": { "len": 64, "value": "0x1000" },
         "attributes": {
+          "mem_type": "IOMemory",
           "cacheable": false,
           "coherent": true,
           "executable": false,
@@ -117,9 +139,16 @@
           "writable": true,
           "read_idempotent": false,
           "write_idempotent": false,
-          "misaligned_fault": "AlignmentFault",
+          "misaligned_exceptions": {
+            "load_store": { "Some": "AlignmentException" },
+            "vector": { "None": null },
+            "amo": "AccessFault"
+          },
+          "atomic_support": "AMONone",
           "reservability": "RsrvNone",
-          "supports_cbo_zero": false
+          "supports_cbo_zero": false,
+          "supports_pte_read": false,
+          "supports_pte_write": false
         },
         "include_in_device_tree": false
       },
@@ -129,6 +158,7 @@
         "base": { "len": 64, "value": "0x40000000" },
         "size": { "len": 64, "value": "0x10000000" },
         "attributes": {
+          "mem_type": "IOMemory",
           "cacheable": false,
           "coherent": true,
           "executable": false,
@@ -136,9 +166,16 @@
           "writable": true,
           "read_idempotent": false,
           "write_idempotent": false,
-          "misaligned_fault": "AlignmentFault",
+          "misaligned_exceptions": {
+            "load_store": { "Some": "AlignmentException" },
+            "vector": { "None": null },
+            "amo": "AccessFault"
+          },
+          "atomic_support": "AMONone",
           "reservability": "RsrvNone",
-          "supports_cbo_zero": false
+          "supports_cbo_zero": false,
+          "supports_pte_read": false,
+          "supports_pte_write": false
         },
         "include_in_device_tree": false
       },
@@ -148,6 +185,7 @@
         "base": { "len": 64, "value": "0x80000000" },
         "size": { "len": 64, "value": "0x80000000" },
         "attributes": {
+          "mem_type": "MainMemory",
           "cacheable": true,
           "coherent": true,
           "executable": true,
@@ -155,9 +193,16 @@
           "writable": true,
           "read_idempotent": true,
           "write_idempotent": true,
-          "misaligned_fault": "AlignmentFault",  // JV32 raises EXC_LOAD/STORE_ADDR_MISALIGNED
+          "misaligned_exceptions": {
+            "load_store": { "Some": "AlignmentException" },  // JV32 raises EXC_LOAD/STORE_ADDR_MISALIGNED
+            "vector": { "None": null },
+            "amo": "AccessFault"
+          },
+          "atomic_support": "AMOArithmetic",  // JV32 has Zaamo (all AMOs except AMOCAS)
           "reservability": "RsrvEventual",
-          "supports_cbo_zero": false
+          "supports_cbo_zero": false,
+          "supports_pte_read": false,   // JV32 has no MMU
+          "supports_pte_write": false
         },
         "include_in_device_tree": true
       }
@@ -169,7 +214,11 @@
     "impid": 1,
     "hartid": 0,
     "cache_block_size_exp": 6,
-    "reservation_set_size_exp": 3,
+    "reservation": {
+      // JV32 LR/SC reservation set matches the access size (minimum).
+      "reservation_set_size_exp": 3,
+      "require_exact_reservation_addr": false
+    },
     // CLINT / CLIC at JV32 CLIC base (same layout as standard CLINT):
     //   MSIP    @ 0x02000000
     //   mtime   @ 0x02004000  (CLIC_BASE + 0x4000)
@@ -178,9 +227,15 @@
       "base": 33554432,   // 0x02000000
       "size": 786432      // covers mtime at +0x4000 and mtimecmp at +0x4008
     },
+    // Simple interrupt generator placed at unused IO address within CLIC region.
+    // Arch tests for I/M/Zba/Zbb/Zbs do not use this device; required by schema.
+    "simple_interrupt_generator": {
+      "base": 33685504    // 0x02100000 (within CLIC IO region 0x02000000-0x021FFFFF)
+    },
     "clock_frequency": 50000000,
     "instructions_per_tick": 2,
-    "wfi_is_nop": false
+    "wfi_is_nop": false,
+    "max_time_to_wait": 100
   },
   "extensions": {
     "M": { "supported": true },
@@ -203,6 +258,12 @@
     "Zic64b": { "supported": false },
     "Zicfilp": { "supported": false },
     "Zicond": { "supported": false },
+    "Ziccamoa": { "supported": false }, // JV32 has no cacheability PMAs
+    "Ziccamoc": { "supported": false }, // JV32 has no cacheability PMAs
+    "Ziccif": { "supported": false },   // JV32 has no cacheability PMAs
+    "Zicclsm": { "supported": false },  // JV32 has no cacheability PMAs
+    "Ziccrse": { "supported": false },  // JV32 has no cacheability PMAs
+    "Zicfiss": { "supported": false },  // JV32 has no shadow stacks
     "Zicntr": { "supported": true },
     "Zicsr": { "supported": true },
     "Zifencei": { "supported": true },
@@ -231,9 +292,9 @@
     "Zcd": { "supported": false },
     "Zcb": { "supported": false },
     "Zcmop": { "supported": false },
-    "Zba": { "supported": false },
-    "Zbb": { "supported": false },
-    "Zbs": { "supported": false },
+    "Zba": { "supported": true },
+    "Zbb": { "supported": true },
+    "Zbs": { "supported": true },
     "Zbc": { "supported": false },
     "Zbkb": { "supported": false },
     "Zbkc": { "supported": false },
@@ -254,10 +315,17 @@
     "Zhinx": { "supported": false },
     "Zhinxmin": { "supported": false },
     "Sscofpmf": { "supported": false },
+    "Ssccptr": { "supported": false },   // JV32 has no S-mode
+    "Sscounterenw": { "supported": false }, // JV32 has no S-mode
     "Sstc": { "supported": false },
     "Sstvala": { "supported": false },
     "Svinval": { "supported": false },
     "Svrsw60t59b": { "supported": false },
+    "Svade": { "supported": false },   // JV32 has no MMU
+    "Svadu": { "supported": false },   // JV32 has no MMU
+    "Svnapot": { "supported": false }, // JV32 has no MMU
+    "Svpbmt": { "supported": false },  // JV32 has no MMU
+    "Svvptc": { "supported": false },  // JV32 has no MMU
     "Smcntrpmf": { "supported": false },
     "Svbare": {
       "supported": false,

@@ -56,13 +56,12 @@ UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 
 all: help
 
-# Create a local wrapper that emulates the subset of Sail CLI ACT4 uses,
-# while delegating signature generation to Spike.
+# Create a local wrapper that delegates to sail_riscv_sim.
 $(ARCH_TEST_REF_WRAPPER): $(VERIF_DIR)sail_spike_wrapper.sh.in $(VERIF_DIR)Makefile
 	@mkdir -p "$(WORKDIR)"
-	@spike_bin="$(SPIKE)"; \
+	@sail_bin="$$(command -v sail_riscv_sim 2>/dev/null || echo sail_riscv_sim)"; \
 	cp "$(JV32_ROOT)/verif/sail_spike_wrapper.sh.in" "$(ARCH_TEST_REF_WRAPPER)"; \
-	sed -i.bak "s|__SPIKE_BIN__|$$spike_bin|g" "$(ARCH_TEST_REF_WRAPPER)"; \
+	sed -i.bak "s|__SAIL_BIN__|$$sail_bin|g" "$(ARCH_TEST_REF_WRAPPER)"; \
 	rm -f "$(ARCH_TEST_REF_WRAPPER).bak"; \
 	chmod +x "$(ARCH_TEST_REF_WRAPPER)"
 
@@ -129,6 +128,7 @@ arch-test-setup: $(ACT_SENTINEL)
 #   S               — supervisor mode; JV32 is M-mode only
 #   InterruptsSm    — interrupt timing tests; JV32 CLIC quirks not yet modelled
 #   ExceptionsZalrsc/Zaamo — LR/SC and AMO exception tests; not yet validated
+#   ExceptionsZc    — uses rv32ifdc march (F/D unimplemented); Sail segfaults on this config
 #   PMPSm/PMPZca/PMPmisaligned — PMP tests; JV32 has no PMP
 #   Sv/Svade/...    — virtual memory tests; JV32 has no MMU
 # ============================================================================
@@ -148,14 +148,14 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	echo "[arch-test] Work directory: $(WORKDIR)"; \
 	echo "[arch-test] Phase 1/3: building RTL simulator"; \
 	echo "=========================================="; \
-	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) build-rtl; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) ZB_EN=$(ZB_EN) RAS_EN=$(RAS_EN) build-rtl; \
 	echo "=========================================="; \
 	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
 	echo "=========================================="; \
 	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
-            EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
+            EXCLUDE_EXTENSIONS=Sm,S,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS); \
 	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \

@@ -35,11 +35,10 @@
 // ============================================================================
 
 `ifndef SYNTHESIS
+
 // DPI-C import for exit notification
 import "DPI-C" function void sim_request_exit(input int exit_code);
-`endif
 
-/* verilator lint_off UNUSEDSIGNAL */
 module axi_magic (
     input logic clk,
     input logic rst_n,
@@ -66,19 +65,8 @@ module axi_magic (
     output logic [ 1:0] axi_rresp,
     output logic        axi_rvalid,
     input  logic        axi_rready
-    /* verilator lint_on UNUSEDSIGNAL */
 );
 
-`ifdef SYNTHESIS
-    assign axi_awready     = 1'b1;
-    assign axi_wready      = 1'b1;
-    assign axi_bresp[1:0]  = 2'b00;  // RESP_OKAY
-    assign axi_bvalid      = 1'b1;
-    assign axi_arready     = 1'b1;
-    assign axi_rdata[31:0] = 32'b0;
-    assign axi_rresp[1:0]  = 2'b00;  // RESP_OKAY
-    assign axi_rvalid      = 1'b1;
-`else  // SYNTHESIS
     // Magic addresses
     localparam CONSOLE_MAGIC_ADDR = 32'h40000000;
     localparam EXIT_MAGIC_ADDR    = 32'h40000004;
@@ -432,7 +420,7 @@ module axi_magic (
     else $error("[AXI_MAGIC] Invalid RRESP value: %b", axi_rresp);
 
 `endif  // ASSERTION
-`endif  // SYNTHESIS
 
 endmodule
+`endif  // SYNTHESIS
 

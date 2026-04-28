@@ -75,7 +75,9 @@ module jv32_top #(
     parameter bit                 FAST_DIV   = 1'b0,
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
+    parameter bit                 RAS_EN     = 1'b1,        // 1=Return Address Stack; 0=JALR always 1-cycle
     parameter bit                 AMO_EN     = 1'b1,
+    parameter bit                 ZB_EN      = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
@@ -284,7 +286,9 @@ module jv32_top #(
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
+        .RAS_EN    (RAS_EN),
         .AMO_EN    (AMO_EN),
+        .ZB_EN     (ZB_EN),
         .N_TRIGGERS(N_TRIGGERS),
         .BOOT_ADDR (BOOT_ADDR),
         .IRAM_BASE (IRAM_BASE),
@@ -449,10 +453,8 @@ module jv32_top #(
 
     slv_e        iram_slv_state;
     slv_e        dram_slv_state;
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] iram_slv_addr;
     logic [31:0] dram_slv_addr;
-    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] iram_slv_wdata;
     logic [31:0] dram_slv_wdata;
     logic [ 3:0] iram_slv_wstrb;
@@ -648,11 +650,8 @@ module jv32_top #(
     logic        iram_used_by_core_i_d;    // IRAM was accessed by I-fetch last cycle
     logic        iram_used_by_core_d_d;    // IRAM was accessed by D-path last cycle
     logic        dram_used_by_core_d_d;    // DRAM was accessed by D-path last cycle
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic        dmem_was_write_d;  // D-path access last cycle was a write
-    /* verilator lint_on UNUSEDSIGNAL */
-    logic        imem_flush_d;     // flush was asserted last cycle
-    logic [31:0] imem_req_addr_d;  // I-fetch address from last cycle (for resp_pc)
+    logic        imem_flush_d;             // flush was asserted last cycle
+    logic [31:0] imem_req_addr_d;          // I-fetch address from last cycle (for resp_pc)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -662,7 +661,6 @@ module jv32_top #(
             iram_used_by_core_i_d   <= 1'b0;
             iram_used_by_core_d_d   <= 1'b0;
             dram_used_by_core_d_d   <= 1'b0;
-            dmem_was_write_d        <= 1'b0;
             imem_flush_d            <= 1'b0;
             imem_req_addr_d         <= BOOT_ADDR;
         end
@@ -697,9 +695,6 @@ module jv32_top #(
             // Exception: d_preload_active means the core intentionally overrode the
             // address with a new preload — capture it despite the response-cycle gate.
             dram_used_by_core_d_d <= d_preload_active | ((core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d);
-
-            // Was the D-path a write?
-            dmem_was_write_d      <= dmem_req_write;
 
             // FENCE.I: gate the stale SRAM I-fetch response that arrives the cycle
             // after a fence.i redirect.  A fence.i write to IRAM (via the store
@@ -762,9 +757,6 @@ module jv32_top #(
     logic [31:0] dbus_addr_r;  // registered D-bus address
     logic [31:0] dbus_wdata_r;
     logic [ 3:0] dbus_wstrb_r;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic        dbus_write_r;
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // Register D/I miss addresses on first detection (before stall freezes them)
     // In practice the core already holds them stable during stall, but
@@ -779,7 +771,6 @@ module jv32_top #(
             dbus_addr_r  <= '0;
             dbus_wdata_r <= '0;
             dbus_wstrb_r <= '0;
-            dbus_write_r <= 1'b0;
         end
         else begin
             case (bus_state)
@@ -789,7 +780,6 @@ module jv32_top #(
                         dbus_addr_r  <= dmem_req_addr;
                         dbus_wdata_r <= dmem_req_wdata;
                         dbus_wstrb_r <= dmem_req_wstrb;
-                        dbus_write_r <= dmem_req_write;
                         dbus_aw_done <= 1'b0;
                         dbus_w_done  <= 1'b0;
                         bus_state    <= dmem_req_write ? BUS_DAW : BUS_DAR;
@@ -856,10 +846,27 @@ module jv32_top #(
     logic        dmem_resp_valid_axi;
     logic [31:0] dmem_resp_data_axi;
 
-    assign imem_resp_valid_axi = (bus_state == BUS_IR) & m_axi_rvalid;
+    // -------------------------------------------------------------------------
+    // Stale AXI I-fetch suppression
+    //
+    // When the pipeline redirects (bp_ras_pop to unmapped address, then EX
+    // corrects to the real target) while an AXI I-fetch is already in flight
+    // (BUS_IAR or BUS_IR), the eventual AXI response is stale.  Without
+    // suppression, a DECERR response (e.g. fetch to address 0x0 from an empty
+    // RAS) would be injected as an imem_resp_fault and trigger an infinite
+    // trap loop.  Track the stale state and discard the response.
+    logic        stale_axi_ifetch_r;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) stale_axi_ifetch_r <= 1'b0;
+        else if ((bus_state == BUS_IR) && m_axi_rvalid) stale_axi_ifetch_r <= 1'b0;  // response consumed, clear flag
+        else if (imem_flush_core && (bus_state == BUS_IAR || bus_state == BUS_IR))
+            stale_axi_ifetch_r <= 1'b1;  // pipeline redirected away from in-flight fetch
+    end
+
+    assign imem_resp_valid_axi = (bus_state == BUS_IR) & m_axi_rvalid & !stale_axi_ifetch_r;
     assign imem_resp_data_axi  = m_axi_rdata;
     assign imem_resp_pc_axi    = ibus_pc_r;
-    assign imem_resp_fault     = (bus_state == BUS_IR) & m_axi_rvalid & (m_axi_rresp != 2'b00);
+    assign imem_resp_fault     = (bus_state == BUS_IR) & m_axi_rvalid & (m_axi_rresp != 2'b00) & !stale_axi_ifetch_r;
     assign imem_resp_fault_pc  = ibus_pc_r;
 
     assign dmem_resp_valid_axi = ((bus_state == BUS_DR) & m_axi_rvalid) | ((bus_state == BUS_DB) & m_axi_bvalid);
@@ -903,6 +910,11 @@ module jv32_top #(
         if (core_d_dram_re) `DEBUG1(("[TOP] DRAM RD req: addr=0x%h", (DRAM_BASE | 32'({dram_addr, 2'b00}))));
         if (dram_used_by_core_d_d) `DEBUG1(("[TOP] DRAM RD rsp: data=0x%h", dram_rdata));
     end
+`endif
+
+`ifndef SYNTHESIS
+    logic _unused_slv_addrs;
+    assign _unused_slv_addrs = &{1'b0, iram_slv_addr, dram_slv_addr};
 `endif
 
 endmodule

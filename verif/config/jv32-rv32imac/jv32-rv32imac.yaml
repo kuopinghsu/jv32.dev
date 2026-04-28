@@ -20,6 +20,9 @@ implemented_extensions:
   - { name: Zicsr,    version: "= 2.0"   }
   - { name: Zifencei, version: "= 2.0"   }
   - { name: Zicntr,   version: "= 2.0"   } # mcycle, minstret, mcycleh, minstreth
+  - { name: Zba,      version: "= 1.0.0" } # Address generation (sh1add/sh2add/sh3add)
+  - { name: Zbb,      version: "= 1.0.0" } # Basic bit manipulation
+  - { name: Zbs,      version: "= 1.0.0" } # Single-bit instructions
   - { name: Sm,       version: "= 1.11.0" } # Machine mode + interrupt/exception handling
 
 params:

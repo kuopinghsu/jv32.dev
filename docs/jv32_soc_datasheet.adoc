@@ -426,6 +426,14 @@ Backward branches dominate loop control flow, so BTFNT improves average CPI for 
 
 When `BP_EN=0`, the predictor logic is gated: `bp_redirect` is always 0, all branches are treated as not-taken in IF, and EX redirects the PC whenever a branch is actually taken (1-cycle penalty for every taken branch).
 
+==== Return Address Stack (RAS)
+
+When `BP_EN=1` and `RAS_EN=1` (default), the core adds a **2-entry circular Return Address Stack** to predict function returns with zero penalty:
+
+* **Push**: when a `JAL` or `JALR` with a link-register destination (`rd = ra` or `rd = t0`) is decoded in IF, the sequential return address is pushed onto the RAS.
+* **Pop**: when a `JALR` with a link-register source and non-link destination is decoded (`rs1 = ra`/`t0`, `rd ≠ ra`/`t0`), the top-of-stack entry is used as the predicted target PC, avoiding the 1-cycle EX flush that would otherwise occur.
+* **`RAS_EN=0`**: disables the RAS; returns fall back to the plain JALR not-taken path (1-cycle penalty on every return). Automatically disabled when `RV32EC=1` (minimum configuration).
+
 === Performance Characteristics
 
 [cols="1,3"]
@@ -488,7 +496,7 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 |0x305
 |mtvec
 |R/W
-|Machine trap-handler base address (bits[1:0] = mode: 00=Direct, 01=Vectored)
+|Machine trap-handler base address (bits[1:0] = mode: 00=Direct, 01=Vectored, 11=CLIC)
 
 |0x307
 |mtvt
@@ -870,28 +878,28 @@ The UART peripheral provides serial communication with configurable baud rate an
 |R/O
 |**[0]** `tx_busy` — TX FIFO full / cannot accept data (same signal as `tx_full`) +
 **[1]** `tx_full` — TX FIFO full flag +
-**[2]** `rx_not_empty` — RX FIFO has data +
-**[3]** `rx_full` — RX FIFO full (overrun possible)
+**[2]** `rx_ready` — RX FIFO has data available (not empty) +
+**[3]** `rx_overrun` — RX FIFO full (incoming bytes will be lost)
 
 NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as a TX-busy / write-inhibit flag, [1] as the canonical full flag.
 
 |0x08
 |IE (Interrupt Enable)
 |R/W
-|**[0]** `rx_not_empty_ie` — enable RX not-empty interrupt +
+|**[0]** `rx_ready_ie` — enable RX-ready interrupt +
 **[1]** `tx_empty_ie` — enable TX empty interrupt
 
 |0x0C
 |IS (Interrupt Status)
 |R/O
-|**[0]** `rx_not_empty` — RX FIFO non-empty (level) +
-**[1]** `tx_empty` — TX FIFO empty (level)
+|**[0]** `rx_ready` — RX FIFO not empty (level-triggered) +
+**[1]** `tx_empty` — TX FIFO empty (level-triggered)
 
 |0x10
 |LEVEL
-|R/O
-|**[15:0]** `rx_count` — number of bytes in RX FIFO +
-**[31:16]** `tx_count` — number of bytes in TX FIFO
+|R/W
+|**Read**: **[15:0]** `rx_count` — number of bytes in RX FIFO; **[31:16]** `tx_count` — number of bytes in TX FIFO +
+**Write**: **[15:0]** baud-rate divisor (`CLKS_PER_BIT − 1`); upper 16 bits ignored. Latched immediately; any byte in flight will be corrupted.
 
 |0x14
 |CTRL
@@ -901,8 +909,8 @@ NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as
 |0x18
 |CAPABILITY
 |R/O
-|**[7:0]** RX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
-**[15:8]** TX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
+|**[7:0]** TX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
+**[15:8]** RX FIFO depth (= `FIFO_DEPTH` parameter, default 16) +
 **[31:16]** UART version (`0x0001`); combined: `{16'h0001, 8'(FIFO_DEPTH), 8'(FIFO_DEPTH)}`
 |===
 

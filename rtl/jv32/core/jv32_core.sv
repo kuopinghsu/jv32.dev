@@ -26,7 +26,9 @@ module jv32_core #(
     parameter bit                 FAST_DIV   = 1'b0,
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
+    parameter bit                 RAS_EN     = 1'b1,  // 1=Return Address Stack enabled; 0=JALR always 1-cycle
     parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
+    parameter bit                 ZB_EN      = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
     parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
@@ -137,6 +139,10 @@ module jv32_core #(
 
     localparam logic [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;
 
+    // ZB_EN=1 only valid when not RV32E. Enforced here so child modules
+    // see a single clean parameter without needing to know about RV32E_EN.
+    localparam bit ZB_ACTIVE = ZB_EN && !RV32E_EN;
+
     // =====================================================================
     // RVC expander
     // =====================================================================
@@ -232,7 +238,8 @@ module jv32_core #(
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
-        .FAST_SHIFT(FAST_SHIFT)
+        .FAST_SHIFT(FAST_SHIFT),
+        .ZB_EN     (ZB_ACTIVE)
     ) u_alu (
         .clk          (clk),
         .rst_n        (rst_n),
@@ -274,7 +281,8 @@ module jv32_core #(
     jv32_decoder #(
         .AMO_EN  (AMO_EN),
         .RV32E_EN(RV32E_EN),
-        .RV32M_EN(RV32M_EN)
+        .RV32M_EN(RV32M_EN),
+        .ZB_EN   (ZB_ACTIVE)
     ) u_decoder (
         .instr     (if_ex_r.instr),
         .valid     (if_ex_r.valid),
@@ -321,11 +329,13 @@ module jv32_core #(
     logic              wb_exception;
     exc_cause_e        wb_exc_cause;
     logic       [31:0] wb_exc_tval;
+
     // Forward declarations - defined/driven in the Trace output section below
     logic              irq_cancel;
     logic              trace_valid_r;
     logic              wb_retire;
     logic              wb_redirect;
+
     // Forward declarations - defined in the IF stage section below
     logic              if_stall;
     logic              bp_redirect;
@@ -335,6 +345,15 @@ module jv32_core #(
     logic       [31:0] bp_l0_target;
     logic              bp_l0_taken;
 
+    // RAS (Return Address Stack) forward declarations
+    logic              bp_ras_push;
+    logic              bp_ras_pop;
+    logic       [31:0] bp_ras_top;
+
+    // Forward declarations - defined in the D-mem / WB section below
+    logic              dmem_resp_valid_rd;
+    logic              dmem_stall;
+
     // EX->WB pipeline register
     ex_wb_t            ex_wb_r;
 
@@ -343,9 +362,10 @@ module jv32_core #(
         .RV32M_EN(RV32M_EN),
         .AMO_EN  (AMO_EN)
     ) u_csr (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .csr_addr       (dec_csr_addr),
+        .clk     (clk),
+        .rst_n   (rst_n),
+        .csr_addr(dec_csr_addr),
+
         // Gate csr_op so CSR writes don't fire while the pipeline is stalled.
         // When if_stall=1 (WB instruction waiting on memory), the EX instruction
         // (if_ex_r) is frozen but the decoder still drives csr_op != 0 for any
@@ -393,12 +413,14 @@ module jv32_core #(
 
     assign halted_o    = dbg_halted_r;
     assign resumeack_o = dbg_resumeack_r;
+
     // Capture the PC of the instruction that caused the current debug halt.
     // This register latches if_ex_r.pc (EX-stage instruction) on any halt entry:
     // dbg_enter_debug (EBREAK), trigger_match, or halt_req.  It ensures the
     // reported DPC reflects the actual halted instruction even after the pipeline
     // is flushed and pc_if has advanced further.
     logic [31:0] dbg_halt_pc_r;
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) dbg_halt_pc_r <= BOOT_ADDR;
         else if (dbg_pc_we_i) dbg_halt_pc_r <= dbg_pc_wdata_i;  // PC write from debugger
@@ -408,6 +430,7 @@ module jv32_core #(
         else if ((dbg_enter_debug || trigger_match || (halt_req_i && !dbg_halted_r)) && if_ex_r.valid)
             dbg_halt_pc_r <= if_ex_r.pc;  // latch at halt
     end
+
     assign dbg_pc_o       = dbg_halted_r ? dbg_halt_pc_r : pc_if;
 
     assign imem_req_valid = !dbg_halted_r;
@@ -491,14 +514,46 @@ module jv32_core #(
     assign bp_l0_hit = BP_EN && bp_l0_valid && bp_l0_taken && bp_is_branch
                        && rvc_instr_valid && (rvc_instr_pc == bp_l0_pc);
 
+    // -----------------------------------------------------------------------
+    // RAS (Return Address Stack) pre-decode
+    // -----------------------------------------------------------------------
+    // RISC-V calling convention link registers: x1 (ra), x5 (t0)
+    //   Push: JAL or JALR with rd in {x1, x5}  (call instruction)
+    //   Pop:  JALR with rs1 in {x1, x5} and rd not in {x1, x5}  (return)
+    logic       bp_is_jalr;
+    logic [4:0] bp_rd;
+    logic [4:0] bp_rs1;
+    logic       bp_rd_is_link;
+    logic       bp_rs1_is_link;
+
+    assign bp_is_jalr     = (rvc_instr_data[6:0] == 7'b110_0111);
+    assign bp_rd          = rvc_instr_data[11:7];
+    assign bp_rs1         = rvc_instr_data[19:15];
+    assign bp_rd_is_link  = (bp_rd == 5'd1) || (bp_rd == 5'd5);
+    assign bp_rs1_is_link = (bp_rs1 == 5'd1) || (bp_rs1 == 5'd5);
+
+    // RAS_EN is forced off for RV32E minimum configurations (RV32E_EN=1)
+    localparam bit RAS_ACTIVE = RAS_EN && !RV32E_EN;
+
+    // Push: any JAL or JALR that writes a link register (call instruction)
+    assign bp_ras_push = BP_EN && RAS_ACTIVE && rvc_instr_valid && !if_stall && !if_flush
+                         && (bp_is_jal || bp_is_jalr) && bp_rd_is_link;
+
+    // Pop: JALR that reads a link register and does not write one (return)
+    assign bp_ras_pop  = BP_EN && RAS_ACTIVE && rvc_instr_valid && !if_stall && !if_flush
+                         && bp_is_jalr && bp_rs1_is_link && !bp_rd_is_link;
+
     // Redirect for:
     //   - Backward-taken branches (BTFNT: imm[31]=1 means negative offset)
     //   - L0-hit branches that were recently resolved as taken (any direction)
     //   - All JAL instructions (always-taken unconditional jump)
+    //   - JALR return instructions predicted by the RAS
     // Suppress if a higher-priority flush is in flight or pipeline is stalled.
     assign bp_redirect = BP_EN && rvc_instr_valid && !if_stall && !if_flush &&
-                         ((bp_is_branch && (rvc_instr_data[31] || bp_l0_hit)) || bp_is_jal);
-    assign bp_redirect_pc = bp_l0_hit ? bp_l0_target : bp_target_if;
+                         ((bp_is_branch && (rvc_instr_data[31] || bp_l0_hit)) || bp_is_jal ||
+                          bp_ras_pop);
+
+    assign bp_redirect_pc = bp_ras_pop ? bp_ras_top : bp_l0_hit ? bp_l0_target : bp_target_if;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) pc_if <= BOOT_ADDR;
@@ -523,6 +578,7 @@ module jv32_core #(
             if_ex_r.orig_instr    <= 32'h0;
             if_ex_r.is_compressed <= 1'b0;
             if_ex_r.bp_taken      <= 1'b0;
+            if_ex_r.bp_pred_pc    <= 32'h0;
             if_ex_r.ifetch_fault  <= 1'b0;
         end
         else if (dbg_pc_we_i) begin
@@ -566,7 +622,8 @@ module jv32_core #(
                 if_ex_r.instr         <= rvc_instr_data;
                 if_ex_r.orig_instr    <= rvc_orig_instr;
                 if_ex_r.is_compressed <= rvc_is_compressed;
-                if_ex_r.bp_taken      <= bp_redirect;  // BTFNT: record prediction
+                if_ex_r.bp_taken      <= bp_redirect;     // BTFNT/JAL/RAS: record prediction
+                if_ex_r.bp_pred_pc    <= bp_redirect_pc;  // RAS predicted return target
                 if_ex_r.ifetch_fault  <= 1'b0;
             end
             else begin
@@ -675,6 +732,60 @@ module jv32_core #(
         end
     end
 
+    // =====================================================================
+    // Return Address Stack (RAS) — 2-entry circular buffer
+    // =====================================================================
+    // Enabled when RAS_ACTIVE=1 (BP_EN=1 && RAS_EN=1 && !RV32E_EN).
+    // Push on JAL/JALR with rd=link; pop on JALR with rs1=link, rd=non-link.
+    // The write pointer wraps naturally in a circular fashion (modulo 2).
+    // Flushed only on exception/mret/interrupt/debug (wb_redirect) to preserve
+    // call-depth state across branch mispredictions and fence.i.
+    // When RAS_ACTIVE=0 the generate-else branch ties bp_ras_top to 0 and
+    // no flip-flops or combinatorial RAS logic are emitted.
+    localparam int unsigned RAS_DEPTH = 2;
+    localparam int unsigned RAS_BITS  = 1;
+
+    generate
+        if (RAS_ACTIVE) begin : g_ras
+            logic [RAS_DEPTH-1:0][31:0] ras_stack;
+            logic [ RAS_BITS-1:0]       ras_wr_ptr;
+            logic [ RAS_BITS-1:0]       ras_rd_ptr;  // top-of-stack slot
+            logic [         31:0]       bp_ras_push_pc;
+
+            assign ras_rd_ptr     = ras_wr_ptr - RAS_BITS'(1);
+            assign bp_ras_top     = ras_stack[ras_rd_ptr];
+
+            // Link address to push: next sequential PC after the call instruction
+            assign bp_ras_push_pc = rvc_instr_pc + (rvc_is_compressed ? 32'd2 : 32'd4);
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    ras_wr_ptr <= '0;
+                    for (int i = 0; i < RAS_DEPTH; i++) ras_stack[i] <= 32'h0;
+                end
+                else if (wb_redirect || dbg_pc_we_i) begin
+                    // Flush on non-speculative redirect (exception/mret/interrupt/debug)
+                    ras_wr_ptr <= '0;
+                end
+                else if (bp_ras_push && bp_ras_pop) begin
+                    // Coroutine (e.g. jalr ra, 0(ra)): overwrite top entry; pointer unchanged
+                    ras_stack[ras_rd_ptr] <= bp_ras_push_pc;
+                end
+                else if (bp_ras_push) begin
+                    ras_stack[ras_wr_ptr] <= bp_ras_push_pc;
+                    ras_wr_ptr            <= ras_wr_ptr + RAS_BITS'(1);
+                end
+                else if (bp_ras_pop) begin
+                    ras_wr_ptr <= ras_wr_ptr - RAS_BITS'(1);
+                end
+            end
+        end
+        else begin : g_ras_disabled
+            // RAS_ACTIVE=0: no FFs instantiated; bp_ras_top is a constant zero.
+            assign bp_ras_top = 32'h0;
+        end
+    endgenerate
+
     // Redirect PC
     logic [31:0] redirect_pc_ex;
     logic        redirect_ex;
@@ -691,8 +802,11 @@ module jv32_core #(
                 end
             end
             if (dec_jalr) begin
-                redirect_ex    = 1'b1;
+                // If the RAS pre-predicted this return (bp_taken=1), suppress the EX
+                // redirect only when the actual target matches the prediction.
+                // A RAS misprediction still corrects the PC via redirect.
                 redirect_pc_ex = (fwd_rs1 + dec_imm) & ~32'h1;
+                redirect_ex    = !if_ex_r.bp_taken || (redirect_pc_ex != if_ex_r.bp_pred_pc);
             end
             if (dec_branch) begin
                 if (!BP_EN) begin
@@ -757,18 +871,6 @@ module jv32_core #(
     logic [31:0] store_data_ex;
     assign mem_addr_ex   = fwd_rs1 + dec_imm;  // for loads/stores
     assign store_data_ex = fwd_rs2;
-
-    // Store byte enable
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [3:0] wstrb_ex;
-    /* verilator lint_on UNUSEDSIGNAL */
-    always_comb begin
-        case (dec_mem_op)
-            MEM_BYTE: wstrb_ex = 4'b0001 << mem_addr_ex[1:0];
-            MEM_HALF: wstrb_ex = 4'b0011 << mem_addr_ex[1:0];
-            default:  wstrb_ex = 4'b1111;
-        endcase
-    end
 
     // Store data alignment
     logic [31:0] store_data_aligned;
@@ -844,7 +946,6 @@ module jv32_core #(
     logic [N_TRIGGERS-1:0] trigger_match_vec;  // per-trigger: which trigger(s) matched
 
     // Address-match helper: supports exact (match=0) and NAPOT (match=1)
-    /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic trig_addr_match(input logic [31:0] addr, input logic [31:0] tdata1,
                                              input logic [31:0] tdata2);
         logic [31:0] napot_p, napot_rmask;
@@ -856,7 +957,6 @@ module jv32_core #(
             default: return (addr == tdata2);
         endcase
     endfunction
-    /* verilator lint_on UNUSEDSIGNAL */
 
     always_comb begin
         trigger_match     = 1'b0;
@@ -938,7 +1038,6 @@ module jv32_core #(
         if (!rst_n) dmem_was_write_d <= 1'b0;
         else dmem_was_write_d <= dmem_req_valid && dmem_req_write;
     end
-    logic dmem_resp_valid_rd;
     assign dmem_resp_valid_rd = dmem_resp_valid && !dmem_was_write_d;
 
     // Load-use hazard: stall only when WB holds a load/LR result whose SRAM
@@ -982,7 +1081,6 @@ module jv32_core #(
     end
 
     // Dmem driver
-    logic        dmem_stall;
     logic        sb_valid;
     logic [31:0] sb_addr;
     logic [31:0] sb_wdata;
@@ -1368,6 +1466,7 @@ module jv32_core #(
     // Debug resume flushes the RVC buffer to discard any instruction buffered
     // while the core was halted (prevents stale instructions from executing on step).
     logic dbg_resume_flush;
+
     assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r;
     assign rvc_stall = if_stall;
     assign rvc_flush = if_flush || bp_redirect || dbg_pc_we_i || dbg_resume_flush;
@@ -1378,6 +1477,7 @@ module jv32_core #(
 
     // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
+
     // fencei_iflush: 1 on the cycle fence.i fires its pipeline redirect.
     // Used by jv32_top to gate the next SRAM I-fetch response (which was issued
     // before the preceding store committed).  Only applies to fence.i — not to
@@ -1465,8 +1565,10 @@ module jv32_core #(
     // accesses raise an exception in EX and never reach here with mem_read=1).
     logic [ 7:0] load_byte;
     logic [15:0] load_half;
+
     assign load_byte = dmem_resp_data[8*ex_wb_r.mem_addr[1:0]+:8];
     assign load_half = dmem_resp_data[8*ex_wb_r.mem_addr[1:0]+:16];
+
     always_comb begin
         case (ex_wb_r.mem_op)
             MEM_BYTE:   load_result = {{24{load_byte[7]}}, load_byte};
@@ -1522,6 +1624,7 @@ module jv32_core #(
     assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
 
     logic [31:0] trace_mem_data_c;
+
     // For AMO: use amo_store_val (the value actually written to memory).
     // For LR specifically: amo_load_data is not used; the loaded value is
     // dmem_resp_data (valid when LR retires with dmem_resp_valid=1).
@@ -1550,6 +1653,7 @@ module jv32_core #(
                 else if (trace_en) begin
                     trace_valid_r  <= trace_retire;
                     trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
+
                     // AMO instructions are logged as memory writes (matching jv32sim which
                     // emits trace_is_store=true for all AMO/LR/SC). The write data is
                     // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
@@ -1596,6 +1700,7 @@ module jv32_core #(
                     trace_irq_taken      <= irq_cancel && !ex_stall;
                     trace_irq_cause      <= csr_irq_cause;
                     trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
+
                     // squashed-store: the interrupt fires in the 2nd WB cycle of a
                     // store (dmem_resp_valid=1 means the DRAM write already committed)
                     trace_irq_store_we   <= irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid;
@@ -1698,10 +1803,8 @@ module jv32_core #(
             assign trace_irq_store_addr = 32'd0;
             assign trace_irq_store_data = 32'd0;
 
-            /* verilator lint_off UNUSEDSIGNAL */
             logic _unused_trace_no;
             assign _unused_trace_no = &{1'b0, trace_en, trace_mem_data_c};
-            /* verilator lint_on UNUSEDSIGNAL */
 `endif
 
         end

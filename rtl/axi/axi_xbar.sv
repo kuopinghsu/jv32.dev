@@ -86,9 +86,7 @@ module axi_xbar #(
     output logic [N_SLAVES-1:0]       s_bready,
     output logic [N_SLAVES-1:0][31:0] s_araddr,
     output logic [N_SLAVES-1:0]       s_arvalid,
-    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [N_SLAVES-1:0]       s_arready,
-    /* verilator lint_on UNUSEDSIGNAL */
     input  logic [N_SLAVES-1:0][31:0] s_rdata,
     input  logic [N_SLAVES-1:0][ 1:0] s_rresp,
     input  logic [N_SLAVES-1:0]       s_rvalid,
@@ -220,5 +218,10 @@ module axi_xbar #(
     assign m_wready = wr_active ? (wr_err ? 1'b1 : s_wready[wr_sel]) : 1'b0;
     assign m_bvalid = wr_active ? (wr_err ? 1'b1 : s_bvalid[wr_sel]) : 1'b0;
     assign m_bresp  = wr_active ? (wr_err ? 2'b11 : s_bresp[wr_sel]) : 2'b00;
+
+`ifndef SYNTHESIS
+    logic _unused_ok;
+    assign _unused_ok = &{1'b0, s_arready};
+`endif
 
 endmodule

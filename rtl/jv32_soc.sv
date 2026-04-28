@@ -66,6 +66,8 @@ module jv32_soc #(
     parameter bit                 FAST_DIV        = 1'b0,
     parameter bit                 FAST_SHIFT      = 1'b1,
     parameter bit                 BP_EN           = 1'b1,
+    parameter bit                 RAS_EN          = 1'b1,        // 1=RAS enabled; 0=JALR always 1-cycle
+    parameter bit                 ZB_EN           = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter bit          [31:0] BOOT_ADDR       = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE       = 32'h8000_0000,
     parameter bit          [31:0] DRAM_BASE       = 32'hC000_0000
@@ -445,14 +447,12 @@ module jv32_soc #(
             assign jtag_pin3_tdo_o  = 1'b1;
             assign jtag_pin3_tdo_oe = 1'b0;
 
-            /* verilator lint_off UNUSEDSIGNAL */
             logic _unused_jtag_pins;
             assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
                                          jtag_pin1_tms_i, jtag_pin2_tdi_i,
                                          dbg_halted, dbg_resumeack, dbg_reg_rdata,
                                          dbg_pc, dbg_mem_ready, dbg_mem_error, dbg_mem_rdata,
                                          dbg_trigger_halt, dbg_trigger_hit};
-            /* verilator lint_on UNUSEDSIGNAL */
         end
     endgenerate
 
@@ -623,7 +623,8 @@ module jv32_soc #(
         .FAST_DIV  (FAST_DIV),
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
-        .AMO_EN    (AMO_EN),
+        .RAS_EN    (RAS_EN),
+        .ZB_EN     (ZB_EN),
         .N_TRIGGERS(N_TRIGGERS),
         .IRAM_SIZE (IRAM_SIZE),
         .DRAM_SIZE (DRAM_SIZE),
@@ -912,6 +913,7 @@ module jv32_soc #(
     // =====================================================================
     // Magic - slave 2
     // =====================================================================
+`ifndef SYNTHESIS
     axi_magic u_magic (
         .clk        (clk),
         .rst_n      (soc_rst_n),
@@ -933,6 +935,16 @@ module jv32_soc #(
         .axi_rvalid (xs_rvalid[2]),
         .axi_rready (xs_rready[2])
     );
+`else
+    assign xs_awready[2]     = 1'b1;
+    assign xs_wready[2]      = 1'b1;
+    assign xs_bresp[2][1:0]  = 2'b00;  // RESP_OKAY
+    assign xs_bvalid[2]      = 1'b1;
+    assign xs_arready[2]     = 1'b1;
+    assign xs_rdata[2][31:0] = 32'b0;
+    assign xs_rresp[2][1:0]  = 2'b00;  // RESP_OKAY
+    assign xs_rvalid[2]      = 1'b1;
+`endif
 
     // CLIC ack unused (CLINT-style polling, no ack needed)
     logic _unused;

@@ -29,6 +29,8 @@ export VERIBLE_FORMAT
 export RV32E_EN
 export RV32M_EN
 export AMO_EN
+export ZB_EN
+export RAS_EN
 export SPIKE
 
 # Compute ARCH/ABI from feature flags and export so all sub-makes agree.
@@ -151,6 +153,12 @@ endif
 ifdef BP_EN
   VERILATOR_FLAGS += -pvalue+BP_EN=$(BP_EN)
 endif
+ifdef RAS_EN
+  VERILATOR_FLAGS += -pvalue+RAS_EN=$(RAS_EN)
+endif
+ifdef ZB_EN
+  VERILATOR_FLAGS += -pvalue+ZB_EN=$(ZB_EN)
+endif
 ifdef IRAM_SIZE
   VERILATOR_FLAGS += -pvalue+IRAM_SIZE=$(IRAM_SIZE)
 endif
@@ -230,7 +238,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) ZB_EN=$(ZB_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -886,6 +894,8 @@ ARCH_TEST_PASSTHROUGH = \
     $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
     $(if $(WORKDIR),WORKDIR=$(WORKDIR),) \
     $(if $(JOBS),JOBS=$(JOBS),) \
+    ZB_EN=$(ZB_EN) \
+    RAS_EN=$(RAS_EN) \
     SPIKE=$(SPIKE)
 
 arch-test-%:
@@ -1063,5 +1073,5 @@ help:
 	@echo "  FAST_DIV=0|1         Serial/combinatorial divider"
 	@echo "  FAST_SHIFT=0|1       Serial/barrel shifter"
 	@echo "  BP_EN=0|1            Branch predictor enable"
-	@echo "  IRAM_SIZE=<bytes>    Instruction RAM size"
+	@echo "  RAS_EN=0|1           Return Address Stack enable (auto-off for RV32EC=1)"
 	@echo "  DRAM_SIZE=<bytes>    Data RAM size"
