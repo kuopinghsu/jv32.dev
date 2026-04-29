@@ -4,8 +4,8 @@
  * Description: Reset vector and trap handler for RV32IMAC bare-metal tests
  *
  * Memory map:
- *   IRAM: 0x80000000 - 0x8000FFFF (64 KB, RX)
- *   DRAM: 0xC0000000 - 0xC000FFFF (64 KB, RW)
+ *   IRAM: 0x80000000 - 0x8001FFFF (128 KB, RX)
+ *   DRAM: 0x90000000 - 0x9001FFFF (128 KB, RW)
  * ============================================================================ */
 
     .section .text.reset, "ax", @progbits

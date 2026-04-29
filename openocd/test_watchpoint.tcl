@@ -2,7 +2,7 @@ puts "\[TEST\] watchpoint"
 
 # Strategy: configure triggers directly, then execute a controlled store via
 # debug progbuf execution so the test is independent of startup-side effects.
-set wp_store_addr 0xC0000000
+set wp_store_addr 0x90000000
 
 proc reg_val {name} {
     set s [reg $name]

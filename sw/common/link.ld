@@ -5,17 +5,39 @@
  *
  * Memory map:
  *   IRAM: 0x80000000  128 KB  (executable, read-only at runtime)
- *   DRAM: 0xC0000000  128 KB  (read-write data, stack)
+ *   DRAM: 0x90000000  128 KB  (read-write data, stack)
+ *   EXTRAM: 0xA0000000  2 MB   (external AXI RAM, simulation only)
  * ============================================================================ */
 
 MEMORY {
-    IRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 128K
-    DRAM (rwx) : ORIGIN = 0xC0000000, LENGTH = 128K
+    IRAM   (rx)  : ORIGIN = 0x80000000, LENGTH = 128K
+    DRAM   (rwx) : ORIGIN = 0x90000000, LENGTH = 128K
+    EXTRAM (rwx) : ORIGIN = 0xA0000000, LENGTH = 2M
 }
 
 ENTRY(_start)
 
 SECTIONS {
+    /* ------------------------------------------------------------------ */
+    /* External RAM sections (0xA0000000, simulation only)                */
+    /* Listed FIRST so wildcards in IRAM/DRAM sections don't capture them.*/
+    /* ELF loader writes these directly; no startup copy needed.          */
+    /* ------------------------------------------------------------------ */
+    .text.ext ORIGIN(EXTRAM) : {
+        KEEP(*(.text.ext .text.ext.*))
+    } > EXTRAM
+
+    .rodata.ext : {
+        KEEP(*(.rodata.ext .rodata.ext.*))
+    } > EXTRAM
+
+    .data.ext : {
+        _extdata_start = .;
+        KEEP(*(.data.ext .data.ext.*))
+        . = ALIGN(4);
+        _extdata_end = .;
+    } > EXTRAM
+
     /* ------------------------------------------------------------------ */
     /* .text : code and read-only data                                     */
     /* ------------------------------------------------------------------ */
@@ -45,7 +67,12 @@ SECTIONS {
         __fini_array_end = .;
     } > IRAM
 
-    /* End of IRAM read-only content */
+    /* End of IRAM read-only content — must be 4-byte aligned so the
+     * startup data-copy loop can use word-granule lw/sw without triggering
+     * a misaligned-access exception (sp is not yet initialised at that
+     * point, so an exception would immediately recurse into the trap
+     * handler with sp=0 and crash the firmware). */
+    . = ALIGN(4);
     _iram_end = .;
 
     /* ------------------------------------------------------------------ */

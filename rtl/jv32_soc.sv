@@ -13,7 +13,7 @@
 // Memory map
 // ----------
 //  0x8000_0000  IRAM (TCM, inside jv32_top, 128 KB)  - I-fetch + data read
-//  0xC000_0000  DRAM (TCM, inside jv32_top, 128 KB)  - data read/write
+//  0x9000_0000  DRAM (TCM, inside jv32_top, 128 KB)  - data read/write
 //  0x2001_0000  UART
 //  0x0200_0000  CLIC / CLINT
 //  0x4000_0000  Magic exit + MMIO
@@ -71,7 +71,7 @@ module jv32_soc #(
     parameter bit                 RV32B_EN        = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter bit          [31:0] BOOT_ADDR       = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE       = 32'h8000_0000,
-    parameter bit          [31:0] DRAM_BASE       = 32'hC000_0000
+    parameter bit          [31:0] DRAM_BASE       = 32'h9000_0000
 ) (
     input logic clk,
     input logic rst_n,

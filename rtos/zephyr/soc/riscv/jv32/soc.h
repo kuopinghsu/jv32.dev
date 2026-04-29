@@ -15,7 +15,7 @@
 /* Memory map — matches jv_platform.h */
 #define IRAM_BASE_ADDR     0x80000000  /* 128KB instruction TCM (RX) */
 #define IRAM_SIZE          0x00020000
-#define DRAM_BASE_ADDR     0xC0000000  /* 128KB data TCM (RW) */
+#define DRAM_BASE_ADDR     0x90000000  /* 128KB data TCM (RW) */
 #define DRAM_SIZE          0x00020000
 
 #define UART_BASE_ADDR     0x20010000  /* matches JV_UART_BASE */

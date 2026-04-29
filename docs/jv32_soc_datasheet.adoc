@@ -30,7 +30,7 @@ This document provides comprehensive technical specifications for the JV32 Syste
 The JV32 SoC is a complete minimal embedded processor system implementing the RISC-V RV32IMAC instruction set with Machine mode (M-mode) support. The system integrates:
 
 * **RV32IMAC Processor Core** (`jv32_core`): Single-issue 3-stage pipeline (IF → EX → WB) with RVC expander, configurable fast multiply/divide/shift, branch predictor, and AMO state machine
-* **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0xC000_0000`, instantiated inside `jv32_top` as byte-bank SRAM primitives with 1-cycle read latency
+* **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0x9000_0000`, instantiated inside `jv32_top` as byte-bank SRAM primitives with 1-cycle read latency
 * **Merged AXI4-Lite Master**: Out-of-TCM accesses from both I-fetch and D-bus share one master port; D-bus has priority over I-fetch
 * **AXI4-Lite Slave**: External agents (debug master, testbench DPI) can read/write TCM; core has absolute priority
 * **Peripheral Subsystem** (4-slave AXI crossbar): UART, CLIC, Magic device, external catch-all
@@ -191,7 +191,7 @@ The core supports:
 Both TCM regions are instantiated inside `jv32_top` as banks of `sram_1rw` byte-wide SRAM primitives:
 
 * **IRAM**: 4 byte-banks (`gen_iram_byte[0..3].u_sram`), base `BOOT_ADDR` (default `0x8000_0000`), size `IRAM_SIZE` (default 128 KB)
-* **DRAM**: 4 byte-banks (`gen_dram_byte[0..3].u_sram`), base `DRAM_BASE` (default `0xC000_0000`), size `DRAM_SIZE` (default 128 KB)
+* **DRAM**: 4 byte-banks (`gen_dram_byte[0..3].u_sram`), base `DRAM_BASE` (default `0x9000_0000`), size `DRAM_SIZE` (default 128 KB)
 * **1-cycle read latency**: Address presented at cycle N returns data at cycle N+1
 * **Contention resolution**: When I-fetch and D-access both target IRAM, D-access wins; I-fetch stalls 1 cycle
 * **SRAM arbitration priority**: Core-D > Core-I > AXI Slave
@@ -249,7 +249,7 @@ The JV32 SoC implements a 32-bit address space (4 GB) with the following allocat
 |128 KB
 |Tightly-coupled instruction + data RAM (inside `jv32_top`)
 
-|`0xC000_0000` – `0xC001_FFFF`
+|`0x9000_0000` – `0x9001_FFFF`
 |DRAM (TCM)
 |128 KB
 |Tightly-coupled data RAM (inside `jv32_top`)
@@ -274,7 +274,7 @@ TCM is decoded combinatorially using power-of-2 masking:
 
 |DRAM
 |`(addr & ~(DRAM_SIZE-1)) == DRAM_BASE`
-|`DRAM_BASE=0xC000_0000`, `DRAM_SIZE=131072`
+|`DRAM_BASE=0x9000_0000`, `DRAM_SIZE=131072`
 |===
 
 Accesses that do not match either TCM region are forwarded to the merged AXI master and routed to the peripheral crossbar.
@@ -744,7 +744,7 @@ Both IRAM and DRAM are physically located inside `jv32_top` as arrays of four by
 |`IRAM_SIZE = 131072` bytes (128 KB); power-of-2
 
 |DRAM base address
-|`DRAM_BASE = 32'hC000_0000`
+|`DRAM_BASE = 32'h9000_0000`
 
 |DRAM size
 |`DRAM_SIZE = 131072` bytes (128 KB); power-of-2
@@ -1679,7 +1679,7 @@ suppress the Vivado LUTAR-1 methodology warning
 |Reset PC; also sets `IRAM_BASE` (IRAM address decode base)
 
 |`DRAM_BASE`
-|`32'hC000_0000`
+|`32'h9000_0000`
 |DRAM base address and TCM address decode start
 |===
 

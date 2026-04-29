@@ -34,7 +34,7 @@ module jv32_core #(
     parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,
-    parameter bit          [31:0] DRAM_BASE  = 32'hC000_0000,
+    parameter bit          [31:0] DRAM_BASE  = 32'h9000_0000,
     parameter int unsigned        DRAM_SIZE  = 128 * 1024
 ) (
     input logic clk,

@@ -261,12 +261,13 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
         build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all extra-tests arch-test-run openocd-test # compare-zephyr-all
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all extra-tests arch-test-run openocd-test
 
 extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
 	@make -f Makefile FAST_DIV=1 FAST_MUL=1 MUL_MC=1 rtl-all sim-all compare-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=1 MUL_MC=0 rtl-all sim-all compare-all
+	@make -f Makefile IBUF_EN=0 RAS_EN=0 rtl-all sim-all compare-all
 
 # ============================================================================
 # Build RTL simulator
@@ -586,6 +587,13 @@ SW_TESTS := $(sort $(notdir $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type
                   ! -name common ! -name include 2>/dev/null)))
 SW_TEST_COUNT := $(words $(SW_TESTS))
 
+# Tests that require the RTL simulator's hardware models (e.g. external AXI RAM)
+# and therefore cannot be run or compared with the software ISS (jv32sim).
+# These are included in rtl-all but excluded from sim-all and compare-all.
+RTL_ONLY_TESTS :=
+SIM_TESTS      := $(filter-out $(RTL_ONLY_TESTS), $(SW_TESTS))
+SIM_TEST_COUNT := $(words $(SIM_TESTS))
+
 # Build all software tests
 sw-all:
 	@$(MAKE) -C $(SW_DIR) --no-print-directory all BUILD_DIR=$(BUILD_DIR_ABS)
@@ -623,13 +631,14 @@ rtl-all: build-rtl
 sim-all: sim-build
 	@echo "=========================================="
 	@echo "Running all software tests with software simulator"
-	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
+	@echo "Tests ($(SIM_TEST_COUNT)): $(SIM_TESTS)"
+	@echo "Skipped (RTL-only): $(RTL_ONLY_TESTS)"
 	@echo "=========================================="
 	@passed=0; failed=0; failed_tests=""; idx=0; \
-	for test in $(SW_TESTS); do \
+	for test in $(SIM_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
-		echo "[sim-all $$idx/$(SW_TEST_COUNT)] $$test"; \
+		echo "[sim-all $$idx/$(SIM_TEST_COUNT)] $$test"; \
 		if $(MAKE) --no-print-directory sim-$$test; then \
 			passed=$$((passed + 1)); \
 		else \
@@ -648,17 +657,18 @@ sim-all: sim-build
 	echo "=========================================="; \
 	if [ $$failed -gt 0 ]; then exit 1; fi
 
-# Compare software-vs-RTL traces for all software tests
+# Compare software-vs-RTL traces for all software tests (excluding RTL-only tests)
 compare-all: $(JV32SIM) build-rtl
 	@echo "=========================================="
 	@echo "Comparing traces for all software tests"
-	@echo "Tests ($(SW_TEST_COUNT)): $(SW_TESTS)"
+	@echo "Tests ($(SIM_TEST_COUNT)): $(SIM_TESTS)"
+	@echo "Skipped (RTL-only): $(RTL_ONLY_TESTS)"
 	@echo "=========================================="
 	@passed=0; failed=0; failed_tests=""; idx=0; \
-	for test in $(SW_TESTS); do \
+	for test in $(SIM_TESTS); do \
 		idx=$$((idx+1)); \
 		echo ""; \
-		echo "[compare-all $$idx/$(SW_TEST_COUNT)] $$test"; \
+		echo "[compare-all $$idx/$(SIM_TEST_COUNT)] $$test"; \
 		if $(MAKE) --no-print-directory compare-$$test; then \
 			passed=$$((passed + 1)); \
 		else \
@@ -723,6 +733,7 @@ sim-%: $(BUILD_DIR)/%.elf $(JV32SIM)
 # Builds <test>.elf, jv32sim, and the RTL simulation binary, then runs
 # both and diffs the instruction traces (only non-x0 register writes).
 # ============================================================================
+
 compare-%: $(BUILD_DIR)/%.elf $(JV32SIM) build-rtl
 	@echo "=========================================="
 	@echo " JV32 Trace Comparison: $*"

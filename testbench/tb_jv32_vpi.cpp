@@ -263,7 +263,7 @@ static void load_elf_to_dut(Vtb_jv32_soc *dut, const char *elf_path) {
     // Pass g_mem_base=0 so the elfloader does not subtract any base before
     // forwarding the address to mem_write_byte.
     g_mem_base = 0;
-    g_mem_size = 0xC0040000U; // covers IRAM (0x8000_0000) and DRAM (0xC000_0000 + 256 KB)
+    g_mem_size = 0xA0040000U; // covers IRAM (0x8000_0000), DRAM (0x9000_0000), and EXTRAM (0xA000_0000 + 256 KB)
 
     if (!load_program(dut, std::string(elf_path))) {
         fprintf(stderr, "[VPI] ELF load failed: %s\n", elf_path);

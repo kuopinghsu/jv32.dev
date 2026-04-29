@@ -54,9 +54,9 @@ for {set i 0} {$i < 4} {incr i} {
 }
 puts "burst read OK: [lmap w $burst {format 0x%08x $w}]"
 
-# DRAM access: verify the debug path can reach 0xC0000000 (writable data RAM).
+# DRAM access: verify the debug path can reach 0x90000000 (writable data RAM).
 # Any non-IRAM write confirms the TCM mux routes DRAM correctly.
-set dram_base 0xC0000000
+set dram_base 0x90000000
 mww $dram_base 0xFEEDFACE
 set dram_r [lindex [read_memory $dram_base 32 1] 0]
 if {$dram_r != 0xFEEDFACE} {

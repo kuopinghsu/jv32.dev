@@ -5,7 +5,7 @@
 //
 // Memory map (fixed at instantiation via BASE/MASK parameters):
 //   Slave 0: IRAM  @ 0x8000_0000 (mask 0xFFFF_0000)
-//   Slave 1: DRAM  @ 0xC000_0000 (mask 0xFFFF_0000)
+//   Slave 1: DRAM  @ 0x9000_0000 (mask 0xFFFF_0000)
 //   Slave 2: UART  @ 0x2001_0000 (mask 0xFFFF_FF00)
 //   Slave 3: CLIC  @ 0x0200_0000 (mask 0xFFE0_0000)
 //   Slave 4: Magic @ 0x4000_0000 (mask 0xF000_0000)
@@ -38,7 +38,7 @@ module axi_xbar #(
     parameter int unsigned N_SLAVES = 5,
     parameter bit [31:0] SLAVE_BASE[N_SLAVES] = '{
         32'h8000_0000,
-        32'hC000_0000,
+        32'h9000_0000,
         32'h2001_0000,
         32'h0200_0000,
         32'h4000_0000

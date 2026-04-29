@@ -28,7 +28,7 @@ module tb_jv32_soc #(
     parameter bit                 RV32B_EN   = 1'b1,
     parameter logic        [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter logic        [31:0] IRAM_BASE  = 32'h8000_0000,
-    parameter logic        [31:0] DRAM_BASE  = 32'hC000_0000
+    parameter logic        [31:0] DRAM_BASE  = 32'h9000_0000
 ) (
     input logic clk,
     input logic rst_n,
@@ -90,6 +90,8 @@ module tb_jv32_soc #(
     localparam int unsigned DRAM_LIMIT      = DRAM_BASE + DRAM_SIZE;
     localparam logic [31:0] IRAM_ALIAS_BASE = 32'h6000_0000;
     localparam logic [31:0] DRAM_ALIAS_BASE = 32'h7000_0000;
+    localparam logic [31:0] EXTRAM_BASE     = 32'hA000_0000;
+    localparam int unsigned EXTRAM_SIZE     = 2 * 1024 * 1024;  // 2 MB
 
     // External TCM AXI master wires (driven by testbench alias bridge)
     logic [31:0] s_iram_tcm_araddr;
@@ -147,12 +149,25 @@ module tb_jv32_soc #(
     logic [ 1:0] ext_axi_bresp;
     logic        ext_axi_bvalid;
 
+    // External RAM (axi_memory at 0xA000_0000, 2 MB)
+    logic extram_arready, extram_rvalid, extram_rlast;
+    logic [31:0] extram_rdata;
+    logic [ 1:0] extram_rresp;
+    logic extram_awready, extram_wready, extram_bvalid;
+    logic [1:0] extram_bresp;
+    logic extram_arvalid_d, extram_awvalid_d, extram_wvalid_d;
+    logic extram_bready_d, extram_rready_d;
+
     function automatic logic in_iram_alias(input logic [31:0] addr);
         return (addr & ~(32'(IRAM_SIZE) - 32'h1)) == (IRAM_ALIAS_BASE & ~(32'(IRAM_SIZE) - 32'h1));
     endfunction
 
     function automatic logic in_dram_alias(input logic [31:0] addr);
         return (addr & ~(32'(DRAM_SIZE) - 32'h1)) == (DRAM_ALIAS_BASE & ~(32'(DRAM_SIZE) - 32'h1));
+    endfunction
+
+    function automatic logic in_extram(input logic [31:0] addr);
+        return (addr >= EXTRAM_BASE) && (addr < 32'(EXTRAM_BASE + EXTRAM_SIZE));
     endfunction
 
     function automatic logic [31:0] alias_to_tcm_addr(input logic [31:0] addr);
@@ -175,6 +190,8 @@ module tb_jv32_soc #(
     logic tb_alias_is_iram;
     logic tb_alias_rd_sel, tb_alias_wr_sel;
     logic tb_alias_active;
+    logic tb_is_extram;
+    logic tb_extram_rd_sel, tb_extram_wr_sel;
     logic decerr_bpending;
     logic alias_arready, alias_rvalid, alias_awready, alias_wready, alias_bvalid;
     logic [31:0] alias_rdata;
@@ -192,16 +209,19 @@ module tb_jv32_soc #(
         ext_axi_awaddr
     ));
 
+    assign tb_extram_rd_sel = (tb_alias_state == TB_ALIAS_IDLE) && ext_axi_arvalid && in_extram(ext_axi_araddr);
+    assign tb_extram_wr_sel = (tb_alias_state == TB_ALIAS_IDLE) && ext_axi_awvalid && in_extram(ext_axi_awaddr);
+
     assign tb_alias_active = (tb_alias_state != TB_ALIAS_IDLE);
 
-    assign alias_arready = tb_alias_is_iram ? s_iram_tcm_arready : s_dram_tcm_arready;
-    assign alias_rvalid = tb_alias_is_iram ? s_iram_tcm_rvalid : s_dram_tcm_rvalid;
-    assign alias_rdata = tb_alias_is_iram ? s_iram_tcm_rdata : s_dram_tcm_rdata;
-    assign alias_rresp = tb_alias_is_iram ? s_iram_tcm_rresp : s_dram_tcm_rresp;
-    assign alias_awready = tb_alias_is_iram ? s_iram_tcm_awready : s_dram_tcm_awready;
-    assign alias_wready = tb_alias_is_iram ? s_iram_tcm_wready : s_dram_tcm_wready;
-    assign alias_bvalid = tb_alias_is_iram ? s_iram_tcm_bvalid : s_dram_tcm_bvalid;
-    assign alias_bresp = tb_alias_is_iram ? s_iram_tcm_bresp : s_dram_tcm_bresp;
+    assign alias_arready = tb_is_extram ? extram_arready : (tb_alias_is_iram ? s_iram_tcm_arready : s_dram_tcm_arready);
+    assign alias_rvalid = tb_is_extram ? extram_rvalid : (tb_alias_is_iram ? s_iram_tcm_rvalid : s_dram_tcm_rvalid);
+    assign alias_rdata = tb_is_extram ? extram_rdata : (tb_alias_is_iram ? s_iram_tcm_rdata : s_dram_tcm_rdata);
+    assign alias_rresp = tb_is_extram ? extram_rresp : (tb_alias_is_iram ? s_iram_tcm_rresp : s_dram_tcm_rresp);
+    assign alias_awready = tb_is_extram ? extram_awready : (tb_alias_is_iram ? s_iram_tcm_awready : s_dram_tcm_awready);
+    assign alias_wready = tb_is_extram ? extram_wready : (tb_alias_is_iram ? s_iram_tcm_wready : s_dram_tcm_wready);
+    assign alias_bvalid = tb_is_extram ? extram_bvalid : (tb_alias_is_iram ? s_iram_tcm_bvalid : s_dram_tcm_bvalid);
+    assign alias_bresp = tb_is_extram ? extram_bresp : (tb_alias_is_iram ? s_iram_tcm_bresp : s_dram_tcm_bresp);
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -210,12 +230,14 @@ module tb_jv32_soc #(
             tb_alias_aw_done <= 1'b0;
             tb_alias_w_done  <= 1'b0;
             tb_alias_is_iram <= 1'b0;
+            tb_is_extram     <= 1'b0;
         end
         else begin
             case (tb_alias_state)
                 TB_ALIAS_IDLE: begin
                     tb_alias_aw_done <= 1'b0;
                     tb_alias_w_done  <= 1'b0;
+                    tb_is_extram     <= 1'b0;
                     if (tb_alias_rd_sel) begin
                         tb_alias_addr_r  <= alias_to_tcm_addr(ext_axi_araddr);
                         tb_alias_is_iram <= in_iram_alias(ext_axi_araddr);
@@ -224,6 +246,18 @@ module tb_jv32_soc #(
                     else if (tb_alias_wr_sel) begin
                         tb_alias_addr_r  <= alias_to_tcm_addr(ext_axi_awaddr);
                         tb_alias_is_iram <= in_iram_alias(ext_axi_awaddr);
+                        tb_alias_state   <= TB_ALIAS_WR_REQ;
+                    end
+                    else if (tb_extram_rd_sel) begin
+                        tb_alias_addr_r  <= ext_axi_araddr;
+                        tb_alias_is_iram <= 1'b0;
+                        tb_is_extram     <= 1'b1;
+                        tb_alias_state   <= TB_ALIAS_RD_ADDR;
+                    end
+                    else if (tb_extram_wr_sel) begin
+                        tb_alias_addr_r  <= ext_axi_awaddr;
+                        tb_alias_is_iram <= 1'b0;
+                        tb_is_extram     <= 1'b1;
                         tb_alias_state   <= TB_ALIAS_WR_REQ;
                     end
                 end
@@ -260,38 +294,47 @@ module tb_jv32_soc #(
             decerr_bpending <= 1'b0;
         end
         else begin
-            if (!tb_alias_active && !tb_alias_wr_sel && ext_axi_wvalid && !decerr_bpending) decerr_bpending <= 1'b1;
+            if (!tb_alias_active && !tb_alias_wr_sel && !tb_extram_wr_sel && ext_axi_wvalid && !decerr_bpending)
+                decerr_bpending <= 1'b1;
             else if (decerr_bpending && ext_axi_bready) decerr_bpending <= 1'b0;
         end
     end
 
+    // Extram axi_memory inputs driven from FSM state
+    assign extram_arvalid_d = (tb_alias_state == TB_ALIAS_RD_ADDR) && tb_is_extram;
+    assign extram_awvalid_d = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && tb_is_extram;
+    assign extram_wvalid_d  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && tb_is_extram;
+    assign extram_bready_d  = (tb_alias_state == TB_ALIAS_WR_RESP) && tb_is_extram ? ext_axi_bready : 1'b0;
+    assign extram_rready_d  = (tb_alias_state == TB_ALIAS_RD_RESP) && tb_is_extram ? ext_axi_rready : 1'b0;
+
     // Drive external TCM slave interfaces from testbench alias bridge.
     always_comb begin
         s_iram_tcm_araddr = tb_alias_addr_r;
-        s_iram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && tb_alias_is_iram;
-        s_iram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && tb_alias_is_iram) ? ext_axi_rready : 1'b0;
+        s_iram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && tb_alias_is_iram && !tb_is_extram;
+        s_iram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && tb_alias_is_iram && !tb_is_extram) ? ext_axi_rready : 1'b0;
         s_iram_tcm_awaddr = tb_alias_addr_r;
-        s_iram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && tb_alias_is_iram;
+        s_iram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && tb_alias_is_iram && !tb_is_extram;
         s_iram_tcm_wdata = ext_axi_wdata;
         s_iram_tcm_wstrb = ext_axi_wstrb;
-        s_iram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && tb_alias_is_iram;
-        s_iram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && tb_alias_is_iram) ? ext_axi_bready : 1'b0;
+        s_iram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && tb_alias_is_iram && !tb_is_extram;
+        s_iram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && tb_alias_is_iram && !tb_is_extram) ? ext_axi_bready : 1'b0;
 
         s_dram_tcm_araddr = tb_alias_addr_r;
-        s_dram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && !tb_alias_is_iram;
-        s_dram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && !tb_alias_is_iram) ? ext_axi_rready : 1'b0;
+        s_dram_tcm_arvalid = (tb_alias_state == TB_ALIAS_RD_ADDR) && !tb_alias_is_iram && !tb_is_extram;
+        s_dram_tcm_rready = (tb_alias_state == TB_ALIAS_RD_RESP && !tb_alias_is_iram && !tb_is_extram) ? ext_axi_rready : 1'b0;
         s_dram_tcm_awaddr = tb_alias_addr_r;
-        s_dram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && !tb_alias_is_iram;
+        s_dram_tcm_awvalid = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_aw_done && !tb_alias_is_iram && !tb_is_extram;
         s_dram_tcm_wdata = ext_axi_wdata;
         s_dram_tcm_wstrb = ext_axi_wstrb;
-        s_dram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && !tb_alias_is_iram;
-        s_dram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && !tb_alias_is_iram) ? ext_axi_bready : 1'b0;
+        s_dram_tcm_wvalid  = (tb_alias_state == TB_ALIAS_WR_REQ) && !tb_alias_w_done && ext_axi_wvalid && !tb_alias_is_iram && !tb_is_extram;
+        s_dram_tcm_bready = (tb_alias_state == TB_ALIAS_WR_RESP && !tb_alias_is_iram && !tb_is_extram) ? ext_axi_bready : 1'b0;
 
-        // Alias hits are rerouted into TCM; non-alias external accesses
-        // return DECERR so unmatched traffic does not hang simulation.
-        // Treat pending alias selection in IDLE as owned by alias path to
+        // Alias hits are rerouted into TCM; extram hits go to axi_memory;
+        // non-alias external accesses return DECERR so unmatched traffic
+        // does not hang simulation.
+        // Treat pending alias/extram selection in IDLE as owned by that path to
         // avoid issuing a premature DECERR response in the handoff cycle.
-        if (tb_alias_active || tb_alias_rd_sel || tb_alias_wr_sel) begin
+        if (tb_alias_active || tb_alias_rd_sel || tb_alias_wr_sel || tb_extram_rd_sel || tb_extram_wr_sel) begin
             ext_axi_arready = (tb_alias_state == TB_ALIAS_RD_ADDR) ? alias_arready : 1'b0;
             ext_axi_rvalid  = (tb_alias_state == TB_ALIAS_RD_RESP) ? alias_rvalid : 1'b0;
             ext_axi_rdata   = alias_rdata;
@@ -327,6 +370,10 @@ module tb_jv32_soc #(
             automatic int widx = offset >> 2;
             u_soc.u_jv32.u_dram.mem[widx][bank*8+:8] = data;
         end
+        else if (uaddr >= EXTRAM_BASE && uaddr < 32'(EXTRAM_BASE + EXTRAM_SIZE)) begin
+            automatic int offset = uaddr - EXTRAM_BASE;
+            u_extram.mem[offset] = data;
+        end
     endfunction
 
     function byte mem_read_byte(input int addr);
@@ -342,6 +389,10 @@ module tb_jv32_soc #(
             automatic int bank = offset & 3;
             automatic int widx = offset >> 2;
             return byte'(u_soc.u_jv32.u_dram.mem[widx][bank*8+:8]);
+        end
+        else if (uaddr >= EXTRAM_BASE && uaddr < 32'(EXTRAM_BASE + EXTRAM_SIZE)) begin
+            automatic int offset = uaddr - EXTRAM_BASE;
+            return byte'(u_extram.mem[offset]);
         end
         return 8'hFF;
     endfunction
@@ -369,6 +420,45 @@ module tb_jv32_soc #(
         .rx          (uart_tx_o),
         .tx          (uart_loopback_tx),
         .clks_per_bit(LOOPBACK_CLKS_PER_BIT)
+    );
+
+    // External RAM: 2 MB AXI4 memory model at 0xA000_0000 (simulation only)
+    axi_memory #(
+        .ADDR_WIDTH       (32),
+        .DATA_WIDTH       (32),
+        .MEM_SIZE         (EXTRAM_SIZE),
+        .BASE_ADDR        (EXTRAM_BASE),
+        .MEM_READ_LATENCY (1),
+        .MEM_WRITE_LATENCY(1),
+        .MEM_DUAL_PORT    (1)
+    ) u_extram (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .axi_awaddr (tb_alias_addr_r),
+        .axi_awlen  (8'h0),
+        .axi_awsize (3'h2),
+        .axi_awburst(2'h1),
+        .axi_awvalid(extram_awvalid_d),
+        .axi_awready(extram_awready),
+        .axi_wdata  (ext_axi_wdata),
+        .axi_wstrb  (ext_axi_wstrb),
+        .axi_wlast  (1'b1),
+        .axi_wvalid (extram_wvalid_d),
+        .axi_wready (extram_wready),
+        .axi_bresp  (extram_bresp),
+        .axi_bvalid (extram_bvalid),
+        .axi_bready (extram_bready_d),
+        .axi_araddr (tb_alias_addr_r),
+        .axi_arlen  (8'h0),
+        .axi_arsize (3'h2),
+        .axi_arburst(2'h1),
+        .axi_arvalid(extram_arvalid_d),
+        .axi_arready(extram_arready),
+        .axi_rdata  (extram_rdata),
+        .axi_rresp  (extram_rresp),
+        .axi_rlast  (extram_rlast),
+        .axi_rvalid (extram_rvalid),
+        .axi_rready (extram_rready_d)
     );
 
     jv32_soc #(

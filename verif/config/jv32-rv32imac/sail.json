@@ -7,7 +7,7 @@
 //
 // JV32 addressable memory:
 //   0x80000000  IRAM  64KB  (code + data — arch tests live here)
-//   0xC0000000  DRAM  64KB  (not used by arch tests)
+//   0x90000000  DRAM  64KB  (not used by arch tests)
 //   0x02000000  CLIC  (MSIP, mtime, mtimecmp — compatible with CLINT layout)
 //   Unmapped regions → AXI DECERR → EXC_LOAD/STORE_ACCESS_FAULT (cause=5/7) in JV32 core
 {
@@ -179,7 +179,7 @@
         },
         "include_in_device_tree": false
       },
-      // RAM: covers JV32 IRAM (0x80000000-0x8000FFFF) and DRAM (0xC0000000-0xC000FFFF)
+      // RAM: covers JV32 IRAM (0x80000000-0x8000FFFF) and DRAM (0x90000000-0x9001FFFF)
       // and any other upper-half addresses.  Arch tests are loaded at 0x80000000.
       {
         "base": { "len": 64, "value": "0x80000000" },

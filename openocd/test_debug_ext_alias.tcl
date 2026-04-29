@@ -15,7 +15,7 @@ if {[catch {riscv set_mem_access sysbus} err]} {
 set iram_alias 0x60000420
 set iram_tcm   0x80000420
 set dram_alias 0x70000600
-set dram_tcm   0xC0000600
+set dram_tcm   0x90000600
 
 # Write via out-of-TCM alias, then read via canonical TCM address.
 mww $iram_alias 0xA1B2C3D4

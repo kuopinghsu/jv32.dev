@@ -269,7 +269,7 @@ The multiplier has three modes, selectable via `FAST_MUL` and `MUL_MC`:
 | `DRAM_SIZE` | `131072` | Data SRAM size in bytes (power-of-2, max 512 KB) |
 | `BOOT_ADDR` | `0x80000000` | Reset vector address |
 | `IRAM_BASE` | `0x80000000` | Instruction SRAM base address (normally == `BOOT_ADDR`) |
-| `DRAM_BASE` | `0xC0000000` | Data SRAM base address |
+| `DRAM_BASE` | `0x90000000` | Data SRAM base address |
 
 ### Simulation
 

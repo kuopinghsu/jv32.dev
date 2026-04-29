@@ -45,9 +45,11 @@ static bool     clic_arb(uint32_t *out_id, uint8_t *out_level);
 static const uint32_t IRAM_BASE  = 0x80000000U;
 static const uint32_t IRAM_SIZE  = 128*1024;
 static const uint32_t IRAM_ALIAS_BASE = 0x60000000U;
-static const uint32_t DRAM_BASE  = 0xC0000000U;
+static const uint32_t DRAM_BASE  = 0x90000000U;
 static const uint32_t DRAM_SIZE  = 128*1024;
 static const uint32_t DRAM_ALIAS_BASE = 0x70000000U;
+static const uint32_t EXTRAM_BASE = 0xA0000000U;  // external AXI RAM (sim only)
+static const uint32_t EXTRAM_SIZE = 2*1024*1024;  // 2 MB
 static const uint32_t CLIC_BASE  = 0x02000000U;
 static const uint32_t UART_BASE  = 0x20010000U;
 static const uint32_t MAGIC_BASE = 0x40000000U;
@@ -149,6 +151,7 @@ static uint64_t insn_count;
 // Physical memory
 static uint8_t iram[IRAM_SIZE];
 static uint8_t dram[DRAM_SIZE];
+static uint8_t extram[EXTRAM_SIZE];  // external AXI RAM (sim only, 2 MB @ 0xA000_0000)
 
 // CLINT / CLIC state
 static uint64_t mtime;
@@ -236,6 +239,14 @@ struct SqStoreHint {
 };
 static std::deque<SqStoreHint> g_sq_store_hints;
 
+// MMIO read hints for UART STATUS register (offset 0x04 = 0x20010004).
+// In RTL, the UART loopback path takes many clock cycles so the RX FIFO
+// appears empty during poll_out STATUS checks that happen immediately after
+// a TX write.  The ISS loopback is instantaneous, producing a STATUS mismatch.
+// When running in compare mode (--rtl-hints), override STATUS reads with
+// the exact RTL-observed values collected from the trace.
+static std::deque<uint32_t> g_uart_status_hints;
+
 // Map CSR name string → address
 static uint32_t hint_csr_addr(const char* name) {
     if (!strcmp(name, "mcycle"))    return 0xB00;
@@ -320,6 +331,31 @@ static bool load_rtl_hints(const char* path) {
             fclose(f2);
         }
     }
+    // Collect UART STATUS read hints (loads from UART_BASE+4 = 0x20010004).
+    // These fix the timing mismatch in compare mode: ISS loopback is
+    // instantaneous while RTL loopback takes many cycles.  The RTL trace line
+    // format for a load is:
+    //   insn:cycle 0xPC (0xINSTR) REG 0xVAL mem 0xADDR ; disasm
+    // (no value after the address, unlike stores which have mem ADDR VAL).
+    {
+        FILE *fus = fopen(path, "r");
+        if (fus) {
+            setvbuf(fus, nullptr, _IOFBF, 4 * 1024 * 1024);
+            char lus[256];
+            while (fgets(lus, sizeof(lus), fus)) {
+                if (lus[0] == '!') continue;
+                if (!strstr(lus, " mem 0x20010004")) continue;
+                uint64_t ic, cy; uint32_t pc_r, ir, rv, ma; char rn[12];
+                if (sscanf(lus,
+                           "%" SCNu64 ":%" SCNu64 " 0x%x (0x%x) %11s 0x%x mem 0x%x",
+                           &ic, &cy, &pc_r, &ir, rn, &rv, &ma) == 7
+                        && ma == UART_BASE + 4U)
+                    g_uart_status_hints.push_back(rv);
+            }
+            fclose(fus);
+        }
+    }
+
     return true;
 }
 
@@ -493,6 +529,14 @@ static inline bool dram_offset_for_addr(uint32_t addr, int size, uint32_t *off) 
     return false;
 }
 
+static inline bool extram_offset_for_addr(uint32_t addr, int size, uint32_t *off) {
+    if (in_range(addr, EXTRAM_BASE, EXTRAM_SIZE, size)) {
+        *off = addr - EXTRAM_BASE;
+        return true;
+    }
+    return false;
+}
+
 // Forward declaration (defined after the hint infrastructure)
 static uint32_t consume_hint(uint32_t csr_addr, uint32_t fallback_val);
 
@@ -521,6 +565,18 @@ static uint32_t mem_read(uint32_t addr, int size) {
         }
         uint32_t v;
         memcpy(&v, &dram[off], 4);
+        return v;
+    }
+    // External AXI RAM (sim only)
+    if (extram_offset_for_addr(addr, size, &off)) {
+        if (size == 1) return extram[off];
+        if (size == 2) {
+            uint32_t v;
+            memcpy(&v, &extram[off], 2);
+            return v & 0xFFFFu;
+        }
+        uint32_t v;
+        memcpy(&v, &extram[off], 4);
         return v;
     }
     // CLIC registers
@@ -562,6 +618,14 @@ static uint32_t mem_read(uint32_t addr, int size) {
             return 0u;
         }
         if (off == UART_STATUS_OFF) {
+            // In compare mode, return the RTL-observed STATUS value so that the
+            // instantaneous ISS loopback doesn't diverge from the RTL's
+            // cycle-delayed loopback path.
+            if (g_hints_loaded && !g_uart_status_hints.empty()) {
+                uint32_t hinted = g_uart_status_hints.front();
+                g_uart_status_hints.pop_front();
+                return hinted;
+            }
             // bit0 = TX_BUSY (always 0 = not full), bit2 = RX_READY
             return uart_rx_fifo.empty() ? 0u : (1u << 2);
         }
@@ -590,6 +654,13 @@ static void mem_write(uint32_t addr, uint32_t val, int size) {
         if (size == 1) dram[off] = (uint8_t)val;
         else if (size == 2) memcpy(&dram[off], &val, 2);
         else memcpy(&dram[off], &val, 4);
+        return;
+    }
+    // External AXI RAM (sim only)
+    if (extram_offset_for_addr(addr, size, &off)) {
+        if (size == 1) extram[off] = (uint8_t)val;
+        else if (size == 2) memcpy(&extram[off], &val, 2);
+        else memcpy(&extram[off], &val, 4);
         return;
     }
     // IRAM (primary + alias, writable if mapped)
@@ -1722,6 +1793,9 @@ static bool load_elf(const char *path, uint32_t *entry) {
         } else if (vaddr >= DRAM_BASE && vaddr < DRAM_BASE + DRAM_SIZE) {
             dst    = dram + (vaddr - DRAM_BASE);
             max_sz = DRAM_SIZE - (vaddr - DRAM_BASE);
+        } else if (vaddr >= EXTRAM_BASE && vaddr < EXTRAM_BASE + EXTRAM_SIZE) {
+            dst    = extram + (vaddr - EXTRAM_BASE);
+            max_sz = EXTRAM_SIZE - (vaddr - EXTRAM_BASE);
         } else {
             DBG(2, "Warning: PT_LOAD segment at 0x%08x outside known regions\n", (unsigned)vaddr);
             continue;
@@ -1754,6 +1828,9 @@ static bool load_elf(const char *path, uint32_t *entry) {
             } else if (paddr >= DRAM_BASE && paddr < DRAM_BASE + DRAM_SIZE) {
                 dst_lma = dram + (paddr - DRAM_BASE);
                 max_lma = DRAM_SIZE - (paddr - DRAM_BASE);
+            } else if (paddr >= EXTRAM_BASE && paddr < EXTRAM_BASE + EXTRAM_SIZE) {
+                dst_lma = extram + (paddr - EXTRAM_BASE);
+                max_lma = EXTRAM_SIZE - (paddr - EXTRAM_BASE);
             }
             if (dst_lma && to_copy <= max_lma) {
                 fseek(f, (long)phdr.p_offset, SEEK_SET);

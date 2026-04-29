@@ -3,7 +3,7 @@ ENTRY(rvtest_entry_point)
 
 /* JV32 memory map:
  *   IRAM: 0x80000000  128KB  (code only — .text sections)
- *   DRAM: 0xC0000000  128KB  (data — .bss + .data sections)
+ *   DRAM: 0x90000000  128KB  (data — .bss + .data sections)
  *
  * Keeping code and data separate ensures that large .data sections
  * (expected signatures baked in by ACT4, plus test strings such as
@@ -16,8 +16,8 @@ SECTIONS
   .text.init : { *(.text.init) }
   .text : { *(.text) *(.text.*) }
 
-  /* ── DRAM (0xC0000000): BSS and initialised data ─────────────────── */
-  . = 0xC0000000;
+  /* ── DRAM (0x90000000): BSS and initialised data ───────────────────── */
+  . = 0x90000000;
   .bss : { *(.bss) }
   . = ALIGN(0x1000);
   .data : { *(.data) }

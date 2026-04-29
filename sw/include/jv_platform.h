@@ -22,8 +22,10 @@
 
 #define JV_IRAM_BASE    0x80000000UL  /**< 128 KB IRAM (TCM, RX)            */
 #define JV_IRAM_SIZE    0x00020000UL
-#define JV_DRAM_BASE    0xC0000000UL  /**< 128 KB DRAM (TCM, RW)            */
+#define JV_DRAM_BASE    0x90000000UL  /**< 128 KB DRAM (TCM, RW)            */
 #define JV_DRAM_SIZE    0x00020000UL
+#define JV_EXTRAM_BASE  0xA0000000UL  /**< 2 MB external AXI RAM (sim)       */
+#define JV_EXTRAM_SIZE  0x00200000UL
 #define JV_CLIC_BASE    0x02000000UL  /**< CLIC / CLINT-compatible timer     */
 #define JV_CLIC_SIZE    0x00200000UL
 #define JV_UART_BASE    0x20010000UL  /**< AXI UART                         */

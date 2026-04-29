@@ -52,7 +52,7 @@
 
         dram0: memory@c0000000 {
             compatible = "mmio-sram";
-            reg = <0xC0000000 0x20000>;  /* 128KB DRAM (data TCM) */
+            reg = <0x90000000 0x20000>;  /* 128KB DRAM (data TCM) */
         };
 
         mtimer: timer@2004000 {
