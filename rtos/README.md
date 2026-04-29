@@ -6,7 +6,7 @@ JV32 supports two RTOS environments: **FreeRTOS** (bare-metal port) and **Zephyr
 
 ## FreeRTOS
 
-**Version:** FreeRTOS Kernel V11.2.0  
+**Version:** FreeRTOS Kernel V11.2.0
 **Port:** `rtos/freertos/portable/RISC-V/` (machine-mode, CLINT timer)
 
 Sources live entirely inside the repository (`rtos/freertos/`). No external workspace is required.
@@ -45,7 +45,7 @@ make sim-freertos-all
 
 ## Zephyr
 
-**Version:** Zephyr 4.4  
+**Version:** Zephyr 4.4
 **Port:** `rtos/zephyr/` (west module, `boards/riscv/jv32/`, `soc/jv32/`, CLIC driver)
 
 Zephyr is an external west-managed workspace. Point `ZEPHYR_BASE` in `env.config` to your Zephyr installation:

@@ -281,3 +281,33 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 | ↳ axi_uart | 386 | 382 | 99.0% |
 | ↳ axi_xbar | 69 | 67 | 97.1% |
 | ↳ axi_magic | 0 | 0 | 0.0% |
+
+The overall 81.6% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
+
+#### Why `jv32_csr` is lower (~62%)
+
+The two performance counters — `mcycle_cnt` (64-bit) and `minstret_cnt` (64-bit) — account for the 128 ungated bits.  Their "enable" signal (`!mcountinhibit_cy` / `instret_inc`) is asserted almost every cycle during normal program execution, so the clock gate is perpetually open and synthesis may omit it:
+
+```systemverilog
+if (!mcountinhibit_cy) mcycle_cnt   <= mcycle_cnt + 64'd1;  // 64 ungated FFs
+if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;  // 64 ungated FFs
+```
+
+All other CSR registers (`mepc`, `mtvec`, `mstatus`, `mie`, etc.) are gated under `exception || irq_pending || mret || csr_we`.  This is **architecturally correct** — a continuously-incrementing cycle counter is inherently always-active.
+
+#### Why `jv32_dtm` is lower (~60%)
+
+The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`).  CDC multi-stage synchronizer chains **must sample on every clock edge** to guarantee metastability resolution; gating their clock would defeat their purpose.  The ~703 ungated bits are entirely synchronizer pipeline stages:
+
+| Synchronizer | Dir | Bits | Purpose |
+|---|---|---:|---|
+| `halt_req_sync_chain[3]`, `resume_req_sync_chain[3]` | TCK→CLK | 6 | JTAG halt/resume requests |
+| `halted_tck_chain[3]`, `resumeack_tck_chain[3]` | CLK→TCK | 6 | core status back to JTAG |
+| `sba_busy_tck_chain[3]`, `busy_tck_chain[3]` | CLK→TCK | 6 | SBA / cmd-busy back to JTAG |
+| `sb_err_tck_chain[3×3]` | CLK→TCK | 9 | SBA error bits |
+| `data0_result_sync[3]` (×32 b) | CLK→TCK | 96 | Abstract-command read-back |
+| `sbdata0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA read-data result |
+| `sbaddress0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA address result |
+| Various `_valid_sync[3]` + `_r` | CLK→TCK | ~12 | handshake valid bits |
+
+These ~327 bits toggle continuously during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.

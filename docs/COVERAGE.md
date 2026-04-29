@@ -1,7 +1,7 @@
 # JV32 RTL Coverage Report
 
-**Generated:** 2026-04-29  
-**Tool:** Verilator 5.049 `--coverage` + `genhtml`  
+**Generated:** 2026-04-29
+**Tool:** Verilator 5.049 `--coverage` + `genhtml`
 **HTML report:** `build/coverage/html/index.html`
 
 ---
@@ -15,7 +15,7 @@
 | Expressions |  883 |   1092 |  80.9% |
 | Toggles  |   23853 |  33394 |  71.4% |
 
-> *Lines* is the lcov line-hit metric (source lines executed ≥ 1×).  
+> *Lines* is the lcov line-hit metric (source lines executed ≥ 1×).
 > *Branches / Expressions / Toggles* are Verilator-native coverage points from `verilator_coverage`.
 
 ---
