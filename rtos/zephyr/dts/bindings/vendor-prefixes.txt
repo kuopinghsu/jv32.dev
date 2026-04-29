@@ -1,0 +1,2 @@
+# Vendor prefixes for jv32 project
+jv32	jv32 RISC-V SoC Project

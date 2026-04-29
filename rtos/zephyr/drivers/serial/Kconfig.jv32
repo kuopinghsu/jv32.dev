@@ -1,0 +1,22 @@
+# Copyright (c) 2026 jv32 Project
+# SPDX-License-Identifier: Apache-2.0
+
+config UART_JV32
+    bool "jv32 UART driver"
+    default y
+    depends on DT_HAS_JV32_UART_ENABLED
+    select SERIAL_HAS_DRIVER
+    select SERIAL_SUPPORT_INTERRUPT
+    help
+      Enable driver for jv32 custom UART peripheral.
+      This UART has TX capability with a 16-entry FIFO.
+
+if UART_JV32
+
+config UART_JV32_PORT_0
+    bool "Enable UART Port 0"
+    default y
+    help
+      Enable UART port 0 (the main console UART).
+
+endif # UART_JV32

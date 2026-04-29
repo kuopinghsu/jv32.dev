@@ -1,0 +1,24 @@
+# Copyright (c) 2026 jv32 Project
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_JV32
+
+config BOARD
+    default "jv32"
+
+# Disable UART console by default - use magic address console instead
+config UART_CONSOLE
+    default n
+
+config SERIAL
+    default n
+# Timer configuration
+config RISCV_MACHINE_TIMER
+    default y if SYS_CLOCK_EXISTS
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+    default 50000000
+
+config SYS_CLOCK_TICKS_PER_SEC
+    default 100
+endif # BOARD_JV32

@@ -1,0 +1,6 @@
+family:
+  - name: jv32
+    series:
+      - name: jv32
+        socs:
+          - name: jv32

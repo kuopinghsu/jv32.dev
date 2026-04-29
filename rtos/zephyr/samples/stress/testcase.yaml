@@ -1,0 +1,15 @@
+# ===================================================================
+# testcase.yaml  --  twister test runner metadata
+# ===================================================================
+
+tests:
+  zephyr_stress.all:
+    tags: kernel stress context_switch
+    platform_allow:
+      - native_sim
+    timeout: 120
+    harness: ztest
+    harness_config:
+      type: one_line
+      regex:
+        - "PASS"

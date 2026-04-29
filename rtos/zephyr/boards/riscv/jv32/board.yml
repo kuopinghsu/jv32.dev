@@ -1,0 +1,6 @@
+board:
+  name: jv32
+  full_name: JV32 RISC-V SoC
+  vendor: jv32
+  socs:
+    - name: jv32
