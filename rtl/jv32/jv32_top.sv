@@ -76,6 +76,7 @@ module jv32_top #(
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
     parameter bit                 RAS_EN     = 1'b1,        // 1=Return Address Stack; 0=JALR always 1-cycle
+    parameter bit                 IBUF_EN    = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
     parameter bit                 AMO_EN     = 1'b1,
     parameter bit                 RV32B_EN   = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,
@@ -290,6 +291,7 @@ module jv32_top #(
         .FAST_SHIFT(FAST_SHIFT),
         .BP_EN     (BP_EN),
         .RAS_EN    (RAS_EN),
+        .IBUF_EN   (IBUF_EN),
         .AMO_EN    (AMO_EN),
         .RV32B_EN  (RV32B_EN),
         .N_TRIGGERS(N_TRIGGERS),

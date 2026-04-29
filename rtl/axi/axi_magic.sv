@@ -1,6 +1,6 @@
 // ============================================================================
 // File        : axi_magic.sv
-// Project     : KV32 RISC-V Processor
+// Project     : JV32 RISC-V Processor
 // Description : AXI4-Lite Magic Device for Simulation Control
 //
 // Provides special memory-mapped registers used exclusively in
@@ -152,7 +152,7 @@ module axi_magic (
                         // Handle magic address writes
                         if ((write_addr_reg & ~32'h3) == EXIT_MAGIC_ADDR) begin
                             if (is_byte_write) begin
-                                // Exit simulation only on non-zero to match kv32sim
+                                // Exit simulation only on non-zero to match jv32sim
                                 // semantics for tohost/exit writes.
                                 if (write_byte != 8'h00) begin
                                     // Decode HTIF: exit_code = value >> 1
@@ -161,7 +161,7 @@ module axi_magic (
                                 end
                             end
                             else begin
-                                // Exit simulation only on non-zero to match kv32sim
+                                // Exit simulation only on non-zero to match jv32sim
                                 // semantics for tohost/exit writes.
                                 if (axi_wdata != 32'h00000000) begin
                                     // Decode HTIF: exit_code = value >> 1

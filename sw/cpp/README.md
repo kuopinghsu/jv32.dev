@@ -49,10 +49,3 @@ Object: StaticObject, Value: 777
 - C++ standard library functions that require hosted environment won't work
 - Global constructors from newlib (stdio initialization) may cause issues
 
-## Building
-
-```bash
-make sw TEST=cpp       # Build C++ test
-make rtl TEST=cpp      # Run on RTL simulation
-./build/kv32sim build/test.elf  # Run on software simulator
-```

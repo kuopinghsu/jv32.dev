@@ -33,6 +33,7 @@ set -euo pipefail
 : "${FAST_DIV:=0}"
 : "${FAST_SHIFT:=1}"
 : "${BP_EN:=1}"
+: "${IBUF_EN:=1}"
 : "${RV32E_EN:=0}"
 : "${RV32M_EN:=1}"
 : "${JTAG_EN:=1}"
@@ -67,8 +68,8 @@ YOSYS_EOF
     printf ' -DSYNTHESIS -DNO_ASSERTION -DGENERIC_SRAM'
     printf ' -I%s' "${RTL_DIR}/jv32"
     printf ' -PIRAM_SIZE=%s -PDRAM_SIZE=%s' "${IRAM_SIZE}" "${DRAM_SIZE}"
-    printf ' -PFAST_MUL=%s -PMUL_MC=%s -PFAST_DIV=%s -PFAST_SHIFT=%s -PBP_EN=%s' \
-        "${FAST_MUL}" "${MUL_MC}" "${FAST_DIV}" "${FAST_SHIFT}" "${BP_EN}"
+    printf ' -PFAST_MUL=%s -PMUL_MC=%s -PFAST_DIV=%s -PFAST_SHIFT=%s -PBP_EN=%s -PIBUF_EN=%s' \
+        "${FAST_MUL}" "${MUL_MC}" "${FAST_DIV}" "${FAST_SHIFT}" "${BP_EN}" "${IBUF_EN}"
     printf ' -PRV32E_EN=%s -PRV32M_EN=%s -PJTAG_EN=%s -PTRACE_EN=%s -PAMO_EN=%s' \
         "${RV32E_EN}" "${RV32M_EN}" "${JTAG_EN}" "${TRACE_EN}" "${AMO_EN}"
     printf ' %s' \

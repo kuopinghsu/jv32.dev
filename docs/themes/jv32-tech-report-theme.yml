@@ -206,11 +206,11 @@ footer:
   border_width: 0.5
   recto:
     left:
-      content: 'KV32 Architecture · Rev {revnumber} · {revdate}'
+      content: 'JV32 Architecture · Rev {revnumber} · {revdate}'
     right:
       content: '{page-number} / {page-count}'
   verso:
     left:
-      content: 'KV32 Architecture · Rev {revnumber} · {revdate}'
+      content: 'JV32 Architecture · Rev {revnumber} · {revdate}'
     right:
       content: '{page-number} / {page-count}'

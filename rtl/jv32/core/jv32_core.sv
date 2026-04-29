@@ -27,6 +27,7 @@ module jv32_core #(
     parameter bit                 FAST_SHIFT = 1'b1,
     parameter bit                 BP_EN      = 1'b1,
     parameter bit                 RAS_EN     = 1'b1,  // 1=Return Address Stack enabled; 0=JALR always 1-cycle
+    parameter bit                 IBUF_EN    = 1'b1,  // 1=2-entry instruction prefetch buffer; 0=disabled
     parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
     parameter bit                 RV32B_EN   = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
     parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
@@ -145,6 +146,8 @@ module jv32_core #(
     // RV32B_EN=1 only valid when not RV32E. Enforced here so child modules
     // see a single clean parameter without needing to know about RV32E_EN.
     localparam bit ZB_ACTIVE = RV32B_EN && !RV32E_EN;
+    // IBUF_EN disabled for RV32E minimum configurations (same gating as ZB/RAS).
+    localparam bit IBUF_ACTIVE = IBUF_EN && !RV32E_EN;
 
     // =====================================================================
     // RVC expander
@@ -159,6 +162,20 @@ module jv32_core #(
     logic [31:0] rvc_flush_pc;
     logic        rvc_stall;
 
+    // IBUF interface signals: wire-through (IBUF_ACTIVE=0) or FIFO head (IBUF_ACTIVE=1).
+    // Driven by the gen_ibuf / gen_no_ibuf generate block further below.
+    logic        rvc_imem_resp_valid;
+    logic [31:0] rvc_imem_resp_data;
+    logic [31:0] rvc_imem_resp_pc;
+    logic        ibuf_full;        // 1'b0 when IBUF_ACTIVE=0
+    logic [31:0] ibuf_fetch_pc_w;  // next fetch address (FF when IBUF_ACTIVE=1, pc_if otherwise)
+
+    // IBUF fault serialisation: when IBUF_ACTIVE=1, AXI faults are deferred until
+    // the FIFO drains so that instructions buffered before the fault execute first.
+    logic        ibuf_fault_rdy;      // fault slot ready to inject into IF/EX
+    logic [31:0] ibuf_fault_pc_eff;   // effective fault PC (ibuf_fault_pc_r or imem_resp_fault_pc)
+    logic        ibuf_fault_pending;  // fault latched, FIFO not yet drained
+
     jv32_rvc #(
         .RVM23_EN(1'b1)
     ) u_rvc (
@@ -166,9 +183,11 @@ module jv32_core #(
         .rst_n          (rst_n),
         // A faulting I-fetch response must not be decompressed/consumed as a
         // real instruction; the IF/EX fault slot is injected separately below.
-        .imem_resp_valid(imem_resp_valid && !imem_resp_fault),
-        .imem_resp_data (imem_resp_data),
-        .imem_resp_pc   (imem_resp_pc),
+        // With IBUF: fault responses are never pushed to the FIFO, so the FIFO
+        // head is always valid — no !imem_resp_fault gating needed on FIFO data.
+        .imem_resp_valid(rvc_imem_resp_valid && (IBUF_ACTIVE || !imem_resp_fault)),
+        .imem_resp_data (rvc_imem_resp_data),
+        .imem_resp_pc   (rvc_imem_resp_pc),
         .stall          (rvc_stall),
         .flush          (rvc_flush),
         .flush_pc       (rvc_flush_pc),
@@ -198,6 +217,7 @@ module jv32_core #(
     logic                  trigger_match;
     logic                  trigger_halt_r;     // trigger module caused current halt (dcsr.cause=2)
     logic [N_TRIGGERS-1:0] trigger_hit_r;      // which trigger(s) caused the halt
+
     assign trigger_halt_o = trigger_halt_r;
     assign trigger_hit_o  = trigger_hit_r;
 
@@ -437,20 +457,29 @@ module jv32_core #(
 
     assign dbg_pc_o       = dbg_halted_r ? dbg_halt_pc_r : pc_if;
 
-    assign imem_req_valid = !dbg_halted_r;
+    assign imem_req_valid = !dbg_halted_r && !(IBUF_ACTIVE && (ibuf_full || ibuf_fault_pending));
 
     // Pre-advance: drive the *next* fetch address combinatorially so the SRAM
     // sees the new address in the same cycle that mem_ready/flush fires.
-    // This eliminates the 1-cycle stale-echo after each fetch word, reducing
-    // the CPI floor from 2.0 (32-bit) / 1.5 (compressed) to ~1.0 / 0.67.
+    // Without IBUF: same as before — rvc_mem_ready-based pre-advance against pc_if.
+    // With IBUF: ibuf_fetch_pc_w tracks next address; advance by 4 whenever a
+    // response is accepted into the FIFO (!ibuf_full), so the SRAM always
+    // sees the next address in the same cycle the previous response arrives.
     always_comb begin
         if (dbg_halted_r) imem_req_addr = pc_if;
         else if (dbg_pc_we_i) imem_req_addr = dbg_pc_wdata_i;
-        else if (if_stall) imem_req_addr = pc_if;
-        else if (if_flush) imem_req_addr = if_flush_pc;
-        else if (bp_redirect) imem_req_addr = bp_redirect_pc;
-        else if (rvc_mem_ready) imem_req_addr = pc_if + 32'd4;
-        else imem_req_addr = pc_if;
+        else if (IBUF_ACTIVE) begin
+            if (rvc_flush) imem_req_addr = rvc_flush_pc;
+            else if (imem_resp_valid && !ibuf_full) imem_req_addr = ibuf_fetch_pc_w + 32'd4;
+            else imem_req_addr = ibuf_fetch_pc_w;
+        end
+        else begin
+            if (if_stall) imem_req_addr = pc_if;
+            else if (if_flush) imem_req_addr = if_flush_pc;
+            else if (bp_redirect) imem_req_addr = bp_redirect_pc;
+            else if (rvc_mem_ready) imem_req_addr = pc_if + 32'd4;
+            else imem_req_addr = pc_if;
+        end
     end
 
     // =====================================================================
@@ -609,14 +638,16 @@ module jv32_core #(
                 // Do NOT advance if_ex_r; hold it implicitly (no assignment).
                 // (if_stall=1 has already prevented pc_if from advancing.)
             end
-            else if (imem_resp_fault) begin
-                // Preserve the original request PC for an instruction-access fault
-                // without letting the RVC path consume/advance the bad fetch word.
+            else if (ibuf_fault_rdy) begin
+                // Instruction-access fault: inject fault slot after FIFO has drained
+                // (ibuf_fault_rdy=1 guarantees all preceding buffered instructions
+                // have already been dispatched when IBUF_ACTIVE=1; immediate when
+                // IBUF_ACTIVE=0, same as the previous imem_resp_fault behaviour).
                 if_ex_r.valid         <= 1'b1;
-                if_ex_r.pc            <= imem_resp_fault_pc;
+                if_ex_r.pc            <= ibuf_fault_pc_eff;
                 if_ex_r.instr         <= 32'h0000_0013;
                 if_ex_r.orig_instr    <= 32'h0000_0000;
-                if_ex_r.is_compressed <= imem_resp_fault_pc[1];
+                if_ex_r.is_compressed <= ibuf_fault_pc_eff[1];
                 if_ex_r.bp_taken      <= 1'b0;
                 if_ex_r.ifetch_fault  <= 1'b1;
             end
@@ -1487,6 +1518,155 @@ module jv32_core #(
     // before the preceding store committed).  Only applies to fence.i — not to
     // normal branches/JALR — so no performance penalty on other redirects.
     assign fencei_iflush = if_ex_r.valid && dec_is_fence_i && !ex_stall && !load_use_stall;
+
+    // =====================================================================
+    // Instruction Prefetch Buffer (IBUF)
+    // Two-entry shift FIFO between the memory response path and jv32_rvc.
+    //
+    // When IBUF_ACTIVE=1:
+    //   - ibuf_fetch_pc_ff runs ahead of pc_if by up to 2 words, issuing
+    //     pre-fetch requests while rvc_imem_resp_* presents the FIFO head.
+    //   - imem_req_valid is gated low when ibuf_full=1, preventing SRAM/AXI
+    //     overflow.  For AXI, the SM only advances to BUS_IAR on imem_req_valid,
+    //     so at most 1 in-flight request exists — the FIFO never overflows.
+    //   - On any flush (branch, exception, debug), the FIFO is cleared and
+    //     ibuf_fetch_pc_ff is reset to rvc_flush_pc the same cycle.
+    //
+    // When IBUF_ACTIVE=0 (e.g. RV32EC=1 or IBUF_EN=0):
+    //   - All signals are wire-throughs; zero logic added.
+    // =====================================================================
+    generate
+        if (IBUF_ACTIVE) begin : gen_ibuf
+            logic [ 1:0] ibuf_valid;
+            logic [31:0] ibuf_data        [0:1];
+            logic [31:0] ibuf_pc_ff       [0:1];
+            logic [31:0] ibuf_fetch_pc_ff;
+
+            assign ibuf_full       = ibuf_valid[1];
+            assign ibuf_fetch_pc_w = ibuf_fetch_pc_ff;
+
+            // FWFT (First Word Fall Through): when the FIFO is empty, present
+            // the incoming response directly to rvc without a register stage.
+            // This eliminates the 1-cycle latency bubble that the registered FIFO
+            // would otherwise add after every flush or fill-from-empty transition.
+            // Note: !rvc_flush is intentionally omitted here — all inputs are
+            // registered (ibuf_valid[0], imem_resp_valid, imem_resp_fault), so
+            // there is no combinatorial loop through bp_redirect→rvc_flush.
+            // During a flush cycle, ibuf_fetch_pc_ff is reset by the higher-priority
+            // rvc_flush branch, so any bypass in that cycle is harmless.
+            logic ibuf_bypass;
+            assign ibuf_bypass         = !ibuf_valid[0] && imem_resp_valid && !imem_resp_fault;
+
+            assign rvc_imem_resp_valid = ibuf_valid[0] || ibuf_bypass;
+            assign rvc_imem_resp_data  = ibuf_valid[0] ? ibuf_data[0] : imem_resp_data;
+            assign rvc_imem_resp_pc    = ibuf_valid[0] ? ibuf_pc_ff[0] : imem_resp_pc;
+
+            logic ibuf_push, ibuf_pop;
+            // Push to FIFO only when bypass is impossible (FIFO not empty) or
+            // rvc is stalling (bypass data would be lost without buffering).
+            assign ibuf_push = imem_resp_valid && !imem_resp_fault && !rvc_flush && !ibuf_full &&
+                               (ibuf_valid[0] || !rvc_mem_ready);
+            assign ibuf_pop = ibuf_valid[0] && rvc_mem_ready;
+
+            // Fault serialisation: when an AXI DECERR arrives, latch the fault PC
+            // and wait for the FIFO to drain before injecting the fault slot.
+            // This ensures all buffered instructions before the fault execute first.
+            logic        ibuf_fault_pending_r;
+            logic [31:0] ibuf_fault_pc_r;
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n || rvc_flush) begin
+                    ibuf_fault_pending_r <= 1'b0;
+                    ibuf_fault_pc_r      <= '0;
+                end
+                else if (imem_resp_fault && !ibuf_fault_pending_r) begin
+                    ibuf_fault_pending_r <= 1'b1;
+                    ibuf_fault_pc_r      <= imem_resp_fault_pc;
+                end
+                else if (ibuf_fault_rdy) begin
+                    ibuf_fault_pending_r <= 1'b0;
+                end
+            end
+
+            assign ibuf_fault_pending = ibuf_fault_pending_r;
+            assign ibuf_fault_rdy     = ibuf_fault_pending_r && !ibuf_valid[0];
+            assign ibuf_fault_pc_eff  = ibuf_fault_pc_r;
+
+            // ibuf_fetch_pc_ff: next address to issue to SRAM/AXI.
+            // Advances whenever any response is accepted — whether stored in the
+            // FIFO (ibuf_push) or passed through via bypass (ibuf_bypass+rvc_ready).
+            // Both cases share the same condition: resp_valid && !fault && !full.
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) ibuf_fetch_pc_ff <= BOOT_ADDR;
+                else if (rvc_flush) ibuf_fetch_pc_ff <= rvc_flush_pc;
+                else if (imem_resp_valid && !imem_resp_fault && !ibuf_full)
+                    ibuf_fetch_pc_ff <= ibuf_fetch_pc_ff + 32'd4;
+            end
+
+            // 2-entry shift-register FIFO
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n || rvc_flush) begin
+                    ibuf_valid    <= 2'b00;
+                    ibuf_data[0]  <= '0;
+                    ibuf_data[1]  <= '0;
+                    ibuf_pc_ff[0] <= '0;
+                    ibuf_pc_ff[1] <= '0;
+                end
+                else begin
+                    case ({
+                        ibuf_push, ibuf_pop
+                    })
+                        2'b10: begin  // push only
+                            if (!ibuf_valid[0]) begin
+                                ibuf_valid[0] <= 1'b1;
+                                ibuf_data[0]  <= imem_resp_data;
+                                ibuf_pc_ff[0] <= imem_resp_pc;
+                            end
+                            else begin
+                                ibuf_valid[1] <= 1'b1;
+                                ibuf_data[1]  <= imem_resp_data;
+                                ibuf_pc_ff[1] <= imem_resp_pc;
+                            end
+                        end
+                        2'b01: begin  // pop only
+                            ibuf_valid[0] <= ibuf_valid[1];
+                            ibuf_data[0]  <= ibuf_data[1];
+                            ibuf_pc_ff[0] <= ibuf_pc_ff[1];
+                            ibuf_valid[1] <= 1'b0;
+                        end
+                        2'b11: begin  // simultaneous push + pop
+                            if (ibuf_valid[1]) begin
+                                ibuf_data[0]  <= ibuf_data[1];
+                                ibuf_pc_ff[0] <= ibuf_pc_ff[1];
+                                ibuf_data[1]  <= imem_resp_data;
+                                ibuf_pc_ff[1] <= imem_resp_pc;
+                                // ibuf_valid stays 2'b11
+                            end
+                            else begin
+                                ibuf_data[0]  <= imem_resp_data;
+                                ibuf_pc_ff[0] <= imem_resp_pc;
+                                // ibuf_valid[0] stays 1, ibuf_valid[1] stays 0
+                            end
+                        end
+                        default: ;  // 2'b00: no change
+                    endcase
+                end
+            end
+
+        end
+        else begin : gen_no_ibuf
+            // Wire-through: zero logic generated
+            assign ibuf_full           = 1'b0;
+            assign ibuf_fetch_pc_w     = pc_if;
+            assign rvc_imem_resp_valid = imem_resp_valid;
+            assign rvc_imem_resp_data  = imem_resp_data;
+            assign rvc_imem_resp_pc    = imem_resp_pc;
+            // Fault handling: pass through directly (no FIFO to drain)
+            assign ibuf_fault_pending  = 1'b0;
+            assign ibuf_fault_rdy      = imem_resp_fault;
+            assign ibuf_fault_pc_eff   = imem_resp_fault_pc;
+        end
+    endgenerate
 
     // =====================================================================
     // EX->WB Pipeline Register

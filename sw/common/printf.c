@@ -1,6 +1,6 @@
 // ============================================================================
 // File: printf.c
-// Project: KV32 RISC-V Processor
+// Project: JV32 RISC-V Processor
 // Description: Lightweight embedded printf implementation (no stdlib dependency)
 //
 // Supports %c, %s, %d/%i, %u, %x/%X, %o, %p, width/precision,

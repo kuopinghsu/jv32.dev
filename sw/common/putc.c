@@ -1,6 +1,6 @@
 // ============================================================================
 // File: putc.c
-// Project: KV32 RISC-V Processor
+// Project: JV32 RISC-V Processor
 // Description: putc() stub for embedded systems: routes single character to stdout
 // ============================================================================
 

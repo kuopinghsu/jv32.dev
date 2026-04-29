@@ -99,12 +99,14 @@ ifeq ($(RV32EC),1)
   FAST_SHIFT := 0
   BP_EN      := 0
   AMO_EN     := 0
+  IBUF_EN    := 0
 else
   RV32E_EN   ?= 0
   RV32M_EN   ?= 1
   JTAG_EN    ?= 1
   TRACE_EN   ?= 1
   AMO_EN     ?= 1
+  IBUF_EN    ?= 1
 endif
 
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
@@ -290,8 +292,8 @@ synth: check $(BUILD_DIR)
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
-	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - TRACE_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(TRACE_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN); \
+	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - TRACE_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(TRACE_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) $(IBUF_EN); \
 	  printf 'VERILOG_DEFINES:\n  - SYNTHESIS\n  - NO_ASSERTION\n  - GENERIC_SRAM\n'; \
 	  } > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
@@ -418,6 +420,7 @@ synth: check $(BUILD_DIR)
 	    --fast-div   $(FAST_DIV)   \
 	    --fast-shift $(FAST_SHIFT) \
 	    --bp-en      $(BP_EN)      \
+	    --ibuf-en    $(IBUF_EN)    \
 	    --iram-kb    $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) \
 	    --dram-kb    $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) \
 	    --clock-mhz  80 \
@@ -484,6 +487,7 @@ gate-count: check $(BUILD_DIR)
 	    export FAST_DIV="$(FAST_DIV)"; \
 	    export FAST_SHIFT="$(FAST_SHIFT)"; \
 	    export BP_EN="$(BP_EN)"; \
+	    export IBUF_EN="$(IBUF_EN)"; \
 	    export CG_EN="$(CG_EN)"; \
 	    export DFT_EN="$(DFT_EN)"; \
 	    $(NIX_SHELL) $(OPENLANE)/shell.nix \

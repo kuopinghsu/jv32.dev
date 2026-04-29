@@ -1,6 +1,6 @@
 // ============================================================================
 // File        : sram_1rw.sv
-// Project     : KV32 RISC-V Processor
+// Project     : JV32 RISC-V Processor
 // Description : Single-Port 1R/1W SRAM Macro Wrapper
 //
 // Interface

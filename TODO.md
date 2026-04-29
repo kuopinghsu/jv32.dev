@@ -4,7 +4,7 @@
 
 - [x] **JALR redirect elimination (RAS)** — Added an 2-entry circular Return Address Stack. Push on JAL/JALR with rd∈{x1,x5}; pop on JALR with rs1∈{x1,x5} and rd∉{x1,x5}. Predicted target stored in new `bp_pred_pc` field of the IF/EX register; EX suppresses the redirect when the actual JALR target matches. See [rtl/jv32/core/jv32_core.sv](rtl/jv32/core/jv32_core.sv) and [rtl/jv32/core/jv32_pkg.sv](rtl/jv32/core/jv32_pkg.sv).
 - [ ] **Branch predictor: 2-bit saturating counters** — the current L0 is a 1-entry "last-branch" cache with a 1-bit direction. A small 4–16 entry PHT with 2-bit saturating counters would better handle loops executed multiple times, at very low area cost.
-- [ ] **Instruction prefetch buffer** — a 2-entry fetch queue between the TCM and the RVC expander would hide the 1-cycle RVC stall for compressed instructions at boundaries, slightly reducing CPI.
+- [x] **Instruction prefetch buffer** — 2-entry shift-register FIFO (`gen_ibuf`) between TCM/AXI response and jv32_rvc. Controlled by `IBUF_EN` parameter (default: 1). Auto-disabled when `RV32E_EN=1` (via `IBUF_ACTIVE = IBUF_EN && !RV32E_EN`). `ibuf_fetch_pc_ff` runs 1–2 words ahead of `pc_if`, sending pre-fetch requests to SRAM/AXI while the RVC processes earlier words. AXI correctness guaranteed by gating `imem_req_valid=0` when FIFO full. AXI I-fetch faults serialised through `ibuf_fault_pending_r` so buffered instructions before the fault execute first.
 
 ## ISA Extensions
 

@@ -1,6 +1,6 @@
 // ============================================================================
 // File: elfloader.cpp
-// Project: KV32 RISC-V Processor
+// Project: JV32 RISC-V Processor
 // Description: ELF File Loader for Simulation
 //
 // Loads RISC-V ELF binaries into simulated memory using DPI-C interface.

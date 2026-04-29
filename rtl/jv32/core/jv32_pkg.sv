@@ -66,6 +66,7 @@ package jv32_pkg;
     localparam int unsigned FAST_DIV       = 0;              // 1=comb, 0=serial (33 cyc)
     localparam int unsigned FAST_SHIFT     = 1;              // 1=barrel, 0=serial 1-bit/cyc
     localparam int unsigned BP_EN          = 1;              // 1=BTB+RAS, 0=predict-not-taken
+    localparam int unsigned IBUF_EN        = 1;              // 1=2-entry instruction prefetch buffer; 0=disabled
     localparam int unsigned AMO_EN         = 1;              // 1=full A-extension, 0=AMO decode as illegal
     localparam bit          RV32E_EN       = 0;              // 1=RV32E (16 GPRs), 0=RV32I (32 GPRs)
     localparam bit          RV32M_EN       = 1;              // 1=M-extension (mul/div), 0=illegal

@@ -1,4 +1,4 @@
-# Makefile — KV32 Docs: AsciiDoc → PDF
+# Makefile — JV32 Docs: AsciiDoc → PDF
 #
 # Targets:
 #   make [all]    — build all PDFs
