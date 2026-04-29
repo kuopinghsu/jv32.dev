@@ -74,6 +74,8 @@ docs/stem*.png
 
 .Xil
 
+.venv
+
 env.config
 rtos/zephyr/build.*
 

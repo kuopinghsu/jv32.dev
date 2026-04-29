@@ -33,10 +33,7 @@ fi
 # Check if already patched by looking for our modified pattern
 if grep -q 'warn_only = r"warning:.\*(set more than once|choice symbol|default selection|was assigned the value|has direct dependencies)"' "$KCONFIG_PY"; then
     echo "kconfig.py is already patched, skipping."
-    exit 0
-fi
-
-# Patch: Change the error logic to allow warnings that match warn_only pattern
+else
 # The original code has: error_out = True, then checks "if not error_out ..." which never runs
 # We need to change the logic to check each warning and only error if it doesn't match warn_only
 echo "Patching kconfig.py to allow choice symbol warnings..."
@@ -97,3 +94,28 @@ python3 /tmp/patch_kconfig.py "$KCONFIG_PY"
 
 echo "Patch applied successfully!"
 echo "To restore original: cp ${KCONFIG_PY}.orig $KCONFIG_PY"
+fi  # end kconfig patch block
+
+# ---------------------------------------------------------------------------
+# Patch snippets.py: cmake_out.parent.mkdir() -> mkdir(parents=True, exist_ok=True)
+# Root cause: Zephyr 4.4 snippets.py calls mkdir() without parents=True, which
+# fails when build.hello/zephyr/ does not yet exist during cmake configure.
+# ---------------------------------------------------------------------------
+SNIPPETS_PY="$ZEPHYR_BASE/scripts/snippets.py"
+
+if [ ! -f "$SNIPPETS_PY" ]; then
+    echo "Note: $SNIPPETS_PY not found, skipping snippets patch."
+    exit 0
+fi
+
+if grep -q 'cmake_out.parent.mkdir(parents=True' "$SNIPPETS_PY"; then
+    echo "snippets.py is already patched, skipping."
+    exit 0
+fi
+
+if [ ! -f "${SNIPPETS_PY}.orig" ]; then
+    cp "$SNIPPETS_PY" "${SNIPPETS_PY}.orig"
+fi
+
+sed -i 's/cmake_out\.parent\.mkdir()/cmake_out.parent.mkdir(parents=True, exist_ok=True)/' "$SNIPPETS_PY"
+echo "Patched snippets.py (mkdir parents=True)."

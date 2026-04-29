@@ -8,10 +8,10 @@
 /* Reset entry point */
 GTEXT(__reset)
 SECTION_FUNC(reset, __reset)
-    /* Initialize stack pointer to top of DRAM (128KB at 0xC0000000) */
-    /* Stack grows down, so set SP to end of DRAM: 0xC0000000 + 0x20000 */
-    lui sp, %hi(0xC0020000)
-    addi sp, sp, %lo(0xC0020000)
+    /* Initialize stack pointer to top of IRAM (128KB at 0x80000000) */
+    /* Stack grows down, so set SP to end of IRAM: 0x80000000 + 0x20000 */
+    lui sp, %hi(0x80020000)
+    addi sp, sp, %lo(0x80020000)
 
     /* Jump to Zephyr initialization */
     tail z_prep_c

@@ -19,7 +19,7 @@
 
 ## Software / RTOS
 
-- [ ] **Zephyr RTOS port** — only FreeRTOS is currently supported. A Zephyr port (requires a HAL layer and device tree) would broaden software ecosystem validation.
+- [x] **Zephyr RTOS port** — out-of-tree module at `rtos/zephyr/`. Board `jv32`, SoC `SOC_RISCV_JV32` (RV32IMAC, 3-stage pipeline). Drivers: magic-address console, AXI UART. Samples: hello, simple, threads_sync, uart_echo, stress (ztest). DTS memory map: 64KB IRAM (0x80000000) + 64KB DRAM (0xC0000000), CLIC timer (mtime@0x02004000).
 - [x] **C++ standard library / newlib integration test** — `sw/cpp/cpp_test.cpp` tests 42 checks covering: global constructors (`.init_array` sequencing), `std::vector<int>` (heap via `_sbrk`→`malloc`), `std::array`, `std::sort`/`is_sorted`, `std::find`/`find_if`, `std::fill`/`iota`, `std::accumulate`, `std::min_element`/`max_element`, `std::transform`, `operator new`/`delete` (linked list + array), placement new, and move semantics (`std::move`, move constructor, `vector<MoveOnly>`). All 42 checks PASS on both RTL and ISS. Compiled with `-fno-exceptions -fno-rtti` (the standard embedded C++ mode; full exception unwinding exceeds the 128 KB IRAM budget). See `sw/cpp/makefile.mak` for the GCC 15 hosted-mode fix (`filter-out -ffreestanding`).
 
 ## Synthesis / Physical Design

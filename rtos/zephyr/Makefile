@@ -91,12 +91,7 @@ build: setup
 		echo "Error: Zephyr sample '$(TEST)' not found"; \
 		exit 1; \
 	fi
-	@if [ -f "$(ZEPHYR_BASE)/scripts/kconfig/kconfig.py" ] && \
-	   ! grep -q 'choice symbol' "$(ZEPHYR_BASE)/scripts/kconfig/kconfig.py"; then \
-		echo "Note: applying local kconfig warning patch"; \
-		export ZEPHYR_BASE="$(ZEPHYR_BASE)" && bash "$(ZEPHYR_DIR)/patch_kconfig.sh" || \
-			(echo "Warning: patch_kconfig.sh failed; continuing"; true); \
-	fi
+	@ZEPHYR_BASE="$(ZEPHYR_BASE)" bash "$(ZEPHYR_DIR)/patch_kconfig.sh" 2>&1 | grep -v '^$$' || true
 	@mkdir -p "$(BUILD_DIR)"
 	@. "$(ZEPHYR_VENV)/bin/activate" && \
 		export ZEPHYR_BASE="$(ZEPHYR_BASE)" && \

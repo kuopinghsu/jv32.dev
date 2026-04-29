@@ -251,11 +251,13 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
         build-vpi-jtag build-vpi-cjtag build-vpi-jtag-cov \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
+        rtl-zephyr-% rtl-zephyr-all sim-zephyr-% sim-zephyr-all \
+        compare-zephyr-% compare-zephyr-all zephyr-list-tests \
         submodule-init extra-tests openocd-test syn fpga \
         build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all extra-tests arch-test-run openocd-test
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all extra-tests arch-test-run openocd-test
 
 extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
@@ -868,6 +870,130 @@ compare-freertos-all:
 		echo "compare-freertos-all: one or more tests failed."; exit 1; \
 	fi; \
 	echo "compare-freertos-all: all tests passed."
+
+# ============================================================================
+# Zephyr RTOS tests
+# ============================================================================
+ZEPHYR_DIR = rtos/zephyr
+
+# Build a Zephyr ELF via the Zephyr Makefile
+$(BUILD_DIR)/zephyr-%.elf: FORCE
+	@$(MAKE) -C $(ZEPHYR_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
+zephyr-list-tests:
+	@$(MAKE) -C $(ZEPHYR_DIR) --no-print-directory list-tests
+
+# Internal helper used by rtl-zephyr-% and rtl-zephyr-all
+.PHONY: __rtl-zephyr-run
+__rtl-zephyr-run: build-rtl
+	@if [ -z "$(TEST)" ]; then \
+		echo "ERROR: TEST is required (e.g. make __rtl-zephyr-run TEST=hello)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(ZEPHYR_DIR) --no-print-directory build TEST=$(TEST) BUILD_DIR=$(BUILD_DIR_ABS)
+	@echo "=========================================="
+	@echo "Running Zephyr test '$(TEST)' with RTL simulator"
+	@echo "=========================================="
+	@cd $(BUILD_DIR) && ./jv32soc \
+	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
+	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(TIMEOUT_ARG) \
+	    zephyr-$(TEST).elf
+	@echo "=========================================="
+	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
+	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+
+# Run a Zephyr test with the RTL simulator
+rtl-zephyr-%:
+	@$(MAKE) --no-print-directory __rtl-zephyr-run TEST=$*
+
+# Run all Zephyr tests with the RTL simulator
+rtl-zephyr-all: build-rtl
+	@echo "=========================================="
+	@echo "Running all Zephyr tests with RTL simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(ZEPHYR_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[rtl-zephyr-all] $$t"; \
+		if ! $(MAKE) --no-print-directory __rtl-zephyr-run TEST=$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "rtl-zephyr-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "rtl-zephyr-all: all tests passed."
+
+# Run a Zephyr test with the software simulator
+sim-zephyr-%: $(BUILD_DIR)/zephyr-%.elf $(JV32SIM)
+	@echo "=========================================="
+	@echo "Running Zephyr test '$*' with software simulator"
+	@echo "=========================================="
+	$(JV32SIM) $(SIM_MAX_INSNS_ARG) $(BUILD_DIR)/zephyr-$*.elf
+	@echo "=========================================="
+	@echo "Done."
+	@echo "=========================================="
+
+# Run all Zephyr tests with the software simulator
+sim-zephyr-all: sim-build
+	@echo "=========================================="
+	@echo "Running all Zephyr tests with software simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(ZEPHYR_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[sim-zephyr-all] $$t"; \
+		if ! $(MAKE) --no-print-directory sim-zephyr-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "sim-zephyr-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "sim-zephyr-all: all tests passed."
+
+# Compare software-vs-RTL traces for a Zephyr test
+compare-zephyr-%: $(BUILD_DIR)/zephyr-%.elf $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo " JV32 Zephyr Trace Comparison: $*"
+	@echo "=========================================="
+	@echo ""
+	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
+	    $(TIMEOUT_ARG) \
+	    $(BUILD_DIR)/zephyr-$*.elf 2>/dev/null \
+	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --rtl-hints $(RTL_TRACE_FILE) \
+	    $(SIM_MAX_INSNS_ARG) \
+	    $(BUILD_DIR)/zephyr-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[3/3] Comparing traces..."
+	@python3 scripts/trace_compare.py \
+	    $(BUILD_DIR)/sim_trace.txt \
+	    $(RTL_TRACE_FILE) \
+	    || exit 1
+
+# Compare software-vs-RTL traces for all Zephyr tests
+compare-zephyr-all:
+	@echo "=========================================="
+	@echo "Comparing Zephyr traces for all tests"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(ZEPHYR_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[compare-zephyr-all] $$t"; \
+		if ! $(MAKE) --no-print-directory compare-zephyr-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "compare-zephyr-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "compare-zephyr-all: all tests passed."
 
 # ============================================================================
 # Submodule initialization (avoids pulling large nested submodules like llvm-project)
