@@ -291,7 +291,7 @@ static void sem_test(void)
 
     stats_reset(&s);
     for (int i = 0; i < TEST_ITER; i++) {
-        k_yield();  /* let waiter block */
+        k_sleep(K_TICKS(1));  /* let waiter run and block */
         uint32_t t0 = get_cycles();
         k_sem_give(&g_sem);
         stats_update(&s, get_cycles() - t0);
@@ -389,7 +389,7 @@ static void mutex_test(void)
     stats_t s; stats_reset(&s);
     for (int i = 0; i < TEST_ITER; i++) {
         k_mutex_lock(&g_mutex, K_FOREVER);
-        k_yield();  /* let waiter block on mutex */
+        k_sleep(K_TICKS(1));  /* let waiter run and block on mutex */
         uint32_t t0 = get_cycles();
         k_mutex_unlock(&g_mutex);
         stats_update(&s, get_cycles() - t0);
@@ -491,11 +491,11 @@ static void event_test(void)
 
     stats_t s; stats_reset(&s);
     for (int i = 0; i < TEST_ITER; i++) {
-        k_yield();  /* let waiter block */
+        k_sleep(K_TICKS(1));  /* let waiter run and block */
         uint32_t t0 = get_cycles();
         k_event_set(&g_event, EVT_ALL_BITS);
         stats_update(&s, get_cycles() - t0);
-        k_yield();  /* let waiter clear and re-block */
+        k_sleep(K_TICKS(1));  /* let waiter consume event and re-block */
     }
     k_sem_take(&g_done, K_FOREVER);
     printk("Event set with thread wake           : avg %u max %u cycles\n",
@@ -593,7 +593,7 @@ static void msgq_test(void)
 
     stats_t s; stats_reset(&s);
     for (int i = 0; i < TEST_ITER; i++) {
-        k_yield();  /* let receiver block */
+        k_sleep(K_TICKS(1));  /* let receiver run and block */
         uint32_t t0 = get_cycles();
         k_msgq_put(&g_msgq, &msg, K_NO_WAIT);
         stats_update(&s, get_cycles() - t0);
