@@ -834,10 +834,10 @@ CoreMark/MHz) and neutral-to-negligible for Dhrystone.  The default setting of
 | Configuration | CoreMark/MHz | CoreMark CPI | DMIPS/MHz | Dhry CPI
 
 | `rv32ima` + Zba/Zbb/Zbs, BP=1+RAS, FAST_MUL=1 MUL_MC=0, FAST_DIV=1, FAST_SHIFT=1, IBUF_EN=1 *(B-ext, max perf)*
-| *3.78* | *1.100* | *1.41* | *1.330*
+| *3.80* | *1.093* | *1.77* | *1.245*
 
 | `rv32ima`, BP=1+RAS, FAST_MUL=1 MUL_MC=0, FAST_DIV=1, FAST_SHIFT=1, IBUF_EN=1 *(no B-ext baseline)*
-| 3.75 | 1.097 | 1.41 | 1.328
+| 3.77 | 1.089 | 1.77 | 1.244
 
 | `rv32imac` + Zba/Zbb/Zbs, BP=1+RAS, IBUF_EN=0 *(B-ext + compressed)*
 | 3.70 | 1.127 | 1.41 | 1.339
@@ -854,7 +854,8 @@ CoreMark/MHz) and neutral-to-negligible for Dhrystone.  The default setting of
 
 NOTE: Rows marked `IBUF_EN=0` were measured before the IBUF feature was added and
 represent the baseline for that sub-analysis; their relative deltas remain valid.
-Rows with `IBUF_EN=1` reflect the current default.
+Rows with `IBUF_EN=1` reflect the current default.  The top two rows also include the
+2-entry store queue improvement; older rows pre-date that change.
 
 [cols="3,1,1", options="header"]
 |===
@@ -864,4 +865,5 @@ Rows with `IBUF_EN=1` reflect the current default.
 | Return Address Stack (2-entry RAS) | +0.1 % CPI | +1.0 % CPI
 | Uncompressed vs compressed (rv32ima vs rv32imac) | +2.0 % CPI (simulation only) | +1.1 % CPI (simulation only)
 | Instruction buffer (IBUF_EN=0 → 1) | +0.2 % CoreMark | negligible
+| 2-entry store queue (gap=3 → 1 for sw→sw) | +0.6 % CPI | +6.5 % CPI
 |===

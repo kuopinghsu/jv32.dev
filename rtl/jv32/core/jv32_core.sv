@@ -1115,13 +1115,13 @@ module jv32_core #(
         endcase
     end
 
-    // Dmem driver
-    logic        sb_valid;
-    logic [31:0] sb_addr;
-    logic [31:0] sb_wdata;
-    logic [ 3:0] sb_wstrb;
-    logic        sb_fire;
-    logic        sb_commit_ex;
+    // Dmem driver — 2-entry store queue (slot 0 = head/drain, slot 1 = tail)
+    logic [1:0]       sb_valid;
+    logic [1:0][31:0] sb_addr;
+    logic [1:0][31:0] sb_wdata;
+    logic [1:0][ 3:0] sb_wstrb;
+    logic             sb_fire;
+    logic             sb_commit_ex;
 
     function automatic logic is_tcm_addr(input logic [31:0] addr);
         logic hit_iram, hit_dram;
@@ -1136,6 +1136,11 @@ module jv32_core #(
     assign sb_commit_ex = ex_wb_r.valid && ex_wb_r.mem_write && !ex_wb_r.is_amo && !irq_cancel && is_tcm_addr(
         ex_wb_r.mem_addr
     );
+
+    // Write-strobe helper for the enqueue path (shared by both slots).
+    logic [3:0] sb_enqueue_wstrb;
+    assign sb_enqueue_wstrb = (ex_wb_r.mem_op == MEM_BYTE) ? (4'b0001 << ex_wb_r.mem_addr[1:0]) :
+                              (ex_wb_r.mem_op == MEM_HALF) ? (4'b0011 << ex_wb_r.mem_addr[1:0]) : 4'b1111;
 
     // D-path pre-advance: issue a TCM load request from EX (using mem_addr_ex) one
     // cycle before the instruction enters WB.  The TCM SRAM responds with a 1-cycle
@@ -1166,7 +1171,7 @@ module jv32_core #(
     logic d_preload_valid_base;
     assign d_preload_valid_base = if_ex_r.valid && dec_mem_read && !ex_exception
                                   && !ex_stall && !load_use_stall && !wb_redirect
-                                  && !sb_valid
+                                  && !sb_valid[0]
                                   && in_dram_addr(
         mem_addr_ex
     );
@@ -1186,16 +1191,22 @@ module jv32_core #(
         sb_fire          = 1'b0;
         d_preload_active = 1'b0;
 
-        // Drain the queued relaxed store independently from EX/WB progress.
-        if (sb_valid) begin
+        // Drain the head (slot 0) of the 2-entry store queue.
+        if (sb_valid[0]) begin
             dmem_req_valid = 1'b1;
             dmem_req_write = 1'b1;
-            dmem_req_addr  = sb_addr;
-            dmem_req_wdata = sb_wdata;
-            dmem_req_wstrb = sb_wstrb;
+            dmem_req_addr  = sb_addr[0];
+            dmem_req_wdata = sb_wdata[0];
+            dmem_req_wstrb = sb_wstrb[0];
             sb_fire        = dmem_resp_valid;
-            // If EX/WB currently needs memory, hold it until the older queued store drains.
-            if (ex_wb_r.valid && (ex_wb_r.mem_read || ex_wb_r.mem_write || ex_wb_r.is_amo)) dmem_stall = 1'b1;
+
+            // Stall only if WB has a memory op that needs the D-bus.
+            // TCM stores can retire into slot 1 (no D-bus needed), so they are
+            // allowed through as long as slot 1 is free.
+            if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
+                if (ex_wb_r.mem_read || ex_wb_r.is_amo || (ex_wb_r.mem_write && (!sb_commit_ex || sb_valid[1])))
+                    dmem_stall = 1'b1;
+            end
         end
         else if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
             if (ex_wb_r.is_amo) begin
@@ -1276,7 +1287,8 @@ module jv32_core #(
                 // TCM stores are enqueued and retired without waiting for a response.
                 // Non-TCM stores stay strict to preserve precise fault behavior.
                 if (sb_commit_ex) begin
-                    if (sb_valid) dmem_stall = 1'b1;
+                    // Queue is empty here (else-if branch requires !sb_valid[0]).
+                    // Store retires immediately into slot 0; no D-bus needed.
                 end
                 else begin
                     dmem_req_valid = 1'b1;
@@ -1307,21 +1319,40 @@ module jv32_core #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sb_valid <= 1'b0;
-            sb_addr  <= 32'h0;
-            sb_wdata <= 32'h0;
-            sb_wstrb <= 4'h0;
+            sb_valid <= 2'b00;
+            sb_addr  <= '{default: 32'h0};
+            sb_wdata <= '{default: 32'h0};
+            sb_wstrb <= '{default: 4'h0};
         end
         else begin
-            if (sb_fire) sb_valid <= 1'b0;
+            // Drain: shift slot 1 → slot 0 and clear slot 1.
+            if (sb_fire) begin
+                sb_valid[0] <= sb_valid[1];
+                sb_addr[0]  <= sb_addr[1];
+                sb_wdata[0] <= sb_wdata[1];
+                sb_wstrb[0] <= sb_wstrb[1];
+                sb_valid[1] <= 1'b0;
+            end
 
-            // Queue relaxed store on WB commit when the store queue is free.
-            if (wb_retire && sb_commit_ex && !sb_valid) begin
-                sb_valid <= 1'b1;
-                sb_addr <= ex_wb_r.mem_addr;
-                sb_wdata <= ex_wb_r.store_data;
-                sb_wstrb <= ex_wb_r.mem_op == MEM_BYTE ? (4'b0001 << ex_wb_r.mem_addr[1:0]) :
-                           ex_wb_r.mem_op == MEM_HALF ? (4'b0011 << ex_wb_r.mem_addr[1:0]) : 4'b1111;
+            // Enqueue relaxed TCM store on WB commit.
+            if (wb_retire && sb_commit_ex) begin
+                if (!sb_valid[0] || (sb_fire && !sb_valid[1])) begin
+                    // Enqueue to slot 0:
+                    //   - queue was empty, OR
+                    //   - drain just fired and slot 1 was also empty
+                    sb_valid[0] <= 1'b1;
+                    sb_addr[0]  <= ex_wb_r.mem_addr;
+                    sb_wdata[0] <= ex_wb_r.store_data;
+                    sb_wstrb[0] <= sb_enqueue_wstrb;
+                end
+                else begin
+                    // Slot 0 occupied (or firing but slot 1 had data):
+                    // enqueue to slot 1.  Stall logic guarantees sb_valid[1]=0.
+                    sb_valid[1] <= 1'b1;
+                    sb_addr[1]  <= ex_wb_r.mem_addr;
+                    sb_wdata[1] <= ex_wb_r.store_data;
+                    sb_wstrb[1] <= sb_enqueue_wstrb;
+                end
             end
         end
     end
@@ -1334,7 +1365,7 @@ module jv32_core #(
             lr_valid      <= 1'b0;
             lr_addr       <= 32'h0;
         end
-        else if (ex_wb_r.valid && ex_wb_r.is_amo && !sb_valid) begin
+        else if (ex_wb_r.valid && ex_wb_r.is_amo && !(|sb_valid)) begin
             case (amo_state)
                 AMO_IDLE: begin
                     if (ex_wb_r.amo_op == AMO_LR && dmem_resp_valid) begin

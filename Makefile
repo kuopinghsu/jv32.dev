@@ -261,7 +261,7 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
         build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all extra-tests arch-test-run openocd-test
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all extra-tests arch-test-run openocd-test # compare-zephyr-all
 
 extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all

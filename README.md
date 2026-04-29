@@ -22,8 +22,8 @@ Measured on the Verilator RTL simulator at 80 MHz with maximum-performance setti
 
 | Benchmark | Score | CPI |
 |---|---|---|
-| CoreMark 1.0 | **3.78 CoreMark/MHz** | 1.100 |
-| Dhrystone 2.1 | **1.41 DMIPS/MHz** | 1.330 |
+| CoreMark 1.0 | **3.80 CoreMark/MHz** | 1.093 |
+| Dhrystone 2.1 | **1.77 DMIPS/MHz** | 1.245 |
 
 See [docs/performance_analysis.pdf](docs/performance_analysis.pdf) for the full analysis,
 including branch-predictor impact, B-extension impact, compressed-instruction overhead,
