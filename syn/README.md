@@ -192,19 +192,18 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | NAND2-eq | Area (µm²) |
 |---|---:|---:|
-| **jv32_soc** | **38,731** | **30,907.60** |
-| ↳ jv32_top | 29,191 | 23,294.42 |
-| &nbsp;&nbsp;↳ jv32_core | 25,491 | 20,342.08 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 5,765 | 4,600.47 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,048 | 4,028.04 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,041 | 1,628.72 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 1,636 | 1,305.79 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 307 | 244.99 |
+| **jv32_soc** | **39,888** | **31,830.36** |
+| ↳ jv32_top | 30,138 | 24,050.39 |
+| &nbsp;&nbsp;↳ jv32_core | 26,425 | 21,086.88 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 5,835 | 4,656.60 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 4,995 | 3,986.01 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,054 | 1,639.36 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 1,533 | 1,223.07 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 436 | 347.66 |
 | &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
-| ↳ axi_clic | 5,257 | 4,195.35 |
-| ↳ axi_uart | 3,701 | 2,953.13 |
+| ↳ axi_clic | 5,446 | 4,346.17 |
+| ↳ axi_uart | 3,721 | 2,969.09 |
 | ↳ axi_xbar | 568 | 453.00 |
-| ↳ axi_magic | 0 | 0.00 |
 
 ### Clock Gating Summary
 
@@ -213,9 +212,9 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| **jv32_soc** | **2,674** | **2,358** | **88.2%** |
-| ↳ jv32_top | 1,856 | 1,612 | 86.9% |
-| &nbsp;&nbsp;↳ jv32_core | 1,508 | 1,341 | 88.9% |
+| **jv32_soc** | **2,776** | **2,390** | **86.1%** |
+| ↳ jv32_top | 1,958 | 1,644 | 84.0% |
+| &nbsp;&nbsp;↳ jv32_core | 1,609 | 1,372 | 85.3% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 480 | 480 | 100.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 336 | 208 | 61.9% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 51 | 51 | 100.0% |
@@ -225,7 +224,6 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 | ↳ axi_clic | 361 | 297 | 82.3% |
 | ↳ axi_uart | 386 | 382 | 99.0% |
 | ↳ axi_xbar | 69 | 67 | 97.1% |
-| ↳ axi_magic | 0 | 0 | 0.0% |
 
 ---
 
@@ -241,22 +239,21 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | NAND2-eq | Area (µm²) |
 |---|---:|---:|
-| **jv32_soc** | **78,090** | **62,315.82** |
-| ↳ jv32_top | 50,749 | 40,497.44 |
-| &nbsp;&nbsp;↳ jv32_core | 47,049 | 37,545.10 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 15,238 | 12,160.19 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 12,190 | 9,727.35 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,008 | 3,996.65 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,046 | 1,632.97 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 314 | 250.57 |
+| **jv32_soc** | **84,933** | **67,776.27** |
+| ↳ jv32_top | 57,561 | 45,933.68 |
+| &nbsp;&nbsp;↳ jv32_core | 53,835 | 42,960.06 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 17,463 | 13,935.74 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 12,188 | 9,726.02 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,057 | 4,035.75 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,069 | 1,651.06 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 436 | 347.66 |
 | &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
-| ↳ jtag_top | 15,846 | 12,645.37 |
-| &nbsp;&nbsp;↳ jtag_tap | 15,846 | 12,645.37 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 15,634 | 12,475.93 |
-| ↳ axi_clic | 5,281 | 4,214.24 |
-| ↳ axi_uart | 3,693 | 2,947.28 |
+| ↳ jtag_top | 15,872 | 12,665.86 |
+| &nbsp;&nbsp;↳ jtag_tap | 15,872 | 12,665.86 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 15,660 | 12,496.41 |
+| ↳ axi_clic | 5,289 | 4,220.89 |
+| ↳ axi_uart | 3,690 | 2,944.35 |
 | ↳ axi_xbar | 568 | 453.00 |
-| ↳ axi_magic | 0 | 0.00 |
 
 ### Clock Gating Summary
 
@@ -265,9 +262,9 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| **jv32_soc** | **5,624** | **4,590** | **81.6%** |
-| ↳ jv32_top | 2,924 | 2,675 | 91.5% |
-| &nbsp;&nbsp;↳ jv32_core | 2,576 | 2,404 | 93.3% |
+| **jv32_soc** | **5,986** | **4,914** | **82.1%** |
+| ↳ jv32_top | 3,286 | 2,999 | 91.3% |
+| &nbsp;&nbsp;↳ jv32_core | 2,937 | 2,727 | 92.8% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 403 | 402 | 99.8% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 992 | 992 | 100.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 336 | 208 | 61.9% |
@@ -280,9 +277,8 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 | ↳ axi_clic | 361 | 297 | 82.3% |
 | ↳ axi_uart | 386 | 382 | 99.0% |
 | ↳ axi_xbar | 69 | 67 | 97.1% |
-| ↳ axi_magic | 0 | 0 | 0.0% |
 
-The overall 81.6% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
+The overall 82.1% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
 
 #### Why `jv32_csr` is lower (~62%)
 
