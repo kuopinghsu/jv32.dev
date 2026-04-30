@@ -1900,35 +1900,39 @@ module jv32_core #(
 
             // IRQ-taken trace: fires for one cycle (registered) when the core accepts
             // an interrupt and squashes the instruction currently in WB.
+            // Control signals: cleared when trace_en=0 (uniform reset/else pattern
+            // avoids Yosys proc_arst residual edge-sensitivity issue).
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    trace_irq_taken      <= 1'b0;
-                    trace_irq_cause      <= 32'h0;
-                    trace_irq_epc        <= 32'h0;
-                    trace_irq_store_we   <= 1'b0;
-                    trace_irq_store_addr <= 32'h0;
-                    trace_irq_store_data <= 32'h0;
+                    trace_irq_taken    <= 1'b0;
+                    trace_irq_store_we <= 1'b0;
                 end
-                else if (trace_en) begin
+                else begin
                     // Gate on !ex_stall: the CSR only commits the interrupt when
                     // wb_retire=1 (wb_valid=1 in jv32_csr).  If ex_stall=1 (e.g.
                     // sb_valid draining while a DRAM load is in WB), irq_cancel is
                     // asserted one cycle early before the interrupt is accepted.
                     // Without this gate a spurious extra hint fires, causing the
                     // software sim to replay two interrupts for one RTL event.
-                    trace_irq_taken      <= irq_cancel && !ex_stall;
-                    trace_irq_cause      <= csr_irq_cause;
-                    trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
-
+                    trace_irq_taken <= trace_en ? (irq_cancel && !ex_stall) : 1'b0;
                     // squashed-store: the interrupt fires in the 2nd WB cycle of a
                     // store (dmem_resp_valid=1 means the DRAM write already committed)
-                    trace_irq_store_we   <= irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid;
+                    trace_irq_store_we <= trace_en ? (irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid) : 1'b0;
+                end
+            end
+            // IRQ data signals: clock-enabled by trace_en (CE=0 saves power).
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    trace_irq_cause      <= 32'h0;
+                    trace_irq_epc        <= 32'h0;
+                    trace_irq_store_addr <= 32'h0;
+                    trace_irq_store_data <= 32'h0;
+                end
+                else if (trace_en) begin
+                    trace_irq_cause      <= csr_irq_cause;
+                    trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
                     trace_irq_store_addr <= ex_wb_r.mem_addr;
                     trace_irq_store_data <= trace_mem_data_c;
-                end
-                else begin
-                    trace_irq_taken    <= 1'b0;
-                    trace_irq_store_we <= 1'b0;
                 end
             end
 
@@ -1978,24 +1982,26 @@ module jv32_core #(
 
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    trace_irq_taken      <= 1'b0;
+                    trace_irq_taken    <= 1'b0;
+                    trace_irq_store_we <= 1'b0;
+                end
+                else begin
+                    trace_irq_taken <= trace_en ? (irq_cancel && !ex_stall) : 1'b0;
+                    trace_irq_store_we <= trace_en ? (irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid) : 1'b0;
+                end
+            end
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
                     trace_irq_cause      <= 32'h0;
                     trace_irq_epc        <= 32'h0;
-                    trace_irq_store_we   <= 1'b0;
                     trace_irq_store_addr <= 32'h0;
                     trace_irq_store_data <= 32'h0;
                 end
                 else if (trace_en) begin
-                    trace_irq_taken      <= irq_cancel && !ex_stall;
                     trace_irq_cause      <= csr_irq_cause;
                     trace_irq_epc        <= ex_wb_r.pc;
-                    trace_irq_store_we   <= irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid;
                     trace_irq_store_addr <= ex_wb_r.mem_addr;
                     trace_irq_store_data <= trace_mem_data_c;
-                end
-                else begin
-                    trace_irq_taken    <= 1'b0;
-                    trace_irq_store_we <= 1'b0;
                 end
             end
 `else
