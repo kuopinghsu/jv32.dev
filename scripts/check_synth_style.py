@@ -32,6 +32,21 @@ Check 2 — Partial reset in always_ff:
     - Any reset signal name matching rst*/reset* (case-insensitive)
     - begin/end block and empty-body (;) reset styles
 
+Check 3 — Async-reset condition mixing:
+  Detect always_ff blocks where the async reset condition is combined with
+  other signals via logical OR/AND.  Example violation:
+      always_ff @(posedge clk or negedge rst_n) begin
+          if (!rst_n || flush) begin   // ← BAD: reset mixed with flush
+              ...
+          end
+      end
+  Yosys's proc_arst pass requires a pure single-signal async reset to convert
+  the negedge sync to a level-sensitive reset.  Compound conditions prevent
+  the conversion, leaving both edge syncs and triggering proc_dff's
+  "Multiple edge sensitive events found for this signal!" error.
+  Fix: split into separate conditions, e.g.
+      if (!rst_n) ... else if (flush) ...
+
 Usage:
     python3 check_synth_style.py <file1.sv> [file2.sv ...]
     Exit 0 = clean, Exit 1 = violations found.
@@ -550,12 +565,118 @@ def check_ff_partial_reset(path: str) -> list:
 
     return violations
 
+# =============================================================================
+# Check 3 — Async-reset condition mixing
+# =============================================================================
+
+def check_ff_async_reset_mix(path: str) -> list:
+    """
+    Check 3: Async reset condition must not be mixed with other signals.
+
+    For each always_ff block with an async reset in its sensitivity list
+    (e.g. ``negedge rst_n``), check the first 'if' condition at depth 1.
+    If the condition references the reset signal AND contains a logical
+    operator (||, &&), report a violation.
+
+    Returns a list of ('async-mix', path, ff_line_1based, cond_text) tuples.
+    """
+    try:
+        with open(path) as f:
+            raw_lines = f.readlines()
+    except OSError as e:
+        print(f'ERROR: cannot open {path}: {e}', file=sys.stderr)
+        return []
+
+    clean_lines = [strip_comments_and_strings(l) for l in raw_lines]
+    n = len(clean_lines)
+    violations = []
+
+    i = 0
+    while i < n:
+        cl_i = clean_lines[i]
+        if not re.search(r'\balways_ff\b', cl_i):
+            i += 1
+            continue
+
+        ff_line = i + 1
+
+        # Extract sensitivity list (may span multiple lines)
+        sens = cl_i
+        j = i
+        while ')' not in sens and j + 1 < n:
+            j += 1
+            sens += ' ' + clean_lines[j]
+        rst_sig = _extract_rst_sig(sens)
+
+        # Only check blocks with an async reset in the sensitivity list
+        if not rst_sig:
+            i = j + 1
+            continue
+
+        # Scan forward for the first 'if' after the first 'begin'
+        k = j
+        while k < n and 'begin' not in clean_lines[k]:
+            k += 1
+        if k >= n:
+            i = j + 1
+            continue
+
+        # Look for the first 'if (...)' on the next non-empty lines.
+        # The condition may span multiple lines; collect until parens balance.
+        m_pos = k + 1
+        # Also allow the 'if' on the same line as 'begin'
+        scan_start = k
+        found_if = False
+        for s in range(scan_start, min(scan_start + 20, n)):
+            line_s = clean_lines[s]
+            if_m = re.search(r'\bif\s*\(', line_s)
+            if if_m:
+                # Collect the full condition (paren-balanced)
+                cond_text = line_s[if_m.end()-1:]  # starts with '('
+                depth = 0
+                cond_acc = ''
+                done = False
+                t = s
+                idx_in_line = if_m.end() - 1
+                while t < n and not done:
+                    src = clean_lines[t][idx_in_line:] if t == s else clean_lines[t]
+                    for ch in src:
+                        cond_acc += ch
+                        if ch == '(':
+                            depth += 1
+                        elif ch == ')':
+                            depth -= 1
+                            if depth == 0:
+                                done = True
+                                break
+                    if not done:
+                        t += 1
+                        idx_in_line = 0
+                # cond_acc is like "(!rst_n || flush)"
+                inner = cond_acc.strip()
+                if inner.startswith('(') and inner.endswith(')'):
+                    inner = inner[1:-1].strip()
+                # Check if reset signal is referenced
+                refs_rst = bool(re.search(r'\b' + re.escape(rst_sig) + r'\b',
+                                          inner))
+                if refs_rst:
+                    # Check for logical operators (mixing)
+                    if re.search(r'\|\||&&', inner):
+                        violations.append(('async-mix', path, s + 1, inner))
+                found_if = True
+                break
+
+        i = j + 1 if not found_if else (s + 1)
+
+    return violations
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(
         description='Synthesis coding-style checks for SystemVerilog.\n'
                     '  Check 1: signal declaration order\n'
-                    '  Check 2: partial reset in always_ff blocks')
+                    '  Check 2: partial reset in always_ff blocks\n'
+                    '  Check 3: async-reset condition mixing')
     ap.add_argument('files', nargs='+', help='SystemVerilog source files to check')
     ap.add_argument('--quiet', '-q', action='store_true',
                     help='Only print violations, not per-file OK messages')
@@ -563,6 +684,8 @@ def main():
                     help='Skip declaration-order check (Check 1)')
     ap.add_argument('--no-reset', action='store_true',
                     help='Skip partial-reset check (Check 2)')
+    ap.add_argument('--no-async-mix', action='store_true',
+                    help='Skip async-reset condition mixing check (Check 3)')
     args = ap.parse_args()
 
     total_violations = 0
@@ -576,16 +699,24 @@ def main():
         if not args.no_reset:
             file_viols += check_ff_partial_reset(path)
 
+        if not args.no_async_mix:
+            file_viols += check_ff_async_reset_mix(path)
+
         if file_viols:
             for v in sorted(file_viols, key=lambda x: x[2]):
                 if v[0] == 'decl':
                     _, f, use_ln, name, decl_ln = v
                     print(f'{f}:{use_ln}: [decl-order] \'{name}\' used before '
                           f'declaration (declared at line {decl_ln})')
-                else:  # 'reset'
+                elif v[0] == 'reset':
                     _, f, ff_ln, name = v
                     print(f'{f}:{ff_ln}: [partial-reset] \'{name}\' assigned in '
                           f'always_ff but missing from reset branch')
+                else:  # 'async-mix'
+                    _, f, if_ln, cond = v
+                    print(f'{f}:{if_ln}: [async-reset-mix] async reset condition '
+                          f'mixed with other signals: \'if ({cond})\' — split '
+                          f'into separate if/else-if conditions')
             total_violations += len(file_viols)
         elif not args.quiet:
             print(f'OK: {os.path.basename(path)}')

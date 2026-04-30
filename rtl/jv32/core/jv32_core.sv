@@ -1606,7 +1606,11 @@ module jv32_core #(
             logic [31:0] ibuf_fault_pc_r;
 
             always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n || rvc_flush) begin
+                if (!rst_n) begin
+                    ibuf_fault_pending_r <= 1'b0;
+                    ibuf_fault_pc_r      <= '0;
+                end
+                else if (rvc_flush) begin
                     ibuf_fault_pending_r <= 1'b0;
                     ibuf_fault_pc_r      <= '0;
                 end
@@ -1636,7 +1640,14 @@ module jv32_core #(
 
             // 2-entry shift-register FIFO
             always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n || rvc_flush) begin
+                if (!rst_n) begin
+                    ibuf_valid    <= 2'b00;
+                    ibuf_data[0]  <= '0;
+                    ibuf_data[1]  <= '0;
+                    ibuf_pc_ff[0] <= '0;
+                    ibuf_pc_ff[1] <= '0;
+                end
+                else if (rvc_flush) begin
                     ibuf_valid    <= 2'b00;
                     ibuf_data[0]  <= '0;
                     ibuf_data[1]  <= '0;
