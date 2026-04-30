@@ -1852,12 +1852,33 @@ module jv32_core #(
 
     generate
         if (TRACE_EN) begin : gen_trace_outputs
+            // Control signals: updated every cycle (cleared when trace_en=0).
+            // Split from the data block so that each always_ff has a uniform
+            // reset + else structure, which prevents Yosys proc_arst from
+            // leaving residual edge-sensitive sync entries for trace_pc etc.
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    trace_valid_r  <= 1'b0;
-                    trace_reg_we   <= 1'b0;
-                    trace_mem_we   <= 1'b0;
-                    trace_mem_re   <= 1'b0;
+                    trace_valid_r <= 1'b0;
+                    trace_reg_we  <= 1'b0;
+                    trace_mem_we  <= 1'b0;
+                    trace_mem_re  <= 1'b0;
+                end
+                else begin
+                    trace_valid_r <= trace_en ? trace_retire : 1'b0;
+                    trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
+                    // AMO instructions are logged as memory writes (matching jv32sim which
+                    // emits trace_is_store=true for all AMO/LR/SC). The write data is
+                    // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
+                    // for LR (jv32sim writes the loaded value back and logs it as a store).
+                    trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
+                    trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
+                end
+            end
+
+            // Data registers: clock-enabled by trace_en (CE=0 when trace_en=0 saves power).
+            // Two-branch (reset / else-if CE) pattern is unambiguous to Yosys proc_arst.
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
                     trace_pc       <= 32'h0;
                     trace_rd       <= 5'h0;
                     trace_rd_data  <= 32'h0;
@@ -1866,29 +1887,12 @@ module jv32_core #(
                     trace_mem_data <= 32'h0;
                 end
                 else if (trace_en) begin
-                    trace_valid_r  <= trace_retire;
-                    trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
-
-                    // AMO instructions are logged as memory writes (matching jv32sim which
-                    // emits trace_is_store=true for all AMO/LR/SC). The write data is
-                    // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
-                    // for LR (jv32sim writes the loaded value back and logs it as a store).
-                    trace_mem_we   <= trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo);
-                    trace_mem_re   <= trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo;
                     trace_pc       <= ex_wb_r.pc;
                     trace_rd       <= ex_wb_r.rd_addr;
                     trace_rd_data  <= rf_wdata;
                     trace_instr    <= ex_wb_r.orig_instr;
                     trace_mem_addr <= ex_wb_r.mem_addr;
                     trace_mem_data <= trace_mem_data_c;
-                end
-                else begin
-                    // trace_en=0: clear valid/we flags so no spurious events appear;
-                    // data registers are not clocked (CE=0) to save power.
-                    trace_valid_r <= 1'b0;
-                    trace_reg_we  <= 1'b0;
-                    trace_mem_we  <= 1'b0;
-                    trace_mem_re  <= 1'b0;
                 end
             end
 
@@ -1938,10 +1942,21 @@ module jv32_core #(
             // the synthesis tool — gate count is unchanged.
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    trace_valid_r  <= 1'b0;
-                    trace_reg_we   <= 1'b0;
-                    trace_mem_we   <= 1'b0;
-                    trace_mem_re   <= 1'b0;
+                    trace_valid_r <= 1'b0;
+                    trace_reg_we  <= 1'b0;
+                    trace_mem_we  <= 1'b0;
+                    trace_mem_re  <= 1'b0;
+                end
+                else begin
+                    trace_valid_r <= trace_en ? trace_retire : 1'b0;
+                    trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
+                    trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
+                    trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
+                end
+            end
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
                     trace_pc       <= 32'h0;
                     trace_rd       <= 5'h0;
                     trace_rd_data  <= 32'h0;
@@ -1950,22 +1965,12 @@ module jv32_core #(
                     trace_mem_data <= 32'h0;
                 end
                 else if (trace_en) begin
-                    trace_valid_r  <= trace_retire;
-                    trace_reg_we   <= trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0);
-                    trace_mem_we   <= trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo);
-                    trace_mem_re   <= trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo;
                     trace_pc       <= ex_wb_r.pc;
                     trace_rd       <= ex_wb_r.rd_addr;
                     trace_rd_data  <= rf_wdata;
                     trace_instr    <= ex_wb_r.orig_instr;
                     trace_mem_addr <= ex_wb_r.mem_addr;
                     trace_mem_data <= trace_mem_data_c;
-                end
-                else begin
-                    trace_valid_r <= 1'b0;
-                    trace_reg_we  <= 1'b0;
-                    trace_mem_we  <= 1'b0;
-                    trace_mem_re  <= 1'b0;
                 end
             end
 
