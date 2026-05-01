@@ -1347,7 +1347,7 @@ arch-test-%:
 # Requires a patched OpenOCD with cJTAG VPI support:
 #   https://github.com/kuopinghsu/openocd
 openocd-test: build-vpi-jtag build-vpi-cjtag
-	@$(MAKE) -C openocd --no-print-directory all
+	@$(MAKE) -C openocd --no-print-directory all-with-gdb
 
 # ASIC synthesis and place-and-route (OpenLane2 + Nangate 45nm).
 # Configure OPENRAM, OPENLANE, NANGATE_HOME in env.config before running.
