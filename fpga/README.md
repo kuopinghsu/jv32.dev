@@ -311,15 +311,68 @@ openocd -f fpga/jtag/jv32_fpga_jtag.cfg -c "init; halt"
 
 ---
 
+## Debugging with GDB on FPGA
+
+The GDB test scripts in `openocd/` work against the FPGA unchanged. The only
+difference from the VPI simulation tests is the adapter: use the FPGA OpenOCD
+config instead of `jv32.cfg` (which targets the VPI TCP socket).
+
+**1. Start OpenOCD with GDB server enabled**
+
+```bash
+# cJTAG (default bitstream)
+openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \
+        -c "gdb_port 3333" \
+        -c "tcl_port disabled" \
+        -c "telnet_port disabled" \
+        -c init
+
+# 4-wire JTAG (USE_CJTAG=0 bitstream)
+openocd -f fpga/jtag/jv32_fpga_jtag.cfg \
+        -c "gdb_port 3333" \
+        -c "tcl_port disabled" \
+        -c "telnet_port disabled" \
+        -c init
+```
+
+**2. Connect GDB**
+
+```bash
+# Interactive session
+riscv64-unknown-elf-gdb -ex "target extended-remote :3333" build/hello.elf
+
+# Run a test script non-interactively (same scripts as the VPI tests)
+riscv64-unknown-elf-gdb --batch \
+    -ex "set pagination off" \
+    -ex "set confirm off" \
+    -ex "set remotetimeout 30" \
+    -ex "target extended-remote :3333" \
+    -x openocd/test_gdb_breakpoint.gdb \
+    build/hello.elf
+```
+
+**3. Notes**
+
+- All `openocd/test_gdb_*.gdb` scripts work against the FPGA without modification.
+  They switch memory access to `progbuf` mode via `monitor riscv set_mem_access progbuf`,
+  which is required for arbitrary IRAM/DRAM writes on this target regardless of
+  whether you are using simulation or hardware.
+- If your FT2232H probe has a non-default VID/PID (e.g. Digilent HS2 uses
+  `0x0403 0x6014`), update the `ftdi vid_pid` line in the relevant `.cfg` file.
+- The GDB port (`3333`) and VPI port (`5555`) are only used in simulation;
+  on FPGA there is no VPI process to start.
+
+---
+
 ## Loading firmware via OpenOCD
 
 ```bash
-# Load and run ELF from GDB / OpenOCD
+# Load and run ELF (built by make -C fpga/tests)
 openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \
         -c "program build/fpga-stress.elf verify reset exit"
 ```
 
-UART output is on `uart_tx_o` (J14), **921600 8N1**:
+UART output is on `uart_tx_o` (G12), **921600 8N1**:
 
 ```bash
 # Linux
@@ -336,9 +389,9 @@ to run for days/weeks on the FPGA, exercising CPU execution, memory, UART,
 queues, semaphores, event groups, and a recursive mutex.
 
 ```bash
-make -C fpga/tests          # build fpga-stress.elf
+make -C fpga/tests          # build/fpga-stress.elf (output goes to top-level build/)
 openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \
-        -c "program fpga/tests/build/fpga-stress.elf verify reset exit"
+        -c "program build/fpga-stress.elf verify reset exit"
 ```
 
 One status line is printed over UART every 5 seconds:

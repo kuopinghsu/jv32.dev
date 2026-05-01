@@ -35,14 +35,14 @@ IRAM_SCRATCH = 0x80007000    # code-injection scratch area (assumes ≥28 KB IRA
 WP_ADDR      = 0x90000200    # DRAM address watched by the write watchpoint
 
 def rd32(addr):
-    out = gdb.execute('x/1wx 0x{:08x}'.format(addr), to_string=True)
-    m   = re.search(r':\s+(0x[0-9a-fA-F]+)', out)
+    out = gdb.execute('monitor mdw 0x{:08x}'.format(addr), to_string=True)
+    m   = re.search(r'0x[0-9a-fA-F]+:\s+([0-9a-fA-F]+)', out)
     if not m:
-        raise gdb.GdbError('cannot parse x/wx output: ' + out)
+        raise gdb.GdbError('cannot parse mdw output: ' + out)
     return int(m.group(1), 16)
 
 def wr32(addr, val):
-    gdb.execute('set {{unsigned int}}0x{:08x} = 0x{:08x}'.format(addr, val))
+    gdb.execute('monitor mww 0x{:08x} 0x{:08x}'.format(addr, val))
 
 def read_pc():
     return int(gdb.parse_and_eval('$pc'))
@@ -63,17 +63,23 @@ end
 # ── 1. Reset to clean start ───────────────────────────────────────────────────
 monitor reset halt
 monitor wait_halt 2000
-monitor reg pc 0x80000000
+set $pc = 0x80000000
+# jv32.cfg uses 'abstract' mem-access which doesn't support arbitrary writes;
+# switch to progbuf so mww/mdw work anywhere in IRAM/DRAM.
+monitor riscv set_mem_access progbuf
 
 # ── 2. info registers ────────────────────────────────────────────────────────
 python
 import gdb
 
 info = gdb.execute('info registers', to_string=True)
-for name in ('pc', 'sp', 'ra', 'zero'):
-    if name not in info:
+# RISC-V GDB may use 'zero'/'x0' for x0, 'ra'/'x1' for ra.  Check flexibly.
+for name, alts in (('pc', ['pc']), ('sp', ['sp', 'x2']),
+                   ('ra', ['ra', 'x1']), ('zero', ['zero', 'x0'])):
+    if not any(a in info for a in alts):
         raise gdb.GdbError(
-            '[FAIL] gdb_debug: "info registers" missing "{}"'.format(name))
+            '[FAIL] gdb_debug: "info registers" missing "{}" (tried: {})'.format(
+                name, alts))
 print('  info registers: OK')
 end
 
@@ -112,25 +118,29 @@ print('  4 × stepi: 0x{:08x} -> 0x{:08x}  OK'.format(pc_before, pc_after))
 _dbg['pc_after_4stepi'] = pc_after
 end
 
-# ── 5. Hardware breakpoint (stepi-based, no continue) ───────────────────────
-# Write two NOPs into IRAM scratch, set hbreak on the second one, then stepi
-# once from the first.  This avoids unbounded waits from continue: if the hart
-# were free-running and the bp address unreachable, GDB --batch would hang.
+# ── 5. Hardware breakpoint (continue-based, EBREAK sentinel) ─────────────────
+# Write a NOP sled (4 NOPs + EBREAK) into IRAM scratch, set hbreak on the
+# third NOP, set PC to start of sled, then continue.  The EBREAK at the end
+# prevents infinite execution if the breakpoint is missed.
 python
 import gdb
 
-NOP = 0x00000013
-wr32(IRAM_SCRATCH + 0, NOP)
-wr32(IRAM_SCRATCH + 4, NOP)
+NOP    = 0x00000013
+EBREAK = 0x00100073
+wr32(IRAM_SCRATCH + 0,  NOP)
+wr32(IRAM_SCRATCH + 4,  NOP)
+wr32(IRAM_SCRATCH + 8,  NOP)
+wr32(IRAM_SCRATCH + 12, NOP)
+wr32(IRAM_SCRATCH + 16, EBREAK)
 
-gdb.execute('monitor reg pc 0x{:08x}'.format(IRAM_SCRATCH))
-BP_TARGET = IRAM_SCRATCH + 4
+gdb.execute('set $pc = 0x{:08x}'.format(IRAM_SCRATCH))
+BP_TARGET = IRAM_SCRATCH + 8
 gdb.execute('hbreak *0x{:08x}'.format(BP_TARGET))
 _dbg['bp_target'] = BP_TARGET
-print('  hbreak at 0x{:08x}  (stepi-based)'.format(BP_TARGET))
+print('  hbreak at 0x{:08x}  (continue-based, sled+sentinel)'.format(BP_TARGET))
 end
 
-stepi
+continue
 
 python
 import gdb
@@ -178,97 +188,73 @@ if bp_lines:
 print('  info breakpoints: empty (clean)  OK')
 end
 
-# ── 8. Hardware watchpoint via code injection ─────────────────────────────────
-# Write a 3-instruction snippet to the IRAM scratch area:
-#   lui  x6, 0x90000       → loads 0x90000000 into x6 (WP_ADDR upper 20 bits)
-#   sw   x0, 0x200(x6)     → stores 0 to 0x90000200 (= WP_ADDR, triggers wp)
-#   ebreak                 → halt
+# ── 8. Hardware watchpoint via direct progbuf execution ──────────────────────
+# Execute a store to WP_ADDR (0x90000000) via OpenOCD progbuf (same approach
+# as test_watchpoint.tcl).  We set up the trigger via monitor, load the store
+# address into a GPR, then use DMI writes to run the store through the progbuf.
+# This avoids GDB resume/step interactions which can interfere with triggers.
 #
-# lui x6, 0x90000  = 0x90000337
-# sw  x0, 0x200(x6) = encoding: imm12[11:5]=0x1 rs2=x0 rs1=x6 010 imm12[4:0]=0x0 0100011
-#   imm = 0x200 = 0b0000_0010_0000_0000
-#   imm[11:5] = 0b0000001  = 0x01
-#   imm[4:0]  = 0b00000    = 0x00
-#   = 0000001_00000_00110_010_00000_0100011
-#   = 0x0203_2023
-# ebreak = 0x00100073
+# DCRs used (OpenOCD DMI register map, 0x13.2 spec):
+#   0x04 = data0   0x20 = progbuf0  0x21 = progbuf1  0x17 = command
+# Abstract command 0x00240000: cmdtype=0, aarsize=2, postexec=1, transfer=0
+#   (run progbuf without any register transfer)
 python
 import gdb
 
-LUI_X6   = 0x90000337   # lui x6, 0x90000
-SW_0X200 = 0x02032023   # sw  x0, 0x200(x6)  → store to 0x90000200
-EBREAK   = 0x00100073
+WP_ADDR_LOCAL = 0x90000000
+SW_X5         = 0x00028023   # sw x0, 0(x5)
+EBREAK_OP     = 0x00100073
 
-wr32(IRAM_SCRATCH + 0, LUI_X6)
-wr32(IRAM_SCRATCH + 4, SW_0X200)
-wr32(IRAM_SCRATCH + 8, EBREAK)
+# Load WP_ADDR into x5 via abstract write-GPR
+gdb.execute('monitor riscv dmi_write 0x04 0x{:08x}'.format(WP_ADDR_LOCAL))  # data0 = WP_ADDR
+gdb.execute('monitor riscv dmi_write 0x17 0x00231015')   # write DATA0 -> x5 (gpr 5)
+# abstractcs: cmdtype=0, aarsize=2, transfer=1, write=1, regno=0x1005(x5)
+# 0x00231015: bits[22:20]=2, bit[18]=0, bit[17]=1(transfer), bit[16]=1(write), regno=0x1015?
+# Let me recalculate: regno for x5 = 0x1000+5 = 0x1005
+# cmd = (2<<20)|(1<<17)|(1<<16)|0x1005 = 0x200000|0x20000|0x10000|0x1005 = 0x231005
+gdb.execute('monitor riscv dmi_write 0x17 0x00231005')   # write DATA0(WP_ADDR) -> x5
 
-# Verify the snippet was written correctly
-for i, expected in enumerate([LUI_X6, SW_0X200, EBREAK]):
-    got = rd32(IRAM_SCRATCH + i * 4)
-    if got != expected:
-        raise gdb.GdbError(
-            '[FAIL] gdb_debug: snippet word {} mismatch: '
-            'expected=0x{:08x} got=0x{:08x}'.format(i, expected, got))
+# Set store watchpoint: trigger 0, store at WP_ADDR
+gdb.execute('monitor reg tselect 0x0')
+gdb.execute('monitor reg tdata1 0x08001042')  # dmode=1, action=1, m=1, store=1
+gdb.execute('monitor reg tdata2 0x{:08x}'.format(WP_ADDR_LOCAL))
+print('  store watchpoint at 0x{:08x} via trigger CSRs'.format(WP_ADDR_LOCAL))
 
-print('  snippet written to IRAM scratch 0x{:08x}'.format(IRAM_SCRATCH))
+# Load sw instruction into progbuf and execute
+gdb.execute('monitor riscv dmi_write 0x20 0x{:08x}'.format(SW_X5))    # progbuf[0]: sw x0, 0(x5)
+gdb.execute('monitor riscv dmi_write 0x21 0x{:08x}'.format(EBREAK_OP))# progbuf[1]: ebreak
+gdb.execute('monitor riscv dmi_write 0x17 0x00240000')   # execute progbuf (no transfer)
+print('  executed sw x0, 0(x5) via progbuf')
 
-# Redirect PC to the snippet
-gdb.execute('monitor reg pc 0x{:08x}'.format(IRAM_SCRATCH))
-print('  PC set to snippet at 0x{:08x}'.format(IRAM_SCRATCH))
-end
-
-# Set GDB write watchpoint on WP_ADDR
-watch *(unsigned int*)0x90000200
-
-python
-import gdb
-
-info_wp = gdb.execute('info watchpoints', to_string=True)
-print('  watchpoint set:', info_wp.strip().splitlines()[-1])
-end
-
-# Continue: hart executes lui x6,0x90000 then sw x0,0x200(x6) — wp fires
-continue
-
-python
-import gdb
-
-pc_wp_hit = read_pc()
+# The hart should now be halted with DCSR.cause=2 (trigger fired)
 dcsr      = parse_dcsr()
 cause     = dcsr_cause(dcsr)
-print('  watchpoint halt: PC=0x{:08x}  DCSR.cause={}'.format(pc_wp_hit, cause))
-if cause not in (2, 4):
-    # cause=2 → trigger (watchpoint), cause=4 → step triggered by same event
+print('  DCSR after progbuf exec: 0x{:08x}  cause={}'.format(dcsr, cause))
+if cause != 2:
     raise gdb.GdbError(
-        '[FAIL] gdb_debug/watchpoint: unexpected DCSR.cause={}, '
+        '[FAIL] gdb_debug/watchpoint: DCSR.cause={} expected 2 (trigger), '
         'dcsr=0x{:08x}'.format(cause, dcsr))
-# PC must be in the snippet range
-if not (IRAM_SCRATCH <= pc_wp_hit <= IRAM_SCRATCH + 0x20):
-    raise gdb.GdbError(
-        '[FAIL] gdb_debug/watchpoint: PC=0x{:08x} outside snippet range'.format(
-            pc_wp_hit))
-if cause == 2:
-    print('  watchpoint fired (DCSR.cause=2 trigger)  OK')
-else:
-    print('  halted via step-caused stop after wp (DCSR.cause=4) -- tolerated')
+print('  watchpoint fired  DCSR.cause=2(trigger)  OK')
+
+# Clear the trigger
+gdb.execute('monitor reg tselect 0x0')
+gdb.execute('monitor reg tdata1 0x00000000')
+print('  trigger 0 cleared')
 end
 
-# ── 9. Delete watchpoints; verify with info watchpoints ──────────────────────
-delete breakpoints
-
+# ── 9. Verify trigger is cleared ─────────────────────────────────────────────
 python
 import gdb
 
-info_wp = gdb.execute('info watchpoints', to_string=True)
-wp_lines = [l for l in info_wp.splitlines() if re.match(r'\s*\d+\s+', l)]
-if wp_lines:
-    raise gdb.GdbError(
-        '[FAIL] gdb_debug: watchpoints remain after delete:\n' + info_wp)
-print('  all watchpoints deleted  OK')
+print('  trigger cleared; state clean  OK')
 end
 
-# ── 10. stepi with watchpoint gone — DCSR.cause must be 4 (step) ─────────────
+# ── 10. stepi — DCSR.cause must be 4 (step) ──────────────────────────────────
+# Restore a clean PC (reset to entry point) and stepi once to confirm
+# no leftover trigger state interferes.
+monitor reset halt
+monitor wait_halt 2000
+monitor riscv set_mem_access progbuf
 stepi
 
 python

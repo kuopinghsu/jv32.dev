@@ -19,7 +19,10 @@
 # ── Halt the core ─────────────────────────────────────────────────────────────
 monitor halt
 monitor wait_halt 2000
-
+# Allow GDB to access any address within IRAM/DRAM, not just ELF LOAD segments.
+set mem inaccessible-by-default off
+mem 0x80000000 0x80020000 rw
+mem 0x90000000 0x90020000 rw
 # ── Shared Python helpers ─────────────────────────────────────────────────────
 python
 import gdb, re
@@ -120,8 +123,14 @@ python
 import gdb
 
 info = gdb.execute('info registers', to_string=True)
-required = ['pc', 'sp', 'ra', 'zero']
-missing  = [r for r in required if r not in info]
+# RISC-V GDB may report x0 as 'zero' or 'x0' depending on ABI settings
+required_flex = [
+    ('pc',   ['pc']),
+    ('sp',   ['sp', 'x2']),
+    ('ra',   ['ra', 'x1']),
+    ('zero', ['zero', 'x0']),
+]
+missing = [name for name, alts in required_flex if not any(a in info for a in alts)]
 if missing:
     raise gdb.GdbError(
         '[FAIL] gdb_regs: info registers missing: {}'.format(', '.join(missing)))

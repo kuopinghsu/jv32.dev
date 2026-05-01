@@ -22,6 +22,16 @@
 monitor halt
 monitor wait_halt 2000
 
+# Allow GDB to access any address within IRAM/DRAM, not just ELF LOAD segments.
+set mem inaccessible-by-default off
+mem 0x80000000 0x80020000 rw
+mem 0x90000000 0x90020000 rw
+
+# jv32.cfg uses 'abstract' mem-access which does not support arbitrary memory
+# writes via the GDB M packet.  Switch to 'progbuf' so all GDB set/read
+# memory operations go through the program buffer path.
+monitor riscv set_mem_access progbuf
+
 # ── Shared Python helpers ─────────────────────────────────────────────────────
 python
 import gdb
