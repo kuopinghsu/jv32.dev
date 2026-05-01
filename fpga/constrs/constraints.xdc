@@ -69,6 +69,15 @@ set_property IOSTANDARD LVCMOS33 [get_ports heartbeat_o]
 set_false_path -to [get_ports heartbeat_o]
 
 # -----------------------------------------------------------------------------
+# 1 Hz blink LED – LED3 on J11, 3.3 V LVCMOS33 (HR bank)
+# Generated inside jv32_soc_fpga from clk/rst_n: 1 s high, 1 s low.
+# Slow output – false path is appropriate.
+# -----------------------------------------------------------------------------
+set_property PACKAGE_PIN J11 [get_ports led_o]
+set_property IOSTANDARD LVCMOS33 [get_ports led_o]
+set_false_path -to [get_ports led_o]
+
+# -----------------------------------------------------------------------------
 # Reset synchronizer – LUTAR-1 suppression
 # -----------------------------------------------------------------------------
 # rst_n_pre = rst_n & ~dbg_ndmreset is a 2-input LUT that drives the async CLR

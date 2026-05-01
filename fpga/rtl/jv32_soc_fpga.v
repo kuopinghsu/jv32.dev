@@ -28,13 +28,18 @@
 `default_nettype none
 
 module jv32_soc_fpga #(
-    parameter USE_CJTAG = 0
+    parameter USE_CJTAG       = 0,
+    parameter CLK_FREQ_HZ     = 50_000_000
 ) (
     input  wire clk,
     input  wire rst_n,
 
     // Heartbeat LED (minstret[24])
     output wire heartbeat_o,
+
+    // 1 Hz blink LED – 1 s high / 1 s low, generated from clk/rst_n.
+    // Useful sanity indicator that the MMCM is locked and reset is released.
+    output wire led_o,
 
     // UART
     output wire uart_tx_o,
@@ -45,6 +50,7 @@ module jv32_soc_fpga #(
     input  wire jtag_pin1_tms_i,
     output wire jtag_pin1_tms_o,
     output wire jtag_pin1_tms_oe,
+
     // TDI is muxed to 1'b0 when USE_CJTAG=1 (unused in cJTAG mode)
     input  wire jtag_pin2_tdi_i,
     output wire jtag_pin3_tdo_o
@@ -68,7 +74,7 @@ module jv32_soc_fpga #(
         .jtag_pin1_tms_i  (jtag_pin1_tms_i),
         .jtag_pin1_tms_o  (jtag_pin1_tms_o),
         .jtag_pin1_tms_oe (jtag_pin1_tms_oe),
-        .jtag_pin2_tdi_i  (USE_CJTAG ? 1'b0 : jtag_pin2_tdi_i),
+        .jtag_pin2_tdi_i  (jtag_pin2_tdi_i),
         .jtag_pin3_tdo_o  (jtag_pin3_tdo_o),
         .jtag_pin3_tdo_oe (),
 
@@ -108,10 +114,31 @@ module jv32_soc_fpga #(
         // ── Heartbeat ─────────────────────────────────────────────────────
         .heartbeat_o          (heartbeat_o),
 
-        // ── Branch predictor observability (unused on FPGA) ───────────────
-        .perf_bp_branch       (), .perf_bp_taken      (), .perf_bp_mispred   (),
-        .perf_bp_jal          (), .perf_bp_jal_miss   (), .perf_bp_jalr       ()
     );
+
+    // -----------------------------------------------------------------------
+    // 1 Hz LED blink generator (1 s high, 1 s low).
+    // Counter wraps every CLK_FREQ_HZ cycles (1 second @ clk); led_r toggles
+    // on each wrap, giving a 0.5 Hz toggle rate → 1 s on, 1 s off.
+    // -----------------------------------------------------------------------
+    localparam [31:0] LED_TICKS = CLK_FREQ_HZ - 1;
+
+    reg [31:0] led_cnt;
+    reg        led_r;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            led_cnt <= 32'd0;
+            led_r   <= 1'b0;
+        end else if (led_cnt == LED_TICKS) begin
+            led_cnt <= 32'd0;
+            led_r   <= ~led_r;
+        end else begin
+            led_cnt <= led_cnt + 32'd1;
+        end
+    end
+
+    assign led_o = led_r;
 
 endmodule
 

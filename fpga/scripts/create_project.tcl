@@ -49,7 +49,8 @@ set script_dir [file normalize [file dirname [info script]]]
 set repo_root  [file normalize "${script_dir}/../.."]
 set proj_path  [file normalize "${repo_root}/${proj_dir}"]
 set rtl_dir    "${repo_root}/rtl"
-set fpga_rtl   "${script_dir}"
+set fpga_rtl    "${repo_root}/fpga/rtl"
+set fpga_constrs "${repo_root}/fpga/constrs"
 
 puts "============================================================"
 puts " JV32 Vivado flow"
@@ -118,18 +119,18 @@ set_property file_type Verilog [get_files jv32_soc_fpga.v]
 # ---------------------------------------------------------------------------
 # Add constraints
 # ---------------------------------------------------------------------------
-add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints.xdc
+add_files -fileset constrs_1 -norecurse ${fpga_constrs}/constraints.xdc
 set_property PROCESSING_ORDER NORMAL [get_files constraints.xdc]
 
 # Mode-specific implementation-only constraints: add only the file that
 # matches USE_CJTAG.  These contain no Tcl 'if' — the selection is done here
 # in Tcl where it is fully supported, so each XDC is plain constraint commands.
 if {$use_cjtag == "1"} {
-    add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_cjtag.xdc
+    add_files -fileset constrs_1 -norecurse ${fpga_constrs}/constraints_cjtag.xdc
     set_property used_in_synthesis false [get_files constraints_cjtag.xdc]
     set_property PROCESSING_ORDER NORMAL [get_files constraints_cjtag.xdc]
 } else {
-    add_files -fileset constrs_1 -norecurse ${fpga_rtl}/constraints_jtag.xdc
+    add_files -fileset constrs_1 -norecurse ${fpga_constrs}/constraints_jtag.xdc
     set_property used_in_synthesis false [get_files constraints_jtag.xdc]
     set_property PROCESSING_ORDER NORMAL [get_files constraints_jtag.xdc]
 }
@@ -137,7 +138,7 @@ if {$use_cjtag == "1"} {
 # ---------------------------------------------------------------------------
 # Create block design (sources create_bd.tcl which also sets the top)
 # ---------------------------------------------------------------------------
-source ${fpga_rtl}/create_bd.tcl
+source ${script_dir}/create_bd.tcl
 
 # ---------------------------------------------------------------------------
 # Synthesis strategy
@@ -206,13 +207,23 @@ if {$run_impl == "1"} {
     if {[file exists $bit_file]} {
         puts ">>> Bitstream: ${bit_file}"
 
-        # Copy .bit to project root (fpga/build/)
-        set bit_dest "${proj_path}/${top_module}.bit"
+        # Output basename encodes the JTAG mode used to build this bitstream.
+        # Allows both jv32_xcku5p_jtag.* and jv32_xcku5p_cjtag.* artifacts to
+        # coexist in fpga/build/ when alternating USE_CJTAG values.
+        if {$use_cjtag == "1"} {
+            set out_base "jv32_xcku5p_cjtag"
+        } else {
+            set out_base "jv32_xcku5p_jtag"
+        }
+
+        # Copy .bit to project root (fpga/build/) with mode-specific name
+        set bit_dest "${proj_path}/${out_base}.bit"
         file copy -force $bit_file $bit_dest
         puts ">>> Copied bitstream to: ${bit_dest}"
 
-        # Generate .mcs configuration memory file
-        set mcs_file "${proj_path}/${top_module}.mcs"
+        # Generate .mcs (+ .prm sidecar) configuration memory file
+        set mcs_file "${proj_path}/${out_base}.mcs"
+        set prm_file "${proj_path}/${out_base}.prm"
         write_cfgmem \
             -format mcs \
             -interface SPIx4 \
@@ -221,6 +232,9 @@ if {$run_impl == "1"} {
             -file $mcs_file \
             -force
         puts ">>> MCS file: ${mcs_file}"
+        if {[file exists $prm_file]} {
+            puts ">>> PRM file: ${prm_file}"
+        }
     }
 }
 

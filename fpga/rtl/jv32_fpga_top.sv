@@ -22,6 +22,9 @@
 //   Heartbeat LED (LVCMOS33)
 //   heartbeat_o   H9    LED6 — toggles every 2^24 retired instructions
 //
+//   1 Hz blink LED (LVCMOS33)
+//   led_o         J11   LED3 — 1 s on / 1 s off, generated from clk/rst_n
+//
 // Parameters
 // ----------
 //   USE_CJTAG  0 (default) = 4-wire JTAG
@@ -53,7 +56,10 @@ module jv32_fpga_top #(
     input  logic uart_rx_i,
 
     // Heartbeat LED – H9, LVCMOS33 (LED6)
-    output logic heartbeat_o
+    output logic heartbeat_o,
+
+    // 1 Hz blink LED – J11, LVCMOS33 (LED3)
+    output logic led_o
 );
 
     // -----------------------------------------------------------------------
@@ -74,7 +80,8 @@ module jv32_fpga_top #(
         .soc_tdo_o    (soc_tdo_o),
         .uart_rx_i    (uart_rx_i),
         .uart_tx_o    (uart_tx_o),
-        .heartbeat_o  (heartbeat_o)
+        .heartbeat_o  (heartbeat_o),
+        .led_o        (led_o)
     );
 
     // -----------------------------------------------------------------------

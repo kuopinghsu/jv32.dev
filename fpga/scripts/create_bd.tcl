@@ -95,6 +95,7 @@ create_bd_port -dir O                              soc_tdo_o
 create_bd_port -dir I                              uart_rx_i
 create_bd_port -dir O                              uart_tx_o
 create_bd_port -dir O                              heartbeat_o
+create_bd_port -dir O                              led_o
 
 # ---------------------------------------------------------------------------
 # Clock chain:  clk_in1 → clk_wiz_0 → proc_sys_reset_0 / u_soc
@@ -144,6 +145,11 @@ connect_bd_net [get_bd_pins u_soc/uart_tx_o] [get_bd_ports uart_tx_o]
 # Heartbeat LED
 # ---------------------------------------------------------------------------
 connect_bd_net [get_bd_pins u_soc/heartbeat_o] [get_bd_ports heartbeat_o]
+
+# ---------------------------------------------------------------------------
+# 1 Hz blink LED (LED3, J11) – generated inside jv32_soc_fpga from clk/rst_n
+# ---------------------------------------------------------------------------
+connect_bd_net [get_bd_pins u_soc/led_o] [get_bd_ports led_o]
 
 # ---------------------------------------------------------------------------
 # Validate and save

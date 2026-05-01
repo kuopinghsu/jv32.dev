@@ -17,21 +17,26 @@ fpga/
 ├── jtag/
 │   ├── jv32_fpga_cjtag.cfg         # OpenOCD config – USE_CJTAG=1 (2-wire)
 │   └── jv32_fpga_jtag.cfg          # OpenOCD config – USE_CJTAG=0 (4-wire)
-├── scripts/
-│   ├── create_project.tcl          # Vivado project / synth / impl script
-│   ├── create_bd.tcl               # IP Integrator block design script
+├── rtl/
 │   ├── jv32_fpga_top.sv            # FPGA top-level wrapper (IOBUF, USE_CJTAG mux)
-│   ├── jv32_soc_fpga.v             # Plain-Verilog BD module reference wrapper
+│   └── jv32_soc_fpga.v             # Plain-Verilog BD module reference wrapper
+├── constrs/
 │   ├── constraints.xdc             # Shared pin / clock constraints (both modes)
 │   ├── constraints_cjtag.xdc       # Implementation-only: USE_CJTAG=1 clock + I/O
 │   └── constraints_jtag.xdc        # Implementation-only: USE_CJTAG=0 I/O delays
+├── scripts/
+│   ├── create_project.tcl          # Vivado project / synth / impl script
+│   └── create_bd.tcl               # IP Integrator block design script
 ├── tests/
 │   ├── Makefile
 │   └── fpga_stress.c               # Long-running FreeRTOS stability stress test
 └── build/                          # Vivado project output (git-ignored)
-    ├── jv32_fpga_top.bit
-    ├── jv32_fpga_top.mcs
-    └── jv32_fpga_top.prm
+    ├── jv32_xcku5p_cjtag.bit       # USE_CJTAG=1 bitstream (default)
+    ├── jv32_xcku5p_cjtag.mcs       # USE_CJTAG=1 SPI flash image
+    ├── jv32_xcku5p_cjtag.prm       # USE_CJTAG=1 flash programming params
+    ├── jv32_xcku5p_jtag.bit        # USE_CJTAG=0 bitstream
+    ├── jv32_xcku5p_jtag.mcs        # USE_CJTAG=0 SPI flash image
+    └── jv32_xcku5p_jtag.prm        # USE_CJTAG=0 flash programming params
 ```
 
 ---
@@ -120,6 +125,8 @@ system clock which is on an **HP (High Performance) bank**, 1.8 V LVCMOS18.
 | `jtag_tdo_o` | J12 | HR / LVCMOS33 | O | TDO — 4-wire JTAG only; driven `0` in cJTAG |
 | `uart_tx_o` | G12 | HR / LVCMOS33 | O | UART TX |
 | `uart_rx_i` | J14 | HR / LVCMOS33 | I | UART RX |
+| `heartbeat_o` | H9 | HR / LVCMOS33 | O | LED6 — toggles every 2²⁴ retired instructions |
+| `led_o` | J11 | HR / LVCMOS33 | O | LED3 — 1 Hz blink (1 s on / 1 s off, from clk/rst_n) |
 
 ---
 
