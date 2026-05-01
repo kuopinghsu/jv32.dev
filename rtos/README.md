@@ -1,6 +1,6 @@
 # JV32 RTOS Support
 
-JV32 supports two RTOS environments: **FreeRTOS** (bare-metal port) and **Zephyr** (external workspace, west-managed). Both can be built, run on the Verilator RTL simulator, and verified via RTL-vs-ISS trace comparison.
+JV32 supports four RTOS environments: **FreeRTOS**, **Eclipse ThreadX**, **RIOT OS**, and **Zephyr**. All can be built, run on the Verilator RTL simulator, and verified via RTL-vs-ISS trace comparison. All targets are included in `make all`.
 
 ---
 
@@ -15,9 +15,9 @@ Sources live entirely inside the repository (`rtos/freertos/`). No external work
 
 | Name | Description |
 |---|---|
-| `simple` | Two tasks blinking at different priorities; demonstrates the preemptive scheduler |
-| `perf` | Task-switch timing benchmark; prints cycles-per-context-switch |
-| `stress` | Many tasks with queues and semaphores; exercises the scheduler under load |
+| `simple` | Two tasks at different priorities; demonstrates the preemptive scheduler |
+| `perf` | Task-switch timing benchmark; prints cycles-per-context-switch for yield, semaphore, mutex, event, and queue operations |
+| `stress` | Round-robin, preemption, mutex contention, queue prod/consumer, semaphore ping-pong, event-group fan-out, and timer tests |
 
 ### Running
 
@@ -39,6 +39,111 @@ The software simulator (`jv32sim`) also supports FreeRTOS:
 
 ```bash
 make sim-freertos-all
+```
+
+---
+
+## Eclipse ThreadX
+
+**Version:** Eclipse ThreadX 6.5.0 (build 202601)
+**Port:** `rtos/threadx/ports/jv32/` (machine-mode, CLINT timer, CLIC interrupt controller)
+
+Sources live entirely inside the repository (`rtos/threadx/`). No external workspace is required.
+
+### Port details
+
+| File | Purpose |
+|---|---|
+| `ports/jv32/tx_port.h` | Type definitions, timer configuration, stack-size defaults |
+| `ports/jv32/tx_port.c` | CLINT timer ISR, CLIC interrupt dispatch, kernel entry |
+| `ports/jv32/tx_port_asm.S` | Context-save/restore, `_tx_thread_system_return`, `_tx_thread_context_save/restore` |
+| `ports/jv32/tx_user.h` | Build-time feature knobs (`TX_JV32_SGUARD`, timer tick rate) |
+| `ports/jv32/threadx_link.ld` | Linker script for TCM layout |
+
+Timer tick rate: 100 Hz (`TX_TIMER_TICKS_PER_SECOND = 100`, 10 ms per tick).
+
+### Samples
+
+| Name | Description |
+|---|---|
+| `simple` | Four threads exercising context switch, semaphore, mutex, and event-flag primitives |
+| `perf` | Cycle-accurate timing benchmark for yield, context switch, semaphore, mutex, event, and queue operations |
+| `stress` | Round-robin, preemption, mutex contention, queue prod/consumer, semaphore ping-pong, event-flag fan-out, and timer tests |
+| `benchmark` | Thread-Metric-style preemption and synchronisation throughput benchmark |
+| `tm_basic` | Thread-Metric basic processing throughput test |
+| `tm_coop` | Thread-Metric cooperative scheduling throughput test |
+| `tm_preempt` | Thread-Metric preemptive scheduling throughput test |
+
+### Running
+
+```bash
+# Run a single sample on the RTL simulator
+make rtl-threadx-simple
+make rtl-threadx-perf
+make rtl-threadx-stress
+
+# Run all samples
+make rtl-threadx-all
+
+# RTL-vs-ISS trace comparison (single / all)
+make compare-threadx-simple
+make compare-threadx-all
+```
+
+The software simulator also supports ThreadX:
+
+```bash
+make sim-threadx-all
+```
+
+---
+
+## RIOT OS
+
+**Version:** RIOT OS (custom standalone port, LGPL-2.1)
+**Port:** `rtos/riot/` (machine-mode, CLINT coretimer, `boards/jv32/`, `cpu/jv32/`)
+
+Sources live entirely inside the repository (`rtos/riot/`). No external workspace or west/build-system is required.
+
+### Port details
+
+| Path | Purpose |
+|---|---|
+| `boards/jv32/` | Board init, linker script, startup assembly, syscall stubs |
+| `cpu/jv32/` | `cpu_init()` — CLINT timer setup, `sched_arch_idle()` (WFI) |
+| `cpu/riscv_common/` | Generic RISC-V context-switch, IRQ arch, trap vector |
+| `core/` | RIOT kernel: scheduler, threads, mutex, message passing, thread flags |
+
+The port uses the CLINT machine-timer for the tick source and routes all M-mode traps through the RIOT IRQ architecture layer.
+
+### Samples
+
+| Name | Description |
+|---|---|
+| `simple` | Thread creation, mutex-protected counter, IPC message passing, thread-flags signalling |
+| `perf` | Cycle-accurate timing benchmark for yield, context switch, mutex, message, and thread-flag operations |
+| `stress` | Round-robin, preemption, mutex contention, message-queue prod/consumer, semaphore ping-pong, and thread-flag fan-out tests |
+
+### Running
+
+```bash
+# Run a single sample on the RTL simulator
+make rtl-riot-simple
+make rtl-riot-perf
+make rtl-riot-stress
+
+# Run all samples
+make rtl-riot-all
+
+# RTL-vs-ISS trace comparison (single / all)
+make compare-riot-simple
+make compare-riot-all
+```
+
+The software simulator also supports RIOT:
+
+```bash
+make sim-riot-all
 ```
 
 ---
@@ -98,4 +203,4 @@ The software simulator also supports Zephyr:
 make sim-zephyr-all
 ```
 
-All FreeRTOS and Zephyr targets are included in `make all`.
+All targets for all four RTOS environments are included in `make all`.

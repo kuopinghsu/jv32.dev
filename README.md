@@ -256,6 +256,10 @@ make synth
 | `make arch-test-run` | Run the RISC-V architectural compliance suite |
 | `make rtl-freertos-all` | Build and run all FreeRTOS samples on RTL |
 | `make compare-freertos-all` | RTL-vs-ISS trace comparison for all FreeRTOS samples |
+| `make rtl-threadx-all` | Build and run all Eclipse ThreadX samples on RTL |
+| `make compare-threadx-all` | RTL-vs-ISS trace comparison for all ThreadX samples |
+| `make rtl-riot-all` | Build and run all RIOT OS samples on RTL |
+| `make compare-riot-all` | RTL-vs-ISS trace comparison for all RIOT OS samples |
 | `make rtl-zephyr-all` | Build and run all Zephyr samples on RTL |
 | `make compare-zephyr-all` | RTL-vs-ISS trace comparison for all Zephyr samples |
 | `cd syn && make synth` | Launch the OpenLane2 synthesis / P&R flow |
@@ -273,14 +277,16 @@ make FAST_MUL=1 MUL_MC=0 rtl-hello # 1-cycle combinatorial multiplier
 
 ## RTOS Support
 
-JV32 supports two RTOS environments. Both run on the Verilator RTL simulator and are verified via RTL-vs-ISS trace comparison. All targets are included in `make all`.
+JV32 supports four RTOS environments. All run on the Verilator RTL simulator and are verified via RTL-vs-ISS trace comparison. All targets are included in `make all`.
 
 | RTOS | Version | Port | Samples |
 |---|---|---|---|
 | **FreeRTOS** | V11.2.0 | `rtos/freertos/portable/RISC-V/` (machine-mode, CLINT timer) | `simple`, `perf`, `stress` |
+| **Eclipse ThreadX** | 6.5.0 | `rtos/threadx/ports/jv32/` (machine-mode, CLINT timer, CLIC) | `simple`, `perf`, `stress`, `benchmark`, `tm_basic`, `tm_coop`, `tm_preempt` |
+| **RIOT OS** | custom | `rtos/riot/` (`boards/jv32/`, `cpu/jv32/`, CLINT coretimer) | `simple`, `perf`, `stress` |
 | **Zephyr** | 4.4 | `rtos/zephyr/` (west module, CLIC driver) | `hello`, `simple`, `perf`, `stress`, `threads_sync`, `uart_echo` |
 
-> Full build instructions, sample descriptions, and setup steps: [rtos/README.md](rtos/README.md)
+> Full build instructions, sample descriptions, and port details: [rtos/README.md](rtos/README.md)
 
 ## Verification
 
@@ -305,11 +311,13 @@ JV32 supports two RTOS environments. Both run on the Verilator RTL simulator and
 1. `rtl-all` — build and run every `sw/` test on the Verilator RTL simulator
 2. `sim-all` — run every `sw/` test on the software (JIT) simulator
 3. `compare-all` — compare RTL instruction traces against software simulator traces word-for-word
-4. `rtl-freertos-all` / `sim-freertos-all` / `compare-freertos-all` — the same three steps for the FreeRTOS workloads
-5. `rtl-zephyr-all` / `sim-zephyr-all` / `compare-zephyr-all` — the same three steps for the Zephyr workloads
-6. `extra-tests` — repeat steps 1–3 for three additional RTL parameter combinations to exercise different multiplier/divider/shifter/branch-predictor paths
-7. `arch-test-run` — RISC-V architectural compliance suite (see below)
-8. `openocd-test` — JTAG + cJTAG debug interface tests (see below)
+4. `rtl-freertos-all` / `sim-freertos-all` / `compare-freertos-all` — the same three steps for FreeRTOS
+5. `rtl-threadx-all` / `sim-threadx-all` / `compare-threadx-all` — the same three steps for Eclipse ThreadX
+6. `rtl-riot-all` / `sim-riot-all` / `compare-riot-all` — the same three steps for RIOT OS
+7. `rtl-zephyr-all` / `sim-zephyr-all` / `compare-zephyr-all` — the same three steps for Zephyr
+8. `extra-tests` — repeat steps 1–3 for three additional RTL parameter combinations to exercise different multiplier/divider/shifter/branch-predictor paths
+9. `arch-test-run` — RISC-V architectural compliance suite (see below)
+10. `openocd-test` — JTAG + cJTAG debug interface tests (see below)
 
 > `make -C syn synth` and `make -C fpga impl` are **not** included in `make all` because they require
 > commercial/specialised EDA tools and can take several hours. Run them explicitly when needed.
@@ -404,7 +412,7 @@ Verilator line + branch + expression + toggle coverage over all `sw/` tests and 
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`
 - Generated PDF: `docs/jv32_soc_datasheet.pdf`
 - Performance analysis: [docs/performance_analysis.pdf](docs/performance_analysis.pdf)
-- RTOS (FreeRTOS & Zephyr): [rtos/README.md](rtos/README.md)
+- RTOS (FreeRTOS, ThreadX, RIOT OS & Zephyr): [rtos/README.md](rtos/README.md)
 - Verification (arch-test & formal): [verif/README.md](verif/README.md)
 - Debug interface tests (OpenOCD): [openocd/README.md](openocd/README.md)
 - Coverage report: [docs/COVERAGE.md](docs/COVERAGE.md)

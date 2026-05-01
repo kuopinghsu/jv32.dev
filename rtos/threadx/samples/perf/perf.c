@@ -68,6 +68,26 @@ static volatile uint32_t g_test_total;
 static volatile uint32_t g_test_max;
 static volatile uint32_t g_helper_done;
 
+/* ── Helper thread dispatch ──────────────────────────────────────────────── */
+
+static void (*g_helper_dispatch_fn)(void);
+
+/* Forward declarations for helper worker functions */
+static void do_sem_help(void);
+static void do_mutex_help(void);
+static void do_event_help(void);
+static void do_queue_help(void);
+
+static void helper_entry(ULONG arg)
+{
+    (void)arg;
+    if (g_helper_dispatch_fn)
+        g_helper_dispatch_fn();
+    g_helper_done = 1u;
+    tx_thread_terminate(tx_thread_identify());
+    while (1) {}
+}
+
 /* Storage for queues */
 static ULONG g_queue_storage[QUEUE_DEPTH * QUEUE_MSG_WORDS];
 
@@ -88,6 +108,19 @@ static TX_THREAD g_yield_b_thread;
 static TX_THREAD g_yield_c_thread;
 static TX_THREAD g_unsol_bg_thread;
 static TX_THREAD g_unsol_hi_thread;
+
+/* Terminate, reset, reprioritise, and restart the helper thread. */
+static void helper_restart(void (*fn)(void), UINT priority)
+{
+    g_helper_done        = 0u;
+    g_test_total         = 0u;
+    g_test_max           = 0u;
+    g_helper_dispatch_fn = fn;
+    tx_thread_terminate(&g_helper_thread);
+    tx_thread_reset(&g_helper_thread);
+    tx_thread_priority_change(&g_helper_thread, priority, NULL);
+    tx_thread_resume(&g_helper_thread);
+}
 
 /* ── Yield test ─────────────────────────────────────────────────────────── */
 
@@ -189,20 +222,17 @@ static void run_unsolicited_test(void)
            (unsigned long)calib);
 }
 
-/* ── Semaphore helper thread (lower priority — used for "wake" test) ─────── */
+/* ── Semaphore helper worker ─────────────────────────────────────────────── */
 
-static void sem_helper_entry(ULONG arg)
+static void do_sem_help(void)
 {
     uint32_t i;
-    (void)arg;
     for (i = 0; i < TEST_ITER; i++) {
         tx_semaphore_get(&g_sem, WAIT_TICKS);
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
     }
-    g_helper_done = 1u;
-    tx_thread_suspend(tx_thread_identify());
 }
 
 /* ── Semaphore test ─────────────────────────────────────────────────────── */
@@ -238,11 +268,7 @@ static void run_sem_test(void)
            "Semaphore get with no contention", (unsigned long)total / TEST_ITER, (unsigned long)max);
 
     /* Put with lower-priority wake: launch helper at lower priority */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY + 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_sem_help, PERF_PRIORITY + 2u);
 
     total = max = 0;
     for (i = 0; i < TEST_ITER; i++) {
@@ -254,17 +280,12 @@ static void run_sem_test(void)
         if (delta > max) max = delta;
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Semaphore put with thread wake", (unsigned long)total / TEST_ITER, (unsigned long)max);
 
     /* Put with higher-priority wake + context switch */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY - 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_sem_help, PERF_PRIORITY - 2u);
     tx_thread_sleep(1);              /* let helper block on semaphore */
 
     for (i = 0; i < TEST_ITER; i++) {
@@ -273,19 +294,17 @@ static void run_sem_test(void)
         /* helper preempts us here and records the delta */
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Semaphore put with context switch",
            (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
-/* ── Mutex helper thread ─────────────────────────────────────────────────── */
+/* ── Mutex helper worker ──────────────────────────────────────────────────── */
 
-static void mutex_helper_entry(ULONG arg)
+static void do_mutex_help(void)
 {
     uint32_t i;
-    (void)arg;
     for (i = 0; i < TEST_ITER; i++) {
         tx_mutex_get(&g_mutex, WAIT_TICKS);
         uint32_t delta = get_cycles() - g_test_start;
@@ -293,8 +312,6 @@ static void mutex_helper_entry(ULONG arg)
         if (delta > g_test_max) g_test_max = delta;
         tx_mutex_put(&g_mutex);
     }
-    g_helper_done = 1u;
-    tx_thread_suspend(tx_thread_identify());
 }
 
 /* ── Mutex test ─────────────────────────────────────────────────────────── */
@@ -328,11 +345,7 @@ static void run_mutex_test(void)
            (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
 
     /* Unlock with lower-priority wake */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY + 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_mutex_help, PERF_PRIORITY + 2u);
 
     unlock_total = unlock_max = 0;
     for (i = 0; i < TEST_ITER; i++) {
@@ -345,18 +358,13 @@ static void run_mutex_test(void)
         if (delta > unlock_max) unlock_max = delta;
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Mutex unlock with thread wake",
            (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
 
     /* Unlock with higher-priority wake + context switch */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY - 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_mutex_help, PERF_PRIORITY - 2u);
 
     for (i = 0; i < TEST_ITER; i++) {
         tx_mutex_get(&g_mutex, WAIT_TICKS);
@@ -367,29 +375,25 @@ static void run_mutex_test(void)
         tx_thread_sleep(1);          /* wait for helper to release mutex */
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Mutex unlock with context switch",
            (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
-/* ── Event helper thread ─────────────────────────────────────────────────── */
+/* ── Event helper worker ─────────────────────────────────────────────────── */
 
-static void event_helper_entry(ULONG arg)
+static void do_event_help(void)
 {
     uint32_t i;
     ULONG actual;
-    (void)arg;
     for (i = 0; i < TEST_ITER; i++) {
         tx_event_flags_get(&g_events, 0xFFFFu, TX_AND, &actual, WAIT_TICKS);
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
-        tx_event_flags_set(&g_events, 0xFFFFu, TX_AND);   /* clear */
+        tx_event_flags_set(&g_events, 0u, TX_AND);   /* clear all flags */
     }
-    g_helper_done = 1u;
-    tx_thread_suspend(tx_thread_identify());
 }
 
 /* ── Event test ─────────────────────────────────────────────────────────── */
@@ -402,7 +406,7 @@ static void run_event_test(void)
     printf("\nEvent timing test\n-----------------\n");
 
     /* Make sure flags start clear */
-    tx_event_flags_set(&g_events, 0xFFFFu, TX_AND);
+    tx_event_flags_set(&g_events, 0u, TX_AND);
 
     /* Set / clear with no wake */
     set_total = set_max = clr_total = clr_max = 0;
@@ -414,7 +418,7 @@ static void run_event_test(void)
         if (delta > set_max) set_max = delta;
 
         start = get_cycles();
-        tx_event_flags_set(&g_events, 0xFFFFu, TX_AND);   /* clear via AND with 0 */
+        tx_event_flags_set(&g_events, 0u, TX_AND);   /* clear all flags */
         delta = get_cycles() - start;
         clr_total += delta;
         if (delta > clr_max) clr_max = delta;
@@ -427,38 +431,28 @@ static void run_event_test(void)
            (unsigned long)clr_total / TEST_ITER, (unsigned long)clr_max);
 
     /* Set with lower-priority wake */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY + 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_event_help, PERF_PRIORITY + 2u);
 
     set_total = set_max = 0;
     for (i = 0; i < TEST_ITER; i++) {
-        tx_event_flags_set(&g_events, 0xFFFFu, TX_AND);   /* clear */
+        tx_event_flags_set(&g_events, 0u, TX_AND);   /* clear all flags */
         tx_thread_sleep(1);          /* let helper block on event */
         start = get_cycles();
         tx_event_flags_set(&g_events, 0xFFFFu, TX_OR);
         delta = get_cycles() - start;
         set_total += delta;
         if (delta > set_max) set_max = delta;
-        /* Wait for helper to clear flags before next iteration */
-        while (tx_event_flags_get(&g_events, 0xFFFFu, TX_AND, &actual, 1) == TX_SUCCESS)
-            ;
+        tx_thread_sleep(1);   /* yield so lower-priority helper can clear flags */
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Event set with thread wake",
            (unsigned long)set_total / TEST_ITER, (unsigned long)set_max);
 
     /* Set with higher-priority wake + context switch */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY - 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    tx_event_flags_set(&g_events, 0u, TX_AND);   /* clear all flags */
+    helper_restart(do_event_help, PERF_PRIORITY - 2u);
     tx_thread_sleep(1);              /* let helper block on event */
 
     for (i = 0; i < TEST_ITER; i++) {
@@ -468,28 +462,24 @@ static void run_event_test(void)
         tx_thread_sleep(1);          /* wait for helper to clear and re-block */
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Event set with context switch",
            (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
-/* ── Queue helper thread ─────────────────────────────────────────────────── */
+/* ── Queue helper worker ─────────────────────────────────────────────────── */
 
-static void queue_helper_entry(ULONG arg)
+static void do_queue_help(void)
 {
     uint32_t i;
     ULONG msg[QUEUE_MSG_WORDS];
-    (void)arg;
     for (i = 0; i < TEST_ITER; i++) {
         tx_queue_receive(&g_queue, msg, WAIT_TICKS);
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
     }
-    g_helper_done = 1u;
-    tx_thread_suspend(tx_thread_identify());
 }
 
 /* ── Queue test ─────────────────────────────────────────────────────────── */
@@ -528,11 +518,7 @@ static void run_queue_test(void)
            (unsigned long)get_total / QUEUE_DEPTH, (unsigned long)get_max);
 
     /* Send with lower-priority wake */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY + 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_queue_help, PERF_PRIORITY + 2u);
 
     put_total = put_max = 0;
     for (i = 0; i < TEST_ITER; i++) {
@@ -544,18 +530,13 @@ static void run_queue_test(void)
         if (delta > put_max) put_max = delta;
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Message put with thread wake",
            (unsigned long)put_total / TEST_ITER, (unsigned long)put_max);
 
     /* Send with higher-priority wake + context switch */
-    g_helper_done = 0;
-    g_test_total = g_test_max = 0;
-
-    tx_thread_priority_change(&g_helper_thread, PERF_PRIORITY - 2u, NULL);
-    tx_thread_resume(&g_helper_thread);
+    helper_restart(do_queue_help, PERF_PRIORITY - 2u);
     tx_thread_sleep(1);              /* let helper block on queue */
 
     for (i = 0; i < TEST_ITER; i++) {
@@ -565,7 +546,6 @@ static void run_queue_test(void)
         tx_thread_sleep(1);
     }
     while (!g_helper_done) tx_thread_sleep(1);
-    tx_thread_suspend(&g_helper_thread);
 
     printf("%-44s: avg %lu max %lu cycles\n",
            "Message put with context switch",
@@ -609,9 +589,9 @@ void tx_application_define(void *first_unused_memory)
                     g_queue_storage,
                     sizeof(g_queue_storage));
 
-    /* Helper thread: priority and stack reused for each sub-test */
+    /* Helper thread: uses dispatch entry; restarted via helper_restart() per sub-test */
     tx_thread_create(&g_helper_thread, "helper",
-                     sem_helper_entry, 0u,   /* entry overridden per test */
+                     helper_entry, 0u,
                      g_helper_stack, sizeof(g_helper_stack),
                      PERF_PRIORITY + 2u, PERF_PRIORITY + 2u,
                      TX_NO_TIME_SLICE, TX_DONT_START);
