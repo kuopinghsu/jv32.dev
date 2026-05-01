@@ -1,4 +1,3 @@
 [submodule "verif/riscv-arch-test"]
     path = verif/riscv-arch-test
     url = https://github.com/riscv/riscv-arch-test
-    branch = act4

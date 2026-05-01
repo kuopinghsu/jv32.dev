@@ -80,6 +80,8 @@
 // SOFTWARE.
 // ============================================================================
 
+`include "jv32_dbgmsg.svh"
+
 /**
  * @brief AXI4-Lite UART peripheral with TX/RX FIFOs and IRQ.
  *

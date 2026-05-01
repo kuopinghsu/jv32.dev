@@ -208,12 +208,12 @@ if {$run_impl == "1"} {
         puts ">>> Bitstream: ${bit_file}"
 
         # Output basename encodes the JTAG mode used to build this bitstream.
-        # Allows both jv32_xcku5p_jtag.* and jv32_xcku5p_cjtag.* artifacts to
+        # Allows both jv32_ku5p_jtag.* and jv32_ku5p_cjtag.* artifacts to
         # coexist in fpga/build/ when alternating USE_CJTAG values.
         if {$use_cjtag == "1"} {
-            set out_base "jv32_xcku5p_cjtag"
+            set out_base "jv32_ku5p_cjtag"
         } else {
-            set out_base "jv32_xcku5p_jtag"
+            set out_base "jv32_ku5p_jtag"
         }
 
         # Copy .bit to project root (fpga/build/) with mode-specific name

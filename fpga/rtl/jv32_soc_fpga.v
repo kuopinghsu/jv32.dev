@@ -112,7 +112,7 @@ module jv32_soc_fpga #(
         .trace_irq_store_we   (), .trace_irq_store_addr (), .trace_irq_store_data(),
 
         // ── Heartbeat ─────────────────────────────────────────────────────
-        .heartbeat_o          (heartbeat_o),
+        .heartbeat_o          (heartbeat_o)
 
     );
 

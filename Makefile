@@ -257,11 +257,15 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
         compare-freertos-% compare-freertos-all freertos-list-tests \
         rtl-zephyr-% rtl-zephyr-all sim-zephyr-% sim-zephyr-all \
         compare-zephyr-% compare-zephyr-all zephyr-list-tests \
+        rtl-threadx-% rtl-threadx-all sim-threadx-% sim-threadx-all \
+        compare-threadx-% compare-threadx-all threadx-list-tests \
+        rtl-riot-% rtl-riot-all sim-riot-% sim-riot-all \
+        compare-riot-% compare-riot-all riot-list-tests \
         submodule-init extra-tests openocd-test syn fpga \
         build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all extra-tests arch-test-run openocd-test
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all rtl-threadx-all sim-threadx-all compare-threadx-all rtl-riot-all sim-riot-all compare-riot-all extra-tests arch-test-run openocd-test
 
 extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
@@ -1009,6 +1013,254 @@ compare-zephyr-all:
 		echo "compare-zephyr-all: one or more tests failed."; exit 1; \
 	fi; \
 	echo "compare-zephyr-all: all tests passed."
+
+# ============================================================================
+# ThreadX RTOS tests
+# ============================================================================
+THREADX_DIR = rtos/threadx
+
+# Build a ThreadX ELF via the ThreadX Makefile
+$(BUILD_DIR)/threadx-%.elf: FORCE
+	@$(MAKE) -C $(THREADX_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
+threadx-list-tests:
+	@$(MAKE) -C $(THREADX_DIR) --no-print-directory list-tests
+
+# Internal helper used by rtl-threadx-% and rtl-threadx-all
+.PHONY: __rtl-threadx-run
+__rtl-threadx-run: build-rtl
+	@if [ -z "$(TEST)" ]; then \
+		echo "ERROR: TEST is required (e.g. make __rtl-threadx-run TEST=simple)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(THREADX_DIR) --no-print-directory build TEST=$(TEST) BUILD_DIR=$(BUILD_DIR_ABS)
+	@echo "=========================================="
+	@echo "Running ThreadX test '$(TEST)' with RTL simulator"
+	@echo "=========================================="
+	@cd $(BUILD_DIR) && ./jv32soc \
+	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
+	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(TIMEOUT_ARG) \
+	    threadx-$(TEST).elf
+	@echo "=========================================="
+	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
+	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+
+# Run a ThreadX test with the RTL simulator
+rtl-threadx-%:
+	@$(MAKE) --no-print-directory __rtl-threadx-run TEST=$*
+
+# Run all ThreadX tests with the RTL simulator
+rtl-threadx-all: build-rtl
+	@echo "=========================================="
+	@echo "Running all ThreadX tests with RTL simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(THREADX_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[rtl-threadx-all] $$t"; \
+		if ! $(MAKE) --no-print-directory __rtl-threadx-run TEST=$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "rtl-threadx-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "rtl-threadx-all: all tests passed."
+
+# Run a ThreadX test with the software simulator
+sim-threadx-%: $(BUILD_DIR)/threadx-%.elf $(JV32SIM)
+	@echo "=========================================="
+	@echo "Running ThreadX test '$*' with software simulator"
+	@echo "=========================================="
+	$(JV32SIM) $(SIM_MAX_INSNS_ARG) $(BUILD_DIR)/threadx-$*.elf
+	@echo "=========================================="
+	@echo "Done."
+	@echo "=========================================="
+
+# Run all ThreadX tests with the software simulator
+sim-threadx-all: sim-build
+	@echo "=========================================="
+	@echo "Running all ThreadX tests with software simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(THREADX_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[sim-threadx-all] $$t"; \
+		if ! $(MAKE) --no-print-directory sim-threadx-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "sim-threadx-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "sim-threadx-all: all tests passed."
+
+# Compare software-vs-RTL traces for a ThreadX test
+compare-threadx-%: $(BUILD_DIR)/threadx-%.elf $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo " JV32 ThreadX Trace Comparison: $*"
+	@echo "=========================================="
+	@echo ""
+	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
+	    $(TIMEOUT_ARG) \
+	    $(BUILD_DIR)/threadx-$*.elf 2>/dev/null \
+	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --rtl-hints $(RTL_TRACE_FILE) \
+	    $(SIM_MAX_INSNS_ARG) \
+	    $(BUILD_DIR)/threadx-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[3/3] Comparing traces..."
+	@python3 scripts/trace_compare.py \
+	    $(BUILD_DIR)/sim_trace.txt \
+	    $(RTL_TRACE_FILE) \
+	    || exit 1
+
+# Compare software-vs-RTL traces for all ThreadX tests
+compare-threadx-all:
+	@echo "=========================================="
+	@echo "Comparing ThreadX traces for all tests"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(THREADX_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[compare-threadx-all] $$t"; \
+		if ! $(MAKE) --no-print-directory compare-threadx-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "compare-threadx-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "compare-threadx-all: all tests passed."
+
+# ============================================================================
+# RIOT OS tests
+# ============================================================================
+RIOT_DIR = rtos/riot/boards/jv32
+
+# Build a RIOT ELF via the RIOT board Makefile
+$(BUILD_DIR)/riot-%.elf: FORCE
+	@$(MAKE) -C $(RIOT_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
+
+riot-list-tests:
+	@$(MAKE) -C $(RIOT_DIR) --no-print-directory list-tests
+
+# Internal helper used by rtl-riot-% and rtl-riot-all
+.PHONY: __rtl-riot-run
+__rtl-riot-run: build-rtl
+	@if [ -z "$(TEST)" ]; then \
+		echo "ERROR: TEST is required (e.g. make __rtl-riot-run TEST=simple)"; \
+		exit 1; \
+	fi
+	@$(MAKE) -C $(RIOT_DIR) --no-print-directory build TEST=$(TEST) BUILD_DIR=$(BUILD_DIR_ABS)
+	@echo "=========================================="
+	@echo "Running RIOT test '$(TEST)' with RTL simulator"
+	@echo "=========================================="
+	@cd $(BUILD_DIR) && ./jv32soc \
+	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
+	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(TIMEOUT_ARG) \
+	    riot-$(TEST).elf
+	@echo "=========================================="
+	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
+	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+
+# Run a RIOT test with the RTL simulator
+rtl-riot-%:
+	@$(MAKE) --no-print-directory __rtl-riot-run TEST=$*
+
+# Run all RIOT tests with the RTL simulator
+rtl-riot-all: build-rtl
+	@echo "=========================================="
+	@echo "Running all RIOT tests with RTL simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(RIOT_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[rtl-riot-all] $$t"; \
+		if ! $(MAKE) --no-print-directory __rtl-riot-run TEST=$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "rtl-riot-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "rtl-riot-all: all tests passed."
+
+# Run a RIOT test with the software simulator
+sim-riot-%: $(BUILD_DIR)/riot-%.elf $(JV32SIM)
+	@echo "=========================================="
+	@echo "Running RIOT test '$*' with software simulator"
+	@echo "=========================================="
+	$(JV32SIM) $(SIM_MAX_INSNS_ARG) $(BUILD_DIR)/riot-$*.elf
+	@echo "=========================================="
+	@echo "Done."
+	@echo "=========================================="
+
+# Run all RIOT tests with the software simulator
+sim-riot-all: sim-build
+	@echo "=========================================="
+	@echo "Running all RIOT tests with software simulator"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(RIOT_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[sim-riot-all] $$t"; \
+		if ! $(MAKE) --no-print-directory sim-riot-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "sim-riot-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "sim-riot-all: all tests passed."
+
+# Compare software-vs-RTL traces for a RIOT test
+compare-riot-%: $(BUILD_DIR)/riot-%.elf $(JV32SIM) build-rtl
+	@echo "=========================================="
+	@echo " JV32 RIOT Trace Comparison: $*"
+	@echo "=========================================="
+	@echo ""
+	@echo "[1/3] Running RTL simulator (generates mtime/irq hints)..."
+	@$(BUILD_DIR)/jv32soc --rtl-trace $(RTL_TRACE_FILE) \
+	    $(TIMEOUT_ARG) \
+	    $(BUILD_DIR)/riot-$*.elf 2>/dev/null \
+	    || (echo "FAIL: RTL simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[2/3] Running software simulator (using RTL hints to sync mtime/irq)..."
+	@$(JV32SIM) --trace $(BUILD_DIR)/sim_trace.txt \
+	    --rtl-hints $(RTL_TRACE_FILE) \
+	    $(SIM_MAX_INSNS_ARG) \
+	    $(BUILD_DIR)/riot-$*.elf \
+	    || (echo "FAIL: software simulator exited non-zero"; exit 1)
+	@echo ""
+	@echo "[3/3] Comparing traces..."
+	@python3 scripts/trace_compare.py \
+	    $(BUILD_DIR)/sim_trace.txt \
+	    $(RTL_TRACE_FILE) \
+	    || exit 1
+
+# Compare software-vs-RTL traces for all RIOT tests
+compare-riot-all:
+	@echo "=========================================="
+	@echo "Comparing RIOT traces for all tests"
+	@echo "=========================================="
+	@failed=0; \
+	for t in $$($(MAKE) -s -C $(RIOT_DIR) list-tests 2>/dev/null); do \
+		echo ""; \
+		echo "[compare-riot-all] $$t"; \
+		if ! $(MAKE) --no-print-directory compare-riot-$$t; then failed=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$failed -ne 0 ]; then \
+		echo "compare-riot-all: one or more tests failed."; exit 1; \
+	fi; \
+	echo "compare-riot-all: all tests passed."
 
 # ============================================================================
 # Submodule initialization (avoids pulling large nested submodules like llvm-project)

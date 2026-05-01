@@ -31,12 +31,12 @@ fpga/
 │   ├── Makefile
 │   └── fpga_stress.c               # Long-running FreeRTOS stability stress test
 └── build/                          # Vivado project output (git-ignored)
-    ├── jv32_xcku5p_cjtag.bit       # USE_CJTAG=1 bitstream (default)
-    ├── jv32_xcku5p_cjtag.mcs       # USE_CJTAG=1 SPI flash image
-    ├── jv32_xcku5p_cjtag.prm       # USE_CJTAG=1 flash programming params
-    ├── jv32_xcku5p_jtag.bit        # USE_CJTAG=0 bitstream
-    ├── jv32_xcku5p_jtag.mcs        # USE_CJTAG=0 SPI flash image
-    └── jv32_xcku5p_jtag.prm        # USE_CJTAG=0 flash programming params
+    ├── jv32_ku5p_cjtag.bit         # USE_CJTAG=1 bitstream (default)
+    ├── jv32_ku5p_cjtag.mcs         # USE_CJTAG=1 SPI flash image
+    ├── jv32_ku5p_cjtag.prm         # USE_CJTAG=1 flash programming params
+    ├── jv32_ku5p_jtag.bit          # USE_CJTAG=0 bitstream
+    ├── jv32_ku5p_jtag.mcs          # USE_CJTAG=0 SPI flash image
+    └── jv32_ku5p_jtag.prm          # USE_CJTAG=0 flash programming params
 ```
 
 ---

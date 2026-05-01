@@ -21,11 +21,13 @@ JV32_ROOT    := $(abspath $(VERIF_DIR)/..)
 -include $(JV32_ROOT)/env.config
 
 # ── ACT4 source ──────────────────────────────────────────────────────────────
-ACT_REPO     := https://github.com/riscv/riscv-arch-test
-ACT_BRANCH   := act4
+# riscv-arch-test is a git submodule pinned to a specific commit.
+# arch-test-setup checks it out at that pinned commit (no --remote).
+# To update: cd verif/riscv-arch-test && git checkout <new-commit>
+#            cd ../.. && git add verif/riscv-arch-test && git commit
 ACT_DIR      := $(VERIF_DIR)riscv-arch-test
-ACT_VENV     := $(ACT_DIR)/.venv
-ACT_SENTINEL := $(ACT_VENV)/.act-setup-done
+ACT_VENV         := $(ACT_DIR)/.venv
+ACT_SENTINEL     := $(ACT_VENV)/.act-setup-done
 
 # ── JV32 DUT config ──────────────────────────────────────────────────────────
 DUT_CONFIG   := $(VERIF_DIR)config/jv32-rv32imac
@@ -94,16 +96,19 @@ $(ACT_SENTINEL):
 	    echo "[arch-test] Installing uv..."; \
 	    curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi
-	@# ── 2. Clone / update riscv-arch-test ────────────────────────────────
-	@if git -C $(JV32_ROOT) config --file .gitmodules --get-regexp '^submodule\.verif/riscv-arch-test\.url$$' >/dev/null 2>&1; then \
-	    echo "[arch-test] Initializing/updating existing submodule $(ACT_DIR)..."; \
-	    git -C $(JV32_ROOT) submodule sync -- verif/riscv-arch-test; \
-	    git -C $(JV32_ROOT) submodule update --init --remote verif/riscv-arch-test; \
-	else \
-	    echo "[arch-test] Cloning $(ACT_REPO) (branch $(ACT_BRANCH))..."; \
-	    git -C $(JV32_ROOT) submodule add -b $(ACT_BRANCH) $(ACT_REPO) verif/riscv-arch-test; \
-	    git -C $(JV32_ROOT) submodule update --init verif/riscv-arch-test; \
-	fi
+	@# ── 2. Checkout riscv-arch-test at the pinned commit ─────────────────
+	@# We use 'submodule update --init' WITHOUT --remote so the submodule is
+	@# always checked out at the commit recorded in the parent repo index.
+	@# To advance to a newer arch-test release:
+	@#   cd verif/riscv-arch-test && git fetch && git checkout <new-commit>
+	@#   cd ../.. && git add verif/riscv-arch-test && git commit
+	@echo "[arch-test] Checking out pinned riscv-arch-test submodule..."
+	@git -C $(JV32_ROOT) submodule sync -- verif/riscv-arch-test
+	@git -C $(JV32_ROOT) submodule update --init verif/riscv-arch-test
+	@# Remove stale untracked generated files left by any previous run.
+	@# testgen  → tests/           covergroupgen → coverpoints/unpriv/ + external/
+	@# These directories are inside the submodule working tree but not tracked by it.
+	@git -C $(ACT_DIR) clean -fdq -- tests/ coverpoints/unpriv/ external/
 	@# ── 3. Bootstrap Python venv via uv ──────────────────────────────────
 	@echo "[arch-test] Installing Python environment (uv sync)..."
 	@cd $(ACT_DIR) && $(UV) sync --quiet

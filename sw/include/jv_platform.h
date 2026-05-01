@@ -34,6 +34,14 @@
 #define JV_MAGIC_SIZE   0x00010000UL
 #define JV_NCM_BASE     0x40001000UL  /**< Non-cacheable memory (512 B)      */
 #define JV_NCM_SIZE     0x00000200UL
+#define JV_PLIC_BASE    0x0C000000UL  /**< PLIC interrupt controller         */
+#define JV_PLIC_SIZE    0x00400000UL
+
+/* PLIC register offsets (standard SiFive/RISC-V PLIC layout) */
+#define JV_PLIC_PRIORITY_OFF    0x000000UL  /**< Source priority[n] = base + n*4  */
+#define JV_PLIC_ENABLE_OFF      0x002000UL  /**< Enable bits for context 0        */
+#define JV_PLIC_THRESHOLD_OFF   0x200000UL  /**< Priority threshold, context 0    */
+#define JV_PLIC_CLAIM_OFF       0x200004UL  /**< Claim / complete, context 0      */
 
 /* ============================================================================
  * Register accessor macro

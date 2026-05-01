@@ -190,7 +190,10 @@ module jv32_alu #(
             assign is_mul_op = (alu_op == ALU_MUL || alu_op == ALU_MULH || alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
 
             // Stage-1 combinatorial partial products (unsigned 16x16 -> 32-bit)
-            logic [31:0] pp_ll, pp_lh, pp_hl, pp_hh;
+            // (* use_dsp = "no" *): keep these in fabric; the conditional enable
+            // in the pipeline register prevents AREG/BREG/MREG inference anyway,
+            // which would trigger Vivado DRC warnings DPIP-2 and DPOP-4.
+            (* use_dsp = "no" *) logic [31:0] pp_ll, pp_lh, pp_hl, pp_hh;
             assign pp_ll = {16'b0, operand_a[15:0]} * {16'b0, operand_b[15:0]};
             assign pp_lh = {16'b0, operand_a[15:0]} * {16'b0, operand_b[31:16]};
             assign pp_hl = {16'b0, operand_a[31:16]} * {16'b0, operand_b[15:0]};

@@ -64,11 +64,13 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset proc_sys_reset_0
 set_property CONFIG.C_NUM_PERP_ARESETN {1} [get_bd_cells proc_sys_reset_0]
 
 # ---------------------------------------------------------------------------
-# Constant: proc_sys_reset ext_reset_in (active-HIGH) – deasserted
+# Constant: proc_sys_reset ext_reset_in is active-LOW (C_EXT_RESET_HIGH=0,
+# default).  Drive it HIGH (1) to deassert reset – no external reset button.
+# peripheral_aresetn goes high once the MMCM is locked.
 # ---------------------------------------------------------------------------
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant xlconstant_0
 set_property -dict [list \
-    CONFIG.CONST_VAL   {0} \
+    CONFIG.CONST_VAL   {1} \
     CONFIG.CONST_WIDTH {1} \
 ] [get_bd_cells xlconstant_0]
 connect_bd_net [get_bd_pins xlconstant_0/dout] \
