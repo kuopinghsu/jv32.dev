@@ -351,12 +351,46 @@ riscv64-unknown-elf-gdb --batch \
     build/hello.elf
 ```
 
-**3. Notes**
+**3. Required GDB session setup**
 
-- All `openocd/test_gdb_*.gdb` scripts work against the FPGA without modification.
-  They switch memory access to `progbuf` mode via `monitor riscv set_mem_access progbuf`,
-  which is required for arbitrary IRAM/DRAM writes on this target regardless of
-  whether you are using simulation or hardware.
+Two settings must be applied at the start of every interactive GDB session (the
+`openocd/test_gdb_*.gdb` scripts already include them):
+
+```
+# (a) Allow GDB to access memory outside the ELF LOAD segments.
+#     Without this, any access to DRAM, bare IRAM scratch, or stack
+#     regions not covered by the ELF fails with
+#     "Cannot access memory at address 0x...".
+set mem inaccessible-by-default off
+mem 0x80000000 0x80020000 rw    # IRAM  128 KB
+mem 0x90000000 0x90020000 rw    # DRAM  128 KB
+
+# (b) Switch OpenOCD to progbuf memory-access mode.
+#     The config files default to "abstract" mode, which cannot perform
+#     arbitrary memory writes (only register-width abstract-command
+#     accesses).  progbuf mode is required for: software breakpoints,
+#     "load", "set {int}addr = val", monitor mww, and any GDB
+#     memory-write packet.  Register read/write and hardware
+#     breakpoints work in either mode.
+monitor riscv set_mem_access progbuf
+```
+
+Recommended interactive session startup:
+
+```bash
+riscv64-unknown-elf-gdb \
+    -ex "set mem inaccessible-by-default off" \
+    -ex "mem 0x80000000 0x80020000 rw" \
+    -ex "mem 0x90000000 0x90020000 rw" \
+    -ex "target extended-remote :3333" \
+    -ex "monitor riscv set_mem_access progbuf" \
+    build/hello.elf
+```
+
+**4. Notes**
+
+- All `openocd/test_gdb_*.gdb` scripts work against the FPGA without modification;
+  they already include both settings above.
 - If your FT2232H probe has a non-default VID/PID (e.g. Digilent HS2 uses
   `0x0403 0x6014`), update the `ftdi vid_pid` line in the relevant `.cfg` file.
 - The GDB port (`3333`) and VPI port (`5555`) are only used in simulation;
