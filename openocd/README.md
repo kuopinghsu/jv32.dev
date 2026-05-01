@@ -2,36 +2,6 @@
 
 This directory contains the OpenOCD configuration files and Tcl test scripts for the JV32 JTAG/cJTAG debug interface.
 
-```
-openocd/
-├── Makefile                  # Build and run orchestration
-├── jv32.cfg                  # OpenOCD config for 4-wire JTAG (jtag_vpi driver)
-├── jv32_cjtag.cfg            # OpenOCD config for 2-wire cJTAG (OScan1, jtag_vpi + enable_cjtag)
-├── jv32_gdb.cfg              # GDB remote target config (for interactive GDB sessions)
-├── test_abstract_regs.tcl    # Abstract command: all 32 GPRs + key CSRs
-├── test_abstractauto.tcl     # ABSTRACTAUTO register autoexec behavior
-├── test_breakpoint.tcl       # Software and hardware breakpoints
-├── test_cjtag.tcl            # cJTAG transport sanity (cJTAG-mode only)
-├── test_csr_fields.tcl       # CSR field constraints (mstatus, mtvec, mepc, dpc)
-├── test_dcsr.tcl             # DCSR field validation
-├── test_debug_errors.tcl     # Error path and recovery after unmapped access
-├── test_debug_ext_alias.tcl  # Out-of-TCM alias routing via sysbus path
-├── test_dm_status.tcl        # dmstatus halt/resume bit transitions
-├── test_dtmcs.tcl            # DMI/TAP preflight (dmstatus, dmcontrol sanity)
-├── test_halt_resume.tcl      # Basic halt/resume/re-halt cycle
-├── test_havereset.tcl        # DM control: impebreak, havereset, hartreset, quick_access
-├── test_memory.tcl           # Memory word/halfword/byte read-write via progbuf
-├── test_memory_modes.tcl     # Three memory access modes: abstract, progbuf, sysbus
-├── test_misa.tcl             # misa register ISA encoding
-├── test_programbuf.tcl       # Program buffer execution
-├── test_registers.tcl        # GPR and CSR read/write via abstract commands
-├── test_reset.tcl            # ndmreset: PC lands at boot address
-├── test_sba.tcl              # System Bus Access raw DMI protocol
-├── test_step.tcl             # Single-step instruction advance
-├── test_triggers.tcl         # Hardware trigger module (N_TRIGGERS=2)
-└── test_watchpoint.tcl       # Data-write watchpoint via trigger
-```
-
 ---
 
 ## Tool Requirements
@@ -98,11 +68,18 @@ make openocd-test           # from project root
 cd openocd && make all
 ```
 
+### All tests including GDB suite
+
+```bash
+make -C openocd all-with-gdb
+```
+
 ### Individual transport suites
 
 ```bash
 make -C openocd test-jtag
 make -C openocd test-cjtag
+make -C openocd test-gdb
 ```
 
 ### Single test
@@ -112,6 +89,8 @@ make -C openocd jtag-halt_resume
 make -C openocd cjtag-halt_resume
 make -C openocd jtag-sba
 make -C openocd cjtag-abstract_regs
+make -C openocd gdb-step
+make -C openocd gdb-memory
 ```
 
 ### Override variables
@@ -119,7 +98,9 @@ make -C openocd cjtag-abstract_regs
 | Variable | Default | Description |
 |---|---|---|
 | `OPENOCD` | `openocd` | OpenOCD binary path |
+| `GDB` | `$(RISCV_PREFIX)gdb` | RISC-V GDB binary path |
 | `VPI_PORT` | `5555` | TCP port for the VPI server |
+| `GDB_PORT` | `3333` | TCP port for the OpenOCD GDB server |
 | `BOOT_ELF` | `build/hello.elf` | ELF loaded into the SoC simulator |
 
 ---
@@ -127,7 +108,33 @@ make -C openocd cjtag-abstract_regs
 ## Test Suite
 
 The 22 JTAG tests and 23 cJTAG tests (one extra cJTAG activation check) are listed below in
-execution order.
+execution order.  The 6 GDB tests are described separately in the [GDB Test Suite](#gdb-test-suite)
+section.
+
+| File | What it tests |
+|---|---|
+| `test_dtmcs.tcl` | DMI/TAP preflight: dmstatus version, authenticated, dmcontrol dmactive |
+| `test_halt_resume.tcl` | halt/resume/re-halt cycle; dmstatus anyrunning/allrunning bits |
+| `test_registers.tcl` | GPR (a0, t0) and CSR (mstatus, mepc, mcause, mscratch) read/write via abstract commands |
+| `test_abstract_regs.tcl` | All 32 GPRs + mscratch, mtvec BASE alignment, mie — exhaustive abstract command coverage |
+| `test_memory.tcl` | Word/halfword/byte write-read-back via progbuf; 4-word burst; DRAM access |
+| `test_memory_modes.tcl` | All three access modes: `abstract`, `progbuf`, `sysbus` — each writes a distinct value |
+| `test_reset.tcl` | ndmreset: PC must land at `0x80000000` after `reset halt` |
+| `test_dm_status.tcl` | dmstatus anyhalted/allhalted/anyrunning/allrunning raw DMI bit transitions |
+| `test_programbuf.tcl` | progbufsize ≥ 2; execute `addi a0,a0,1` + `ebreak` via progbuf; verify a0 incremented |
+| `test_step.tcl` | 4 × `step` from `0x80000000`; PC advances each time; DCSR.cause=4; step bit cleared on resume |
+| `test_debug_errors.tcl` | Unmapped-address access error; DM recovery via `reset halt`; working mode fallback |
+| `test_breakpoint.tcl` | sw/hw breakpoints; sw-after-hw; hw-after-sw; DCSR.cause=2; ebreakm sw path |
+| `test_watchpoint.tcl` | Write watchpoint via trigger CSRs; progbuf store fires trigger; DCSR.cause=2 |
+| `test_misa.tcl` | misa `0x40001105`: MXL=1 (RV32), A/C/I/M bits set, F/D/V bits clear |
+| `test_dcsr.tcl` | xdebugver=4, prv=3 (M-mode), cause=3 (halt_req); ebreakm set/clear round-trip |
+| `test_triggers.tcl` | tinfo type-2 bit; tselect isolation; trigger 0 execute-match; trigger 1 allocation |
+| `test_csr_fields.tcl` | mstatus MIE/MPIE writable; mtvec BASE alignment; mepc LSB=0; dpc within IRAM |
+| `test_sba.tcl` | SBA raw DMI: sbversion=1/sbasize=32; SBA write+read; sbreadonaddr; autoincrement burst; sbbusyerror W1C |
+| `test_havereset.tcl` | impebreak=1; non-existent hart; havereset sticky; ackhavereset; hartreset; CMD_QUICK_ACCESS rejected; postexec-only |
+| `test_abstractauto.tcl` | ABSTRACTAUTO default=0; round-trip; autoexec_data[0] re-executes on DATA0 read; no cmderr accumulation |
+| `test_debug_ext_alias.tcl` | Out-of-TCM alias routing: IRAM alias↔canonical and DRAM alias↔canonical via sysbus |
+| `test_cjtag.tcl` | cJTAG OScan1 activation: halt/resume/re-halt over 2-wire transport *(cJTAG suite only)* |
 
 ### `test_dtmcs.tcl` — DMI/TAP preflight
 
@@ -478,19 +485,153 @@ execution order to catch transport-level failures before running the full common
 
 ---
 
+## GDB Test Suite
+
+The 6 GDB tests are driven by `riscv-gdb --batch` connecting to an OpenOCD GDB server
+(`GDB_PORT`, default `3333`) that sits in front of the JTAG VPI simulator. Each test script
+emits `[PASS]` / `[SKIP]` on success using the same convention as the Tcl tests.
+
+The GDB server is started by the Makefile before invoking GDB and is killed afterward; no
+persistent OpenOCD instance is required. GDB Python scripting is used for all assertions.
+
+| File | What it tests |
+|---|---|
+| `test_gdb_load.gdb` | ELF download via `load`, entry-point PC check, `stepi`/`nexti` after load, `DCSR.cause` |
+| `test_gdb_step.gdb` | `stepi` × 3, `nexti` × 2, source-level `step`/`next` (SKIP-tolerant without DWARF) |
+| `test_gdb_breakpoint.gdb` | `hbreak` hit + `DCSR.cause=2`, two simultaneous hw breakpoints, disable/re-enable, sw `break` |
+| `test_gdb_memory.gdb` | 32/16/8-bit write-read-back, boundary crossing, 8-word burst, zero-fill, IRAM read, far DRAM |
+| `test_gdb_regs.gdb` | PC/SP validity, GPR write-back, `info registers`, CSRs: misa, dcsr, mstatus, mepc, x0 |
+| `test_gdb_debug.gdb` | `info registers`, disasm, stepi×4, hw bp, backtrace, write watchpoint injection, resume/re-halt |
+
+### `test_gdb_load.gdb` — ELF download
+
+Verifies that GDB can download an ELF into the target and that execution can begin from the
+entry point:
+
+1. `monitor reset halt` — reset and stop the hart.
+2. `load` — download all ELF sections; must complete without error.
+3. Verify entry-point PC is within IRAM (`0x80000000`–`0x80FFFFFF`).
+4. Execute `stepi`; verify PC advanced from the entry point.
+5. Execute `nexti`; verify PC advanced again.
+6. Verify `DCSR.cause == 4` (step) via `monitor reg dcsr`.
+
+---
+
+### `test_gdb_step.gdb` — stepi / nexti / step / next
+
+Covers all four GDB stepping commands on a bare-metal RISC-V target:
+
+| Command | Semantics on bare-metal | Pass criterion |
+|---|---|---|
+| `stepi` | Instruction-level step (single instruction) | PC advances; `DCSR.cause == 4` |
+| `nexti` | Step-over at instruction level | PC advances; `DCSR.cause == 4` |
+| `step` | Source-line step (may be identical to stepi) | PC advances, or SKIP if no DWARF info |
+| `next` | Step-over at source level | PC advances, or SKIP if no DWARF info |
+
+Sequence:
+
+1. `monitor reset halt`; force `pc = 0x80000000` for a deterministic start.
+2. Three consecutive `stepi` commands; each must advance PC and set `DCSR.cause = 4`.
+3. Two consecutive `nexti` commands; same checks.
+4. One `step` and one `next`; SKIP-tolerant if no DWARF line info is available.
+
+PC must remain within the expected range (`0x80000000`–`0x8FFFFFFF`) throughout.
+
+---
+
+### `test_gdb_breakpoint.gdb` — hardware and software breakpoints
+
+Exercises the full GDB breakpoint lifecycle:
+
+| Subtest | Command | Description |
+|---|---|---|
+| Single hw bp | `hbreak *addr` | Set at `pc + 0x10`; continue; verify hit; check `DCSR.cause == 2` |
+| Dual hw bp | `hbreak *a` + `hbreak *b` | Two simultaneous; first fires, then second; verify ordering |
+| Disable / re-enable | `disable N` / `enable N` | Disabled bp not triggered during stepi; re-enable then delete |
+| Software bp | `break *addr` | SKIP-tolerant if `ebreakm` not configured on the target |
+
+After each subtest all breakpoints are deleted and the state is verified clean with
+`info breakpoints`.
+
+---
+
+### `test_gdb_memory.gdb` — memory read/write via GDB expressions
+
+Verifies memory access using GDB `set {type}addr` and `*(type*)addr` expressions targeting DRAM
+(`0x90000000`) and IRAM (`0x80000000`):
+
+| Check | Width | Address | Description |
+|---|---|---|---|
+| Word write/read + overwrite | 32-bit | `0x90000000` | Two consecutive writes; verify both |
+| Halfword lo + hi | 16-bit | `0x90000010`/`12` | Two adjacent halfwords; verify as one full word |
+| Byte × 4 | 8-bit | `0x90000020`–`23` | Four bytes; verify assembled word `0xD4C3B2A1` |
+| Byte boundary | 8-bit | `0x90000033`/`34` | Straddles a 4-byte word boundary |
+| 8-word burst | 32-bit | `0x90000040` | Write 8 words; read back each individually |
+| Zero-fill | 32-bit | `0x90000080` | Write 8 × `0xFFFFFFFF`, then zero-fill; verify all zero |
+| IRAM readable | 32-bit | `0x80000000` | At least one of 8 boot words is non-zero |
+| Far DRAM bound | 32-bit | `0x90007FF0` | Write/read near DRAM upper boundary |
+
+---
+
+### `test_gdb_regs.gdb` — general-purpose and CSR register access
+
+Validates register access via GDB `$regname` expressions and `monitor reg`:
+
+1. **PC validity** — must be within `0x80000000`–`0x9FFFFFFF` after halt.
+2. **SP** — non-zero and 4-byte aligned.
+3. **t0 / t1** — write `0xDEADBEEF` / `0xCAFEBABE`, verify read-back, restore originals.
+4. **s0 / a0** — write `0xA5A5A5A5` / `0x5A5A5A5A`, verify read-back, restore originals.
+5. **`info registers`** — output must contain `pc`, `sp`, `ra`, `zero`.
+6. **misa** — `MXL [31:30] == 1` (RV32); `I`-extension bit set.
+7. **dcsr** — `prv [1:0] == 3` (M-mode); `debugver [31:28] >= 2`.
+8. **mstatus** — readable and non-zero.
+9. **mepc** — readable (zero early in boot is tolerated).
+10. **x0 (zero)** — write attempt silently ignored; always reads `0`.
+
+---
+
+### `test_gdb_debug.gdb` — comprehensive debug session
+
+Exercises a realistic multi-step debug workflow end-to-end:
+
+1. **`info registers`** — output contains `pc`, `sp`, `ra`, `zero`.
+2. **`x/8i $pc`** — disassemble 8 instructions; output must contain ≥ 4 lines.
+3. **`stepi` × 4** — PC must advance from the starting value.
+4. **Hardware breakpoint** — `hbreak *pc+0x10`; `continue`; verify halt and `DCSR.cause == 2`.
+5. **`backtrace`** — must not crash GDB; depth ≥ 1 frame (tolerance for bare-metal frames).
+6. **`info breakpoints`** — empty after `delete breakpoints`.
+7. **Write watchpoint via code injection**:
+   - Write a 3-instruction snippet (`lui x6,0x90000` / `sw x0,0x200(x6)` / `ebreak`) to
+     IRAM scratch area (`0x80007000`).
+   - Redirect PC to the snippet.
+   - Set `watch *(unsigned int*)0x90000200`.
+   - `continue` — hart executes the store, watchpoint fires.
+   - Verify `DCSR.cause == 2` (trigger) and PC within the snippet range.
+8. **Watchpoint cleanup** — `delete breakpoints`; `info watchpoints` must be empty.
+9. **Post-watchpoint stepi** — `DCSR.cause` must be `4` (step, not trigger).
+10. **Resume / re-halt round-trip** — hart must halt again cleanly after a free run.
+
+---
+
 ## Log Files
 
 All test output is written to `build/openocd_logs/`:
 
 ```
 build/openocd_logs/
-├── jtag_dtmcs.log
-├── jtag_halt_resume.log
+├── jtag_dtmcs.ocd.log
+├── jtag_halt_resume.ocd.log
 ├── ...
-├── cjtag_cjtag.log
-├── cjtag_dtmcs.log
-└── ...
+├── cjtag_cjtag.ocd.log
+├── cjtag_dtmcs.ocd.log
+├── ...
+├── gdb_load.gdb.log
+├── gdb_step.gdb.log
+├── gdb_breakpoint.gdb.log
+├── gdb_memory.gdb.log
+├── gdb_regs.gdb.log
+└── gdb_debug.gdb.log
 ```
 
-On failure the log shows the OpenOCD error output and the Tcl `error` message from the failing
-test. Pass/fail summary is printed to stdout at the end of each transport run.
+On failure the log shows the OpenOCD / GDB error output and the assertion message from the failing
+test. Pass/fail summary is printed to stdout at the end of each transport or GDB suite run.
