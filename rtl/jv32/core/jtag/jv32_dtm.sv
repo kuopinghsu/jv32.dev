@@ -1045,6 +1045,67 @@ module jv32_dtm #(
     // sba_busy_clk: true while any SBA state is active in clk domain
     assign sba_busy_clk = (cmd_state == CMD_SBA_READ) || (cmd_state == CMD_SBA_WRITE);
 
+    // ========================================================================
+    // SBA byte enable and data positioning (combinational)
+    // ========================================================================
+    always_comb begin
+        // Default values
+        sba_wstrb            = 4'b1111;
+        sba_wdata_positioned = sbdata0_clk;
+        sba_rdata_masked     = dbg_mem_rdata_i;  // Default: full 32-bit word
+
+        case (sb_access_clk)
+            SBA_ACCESS8: begin
+                // Byte access - position based on address[1:0]
+                case (sbaddress0_clk[1:0])
+                    2'b00: begin
+                        sba_wstrb            = 4'b0001;
+                        sba_wdata_positioned = {24'b0, sbdata0_clk[7:0]};
+                        sba_rdata_masked     = {24'b0, dbg_mem_rdata_i[7:0]};
+                    end
+                    2'b01: begin
+                        sba_wstrb            = 4'b0010;
+                        sba_wdata_positioned = {16'b0, sbdata0_clk[7:0], 8'b0};
+                        sba_rdata_masked     = {24'b0, dbg_mem_rdata_i[15:8]};
+                    end
+                    2'b10: begin
+                        sba_wstrb            = 4'b0100;
+                        sba_wdata_positioned = {8'b0, sbdata0_clk[7:0], 16'b0};
+                        sba_rdata_masked     = {24'b0, dbg_mem_rdata_i[23:16]};
+                    end
+                    2'b11: begin
+                        sba_wstrb            = 4'b1000;
+                        sba_wdata_positioned = {sbdata0_clk[7:0], 24'b0};
+                        sba_rdata_masked     = {24'b0, dbg_mem_rdata_i[31:24]};
+                    end
+                    default: begin
+                        sba_wstrb            = 4'b0001;
+                        sba_wdata_positioned = {24'b0, sbdata0_clk[7:0]};
+                        sba_rdata_masked     = {24'b0, dbg_mem_rdata_i[7:0]};
+                    end
+                endcase
+            end
+            SBA_ACCESS16: begin
+                // Halfword access - position based on address[1]
+                if (sbaddress0_clk[1]) begin
+                    sba_wstrb            = 4'b1100;
+                    sba_wdata_positioned = {sbdata0_clk[15:0], 16'b0};
+                    sba_rdata_masked     = {16'b0, dbg_mem_rdata_i[31:16]};
+                end
+                else begin
+                    sba_wstrb            = 4'b0011;
+                    sba_wdata_positioned = {16'b0, sbdata0_clk[15:0]};
+                    sba_rdata_masked     = {16'b0, dbg_mem_rdata_i[15:0]};
+                end
+            end
+            default: begin  // SBA_ACCESS32
+                sba_wstrb            = 4'b1111;
+                sba_wdata_positioned = sbdata0_clk;
+                sba_rdata_masked     = dbg_mem_rdata_i;
+            end
+        endcase
+    end
+
     // Register access command fields (cmdtype == 0)
     assign cmd_size     = command_reg_sys[22:20];  // Size: 2=32-bit, 3=64-bit
     assign cmd_postexec = command_reg_sys[18];     // Execute progbuf after
@@ -1092,9 +1153,6 @@ module jv32_dtm #(
             sbdata0_clk             <= 32'b0;
             sbdata0_result_valid    <= 1'b0;
             sbaddress0_result_valid <= 1'b0;
-            sba_wstrb               <= 4'b0;
-            sba_wdata_positioned    <= 32'b0;
-            sba_rdata_masked        <= 32'b0;
 
             // State machine
             cmd_state               <= CMD_IDLE;
@@ -1749,24 +1807,7 @@ module jv32_dtm #(
                         sba_wait_cnt    <= 4'b0;
                     end
                     else if (dbg_mem_ready_i) begin
-                        // Extract correct byte(s) based on access width and address alignment
-                        case (sb_access_clk)
-                            SBA_ACCESS8: begin
-                                case (sbaddress0_clk[1:0])
-                                    2'b00:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[7:0]};
-                                    2'b01:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[15:8]};
-                                    2'b10:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[23:16]};
-                                    2'b11:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[31:24]};
-                                    default: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[7:0]};
-                                endcase
-                            end
-                            SBA_ACCESS16: begin
-                                if (sbaddress0_clk[1]) sba_rdata_masked <= {16'b0, dbg_mem_rdata_i[31:16]};
-                                else sba_rdata_masked <= {16'b0, dbg_mem_rdata_i[15:0]};
-                            end
-                            default: sba_rdata_masked <= dbg_mem_rdata_i;  // SBA_ACCESS32
-                        endcase
-                        // Store result in CLK-domain register and signal TCK to sync
+                        // Store extracted result (from always_comb) in CLK-domain register
                         sbdata0_clk          <= sba_rdata_masked;
                         sbdata0_result_valid <= 1'b1;
                         dbg_mem_req_o        <= 1'b0;
@@ -1796,48 +1837,7 @@ module jv32_dtm #(
 
                 CMD_SBA_WRITE: begin
                     if (!mem_req_pending) begin
-                        // Compute byte enables and data positioning based on access width
-                        case (sb_access_clk)
-                            SBA_ACCESS8: begin
-                                case (sbaddress0_clk[1:0])
-                                    2'b00: begin
-                                        sba_wstrb            <= 4'b0001;
-                                        sba_wdata_positioned <= {24'b0, sbdata0_clk[7:0]};
-                                    end
-                                    2'b01: begin
-                                        sba_wstrb            <= 4'b0010;
-                                        sba_wdata_positioned <= {16'b0, sbdata0_clk[7:0], 8'b0};
-                                    end
-                                    2'b10: begin
-                                        sba_wstrb            <= 4'b0100;
-                                        sba_wdata_positioned <= {8'b0, sbdata0_clk[7:0], 16'b0};
-                                    end
-                                    2'b11: begin
-                                        sba_wstrb            <= 4'b1000;
-                                        sba_wdata_positioned <= {sbdata0_clk[7:0], 24'b0};
-                                    end
-                                    default: begin
-                                        sba_wstrb            <= 4'b0001;
-                                        sba_wdata_positioned <= {24'b0, sbdata0_clk[7:0]};
-                                    end
-                                endcase
-                            end
-                            SBA_ACCESS16: begin
-                                if (sbaddress0_clk[1]) begin
-                                    sba_wstrb            <= 4'b1100;
-                                    sba_wdata_positioned <= {sbdata0_clk[15:0], 16'b0};
-                                end
-                                else begin
-                                    sba_wstrb            <= 4'b0011;
-                                    sba_wdata_positioned <= {16'b0, sbdata0_clk[15:0]};
-                                end
-                            end
-                            default: begin  // SBA_ACCESS32
-                                sba_wstrb            <= 4'b1111;
-                                sba_wdata_positioned <= sbdata0_clk;
-                            end
-                        endcase
-                        // Issue SBA memory write with computed byte enables
+                        // Issue SBA memory write with computed byte enables (from always_comb block)
                         dbg_mem_req_o   <= 1'b1;
                         dbg_mem_addr_o  <= {sbaddress0_clk[31:2], 2'b00};  // Word-aligned
                         dbg_mem_wdata_o <= sba_wdata_positioned;

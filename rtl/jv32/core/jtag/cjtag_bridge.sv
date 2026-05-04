@@ -117,6 +117,11 @@ module cjtag_bridge (
     logic          tck_rise_req;  // One-cycle pulse: raise TCK next cycle
     logic          tck_fall_req;  // One-cycle pulse: lower TCK next cycle (after DTS samples TDO)
 
+`ifdef DEBUG
+    // Debug state tracking
+    logic [2:0] prev_state;  // Previous state for change detection
+`endif
+
     // =========================================================================
     // Input Synchronizers - 2-stage for metastability protection
     // =========================================================================
@@ -200,12 +205,22 @@ module cjtag_bridge (
     // =========================================================================
     always_ff @(posedge clk_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
-            state            <= ST_OFFLINE;
-            return_state     <= ST_OFFLINE;
-            activation_shift <= 11'd0;
-            activation_count <= 4'd0;
-            bit_pos          <= 2'd0;
-            tmsc_sampled     <= 1'b0;
+            state             <= ST_OFFLINE;
+            return_state      <= ST_OFFLINE;
+            activation_shift  <= 11'd0;
+            activation_count  <= 4'd0;
+            bit_pos           <= 2'd0;
+            tmsc_sampled      <= 1'b0;
+            tmsc_toggle_count <= 5'd0;
+            tck_int           <= 1'b0;
+            tms_int           <= 1'b1;
+            tdi_int           <= 1'b0;
+            tmsc_oen_int      <= 1'b1;
+            tck_rise_req      <= 1'b0;
+            tck_fall_req      <= 1'b0;
+`ifdef DEBUG
+            prev_state <= 3'd0;
+`endif
         end
         else begin
             case (state)
@@ -323,10 +338,42 @@ module cjtag_bridge (
                                      {tmsc_s, activation_shift[10:8]} == (activation_shift[3:0] ^ activation_shift[7:4])));
 `endif
 
-                            // Validate: OAC=1100, EC=1000.
-                            // CP is intentionally not checked for tool compatibility —
-                            // real ARM silicon does not enforce CP, and common tools
-                            // (e.g. ftdi.c) historically sent incorrect CP values.
+                            // Validate activation packet:
+                            // - OAC must be 4'b1100 (select JTAG TAP)
+                            // - EC must be 4'b1000 (enable OScan1)
+                            // - CP should be OAC⊕EC = 4'b0100 per IEEE 1149.7
+                            //
+                            // CP CHECK COMPATIBILITY:
+                            // OpenOCD ftdi.c sends CP=0x0 (bug), but real ARM hardware accepts it.
+                            // By default, CP is NOT checked for tool compatibility.
+                            // Define CJTAG_STRICT_CP_CHECK to enable strict IEEE 1149.7 compliance.
+`ifdef CJTAG_STRICT_CP_CHECK
+                            if (activation_shift[3:0] == 4'b1100 &&
+                                activation_shift[7:4] == 4'b1000 &&
+                                {tmsc_s, activation_shift[10:8]} == (activation_shift[3:0] ^ activation_shift[7:4])) begin
+
+                                state   <= ST_OSCAN1;
+                                bit_pos <= 2'd0;
+
+                                `DEBUG2(`DBG_GRP_JTAG,
+                                        ("[%0t] ONLINE_ACT -> OSCAN1 (activation packet valid!)", $time));
+                            end
+                            else begin
+                                state <= ST_OFFLINE;
+`ifdef DEBUG
+                                if (activation_shift[3:0] != 4'b1100) begin
+                                    `DEBUG2(`DBG_GRP_JTAG,
+                                            ("[%0t] ONLINE_ACT -> OFFLINE (invalid OAC: %b)", $time,
+                                             activation_shift[3:0]));
+                                end
+                                else begin
+                                    `DEBUG2(
+                                        `DBG_GRP_JTAG,
+                                        ("[%0t] ONLINE_ACT -> OFFLINE (invalid EC: %b)", $time, activation_shift[7:4]));
+                                end
+`endif
+                            end
+`else
                             if (activation_shift[3:0] == 4'b1100 && activation_shift[7:4] == 4'b1000) begin
                                 state   <= ST_OSCAN1;
                                 bit_pos <= 2'd0;
@@ -349,6 +396,7 @@ module cjtag_bridge (
                                 end
 `endif
                             end
+`endif
                             activation_count <= 4'd0;
                         end
                         else begin
@@ -555,16 +603,10 @@ module cjtag_bridge (
 
 `ifdef DEBUG
     // Monitor state changes
-    logic [2:0] prev_state;
-    always_ff @(posedge clk_i or negedge ntrst_i) begin
-        if (!ntrst_i) begin
-            prev_state <= 3'd0;  // ST_OFFLINE
-        end
-        else begin
-            if (state != prev_state) begin
-                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] STATE CHANGE: %0d -> %0d", $time, prev_state, state));
-                prev_state <= state;
-            end
+    always_ff @(posedge clk_i) begin
+        if (state != prev_state) begin
+            `DEBUG2(`DBG_GRP_JTAG, ("[%0t] STATE CHANGE: %0d -> %0d", $time, prev_state, state));
+            prev_state <= state;
         end
     end
 `endif

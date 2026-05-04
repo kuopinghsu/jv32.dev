@@ -8,15 +8,17 @@ puts "\[TEST\] SBA (System Bus Access) raw DMI protocol"
 #   0x39  SBADDRESS0 — target address (32-bit)
 #   0x3C  SBDATA0    — read/write data (32-bit)
 #
-# jv32 advertises: sbversion=1, sbaccess32 only, sbasize=32-bit.
+# jv32 advertises: sbversion=1, sbaccess8/16/32 supported, sbasize=32-bit.
 #
 # Checks:
-#   1. SBCS read-only fields: sbversion=1, sbasize=32, access32 capability set.
-#   2. SBA write: write sbaddress0 then sbdata0 → bus write; verify via progbuf read.
+#   1. SBCS read-only fields: sbversion=1, sbasize=32, access8/16/32 capabilities.
+#   2. SBA write (32-bit): write sbaddress0 then sbdata0 → bus write; verify via progbuf read.
 #   3. SBA read (sbreadononaddr): write sbaddress0 triggers auto-read.
-#   4. sbautoincrement + sbreadondata streaming: 4-word block read.
-#   5. sbbusyerror W1C: clear the sticky error bit.
-#   6. SBCS writable bits round-trip.
+#   4. SBA byte access (sbaccess=0): byte writes/reads at all 4 alignments.
+#   5. SBA halfword access (sbaccess=1): halfword writes/reads at both alignments.
+#   6. sbautoincrement + sbreadondata streaming: 4-word block read.
+#   7. sbbusyerror W1C: clear the sticky error bit.
+#   8. SBCS writable bits round-trip.
 
 proc as_u32 {v} {
     if {[regexp {0x([0-9a-fA-F]+)} $v -> hex]} { return [expr "0x$hex"] }
@@ -60,13 +62,16 @@ if {$sbasize != 32} {
 if {!($sbcs_init & 0x4)} {
     error "sbcs.sbaccess32 (bit 2) not set — 32-bit access not advertised"
 }
-if {($sbcs_init & 0x3) != 0} {
-    puts "\[WARN\] sbcs.sbaccess8/16 unexpectedly set: [format 0x%08x $sbcs_init]"
+if {!($sbcs_init & 0x2)} {
+    error "sbcs.sbaccess16 (bit 1) not set — 16-bit access not advertised"
+}
+if {!($sbcs_init & 0x1)} {
+    error "sbcs.sbaccess8 (bit 0) not set — 8-bit access not advertised"
 }
 if {($sbcs_init & 0x8) != 0} {
-    puts "\[WARN\] sbcs.sbaccess64 unexpectedly set (only 32-bit supported)"
+    puts "\[WARN\] sbcs.sbaccess64 unexpectedly set (only 8/16/32-bit supported)"
 }
-puts "sbcs: sbversion=$sbversion sbasize=$sbasize access32=1 OK"
+puts "sbcs: sbversion=$sbversion sbasize=$sbasize access8=1 access16=1 access32=1 OK"
 
 # ── 2. SBA write: sbaddress0 + sbdata0 write triggers bus write ───────────────
 # Configure SBCS: sbaccess=2 (32-bit), no auto-trigger bits.
@@ -113,7 +118,91 @@ if {$sba_rd != $rd_val} {
 }
 puts "SBA read (sbreadononaddr) OK"
 
-# ── 4. sbautoincrement: address advances by 4 after each SBA read ─────────────
+# ── 4. SBA byte access (sbaccess=0): all 4 byte positions ─────────────────────
+# Test byte writes and reads at each alignment within a 32-bit word.
+set BYTE_BASE [expr {$MEM_BASE + 96}]
+set byte_vals {0xAA 0xBB 0xCC 0xDD}
+
+# Configure SBCS: sbaccess=0 (8-bit byte access)
+riscv dmi_write 0x38 [expr {0 << 17}]  ;# sbaccess=0
+
+# Write 4 bytes at consecutive addresses (tests all 4 byte lane positions)
+for {set i 0} {$i < 4} {incr i} {
+    set addr [expr {$BYTE_BASE + $i}]
+    set val [lindex $byte_vals $i]
+    riscv dmi_write 0x39 $addr    ;# sbaddress0
+    riscv dmi_write 0x3C $val      ;# sbdata0 → triggers byte write
+    after 10
+}
+check_sberrors
+
+# Read back each byte via SBA and verify
+riscv dmi_write 0x38 [expr {(1 << 20) | (0 << 17)}]  ;# sbreadononaddr | sbaccess=0
+for {set i 0} {$i < 4} {incr i} {
+    set addr [expr {$BYTE_BASE + $i}]
+    set expected [lindex $byte_vals $i]
+    riscv dmi_write 0x39 $addr    ;# write sbaddress0 → triggers byte read
+    after 30
+    check_sberrors
+    set got [expr {[as_u32 [riscv dmi_read 0x3C]] & 0xFF}]
+    puts "SBA byte read: [format 0x%08x $addr] (alignment=$i) → [format 0x%02x $got] (expected [format 0x%02x $expected])"
+    if {$got != $expected} {
+        error "SBA byte read mismatch at alignment $i: expected=[format 0x%02x $expected] got=[format 0x%02x $got]"
+    }
+}
+
+# Verify the full 32-bit word via progbuf to ensure correct byte positioning
+set word_via_progbuf [lindex [read_memory $BYTE_BASE 32 1] 0]
+set expected_word 0xDDCCBBAA  ;# Little-endian: byte0=0xAA at lowest address
+puts "SBA byte write verification: 32-bit word at [format 0x%08x $BYTE_BASE] = [format 0x%08x $word_via_progbuf] (expected [format 0x%08x $expected_word])"
+if {$word_via_progbuf != $expected_word} {
+    error "SBA byte positioning error: expected [format 0x%08x $expected_word] got [format 0x%08x $word_via_progbuf]"
+}
+puts "SBA byte access (sbaccess=0, all 4 alignments) OK"
+
+# ── 5. SBA halfword access (sbaccess=1): both alignments ──────────────────────
+# Test halfword writes and reads at aligned and +2 offset positions.
+set HALF_BASE [expr {$MEM_BASE + 128}]
+set half_vals {0x1234 0x5678}
+
+# Configure SBCS: sbaccess=1 (16-bit halfword access)
+riscv dmi_write 0x38 [expr {1 << 17}]  ;# sbaccess=1
+
+# Write 2 halfwords: one at word-aligned, one at +2 offset
+for {set i 0} {$i < 2} {incr i} {
+    set addr [expr {$HALF_BASE + $i * 2}]
+    set val [lindex $half_vals $i]
+    riscv dmi_write 0x39 $addr    ;# sbaddress0
+    riscv dmi_write 0x3C $val      ;# sbdata0 → triggers halfword write
+    after 10
+}
+check_sberrors
+
+# Read back each halfword via SBA and verify
+riscv dmi_write 0x38 [expr {(1 << 20) | (1 << 17)}]  ;# sbreadononaddr | sbaccess=1
+for {set i 0} {$i < 2} {incr i} {
+    set addr [expr {$HALF_BASE + $i * 2}]
+    set expected [lindex $half_vals $i]
+    riscv dmi_write 0x39 $addr    ;# write sbaddress0 → triggers halfword read
+    after 30
+    check_sberrors
+    set got [expr {[as_u32 [riscv dmi_read 0x3C]] & 0xFFFF}]
+    puts "SBA halfword read: [format 0x%08x $addr] (alignment=[expr {$i * 2}]) → [format 0x%04x $got] (expected [format 0x%04x $expected])"
+    if {$got != $expected} {
+        error "SBA halfword read mismatch at alignment [expr {$i * 2}]: expected=[format 0x%04x $expected] got=[format 0x%04x $got]"
+    }
+}
+
+# Verify the full 32-bit word via progbuf
+set word_via_progbuf [lindex [read_memory $HALF_BASE 32 1] 0]
+set expected_word 0x56781234  ;# Little-endian: half0=0x1234 at lowest address
+puts "SBA halfword write verification: 32-bit word at [format 0x%08x $HALF_BASE] = [format 0x%08x $word_via_progbuf] (expected [format 0x%08x $expected_word])"
+if {$word_via_progbuf != $expected_word} {
+    error "SBA halfword positioning error: expected [format 0x%08x $expected_word] got [format 0x%08x $word_via_progbuf]"
+}
+puts "SBA halfword access (sbaccess=1, both alignments) OK"
+
+# ── 6. sbautoincrement: address advances by 4 after each SBA read ─────────────
 # jv32 implements sb_autoincr but NOT sbreadondata.  Reads are triggered only
 # by sbreadononaddr (write to sbaddress0).  sbautoincrement causes sbaddress0
 # to advance automatically so the host can see the new address without
@@ -164,7 +253,7 @@ foreach {i got exp} [list \
 }
 puts "SBA sbautoincrement (address advance + sequential read) OK"
 
-# ── 5. sbbusyerror W1C ────────────────────────────────────────────────────────
+# ── 7. sbbusyerror W1C ────────────────────────────────────────────────────────
 # The sbbusyerror bit (bit 22) is sticky and cleared only by writing 1 to bit 22.
 # Trigger it: write sbdata0 while sbbusy=1 is impossible to arrange reliably in
 # simulation (bus ops complete before TCL continues), so we verify the W1C
@@ -177,10 +266,10 @@ if {(($sbcs_after >> 22) & 1) != 0} {
 }
 puts "sbbusyerror (bit 22) W1C mechanism OK"
 
-# ── 6. SBCS writable bits round-trip ─────────────────────────────────────────
+# ── 8. SBCS writable bits round-trip ─────────────────────────────────────────
 # Write a combination of all RW bits and read back.
 # RW bits: sbreadononaddr[20], sbaccess[19:17], sbautoincrement[16], sbreadondata[15].
-# sbaccess is constrained to 010 (32-bit only); other values may be corrected.
+# sbaccess supports 0 (byte), 1 (halfword), 2 (word).
 set sbcs_rw_test [expr {(1 << 20) | (2 << 17) | (1 << 16) | (1 << 15)}]
 riscv dmi_write 0x38 $sbcs_rw_test
 set sbcs_rw_rd [as_u32 [riscv dmi_read 0x38]]

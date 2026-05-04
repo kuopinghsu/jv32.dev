@@ -339,7 +339,7 @@ openocd -f fpga/jtag/jv32_fpga_jtag.cfg \
 
 ```bash
 # Interactive session
-riscv64-unknown-elf-gdb -ex "target extended-remote :3333" build/hello.elf
+riscv64-unknown-elf-gdb -ex "target extended-remote :3333" -ex "load" build/hello.elf
 
 # Run a test script non-interactively (same scripts as the VPI tests)
 riscv64-unknown-elf-gdb --batch \
@@ -347,6 +347,7 @@ riscv64-unknown-elf-gdb --batch \
     -ex "set confirm off" \
     -ex "set remotetimeout 30" \
     -ex "target extended-remote :3333" \
+    -ex "load" \
     -x openocd/test_gdb_breakpoint.gdb \
     build/hello.elf
 ```
