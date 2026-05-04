@@ -1528,8 +1528,7 @@ format-rtl:
 	        --flagfile=.rules.verible_format \
 	        $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) \
 	        >/dev/null && \
-	    python3 scripts/align_localparams.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
-	    python3 scripts/align_trailing_comments.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
+	    python3 scripts/sv_format.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
 	    echo "" && \
 	    echo "==========================================" && \
 	    echo "Format complete!" && \

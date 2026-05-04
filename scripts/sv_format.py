@@ -37,17 +37,14 @@ def split_comment(line: str) -> Tuple[str, Optional[str]]:
             return line[:i].rstrip(), line[i:].rstrip("\n")
     return line.rstrip("\n"), None
 
-
 def get_indent(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
-
 
 # ---------------------------------------------------------------------------
 # Pass 1 – align localparam blocks
 # ---------------------------------------------------------------------------
 
 ParsedLP = Tuple[str, str, str, str, Optional[str]]  # indent, type, name, rhs, comment
-
 
 def _parse_localparam(line: str) -> Optional[ParsedLP]:
     code, comment = split_comment(line)
@@ -68,7 +65,6 @@ def _parse_localparam(line: str) -> Optional[ParsedLP]:
     type_part = lhs[: -len(name)].rstrip()
     return indent, type_part, name, rhs, comment
 
-
 def _format_lp_block(block: List[ParsedLP]) -> List[str]:
     max_type = max(len(t) for _, t, _, _, _ in block)
     max_name = max(len(n) for _, _, n, _, _ in block)
@@ -82,7 +78,6 @@ def _format_lp_block(block: List[ParsedLP]) -> List[str]:
             line += "  " + comment.lstrip()
         out.append(line + "\n")
     return out
-
 
 def _pass_localparams(lines: List[str]) -> Tuple[List[str], bool]:
     out: List[str] = []
@@ -116,7 +111,6 @@ def _pass_localparams(lines: List[str]) -> Tuple[List[str], bool]:
 
     return out, changed
 
-
 # ---------------------------------------------------------------------------
 # Pass 2 – align trailing comments
 # ---------------------------------------------------------------------------
@@ -125,7 +119,6 @@ def _is_group_breaker(line: str) -> bool:
     s = line.strip()
     return (not s or s.startswith("//") or s.startswith("/*")
             or s.startswith("*") or s.startswith("`"))
-
 
 def _pass_trailing_comments(lines: List[str]) -> Tuple[List[str], bool]:
     out = list(lines)
@@ -162,7 +155,6 @@ def _pass_trailing_comments(lines: List[str]) -> Tuple[List[str], bool]:
 
     return out, changed
 
-
 # ---------------------------------------------------------------------------
 # Top-level file processor
 # ---------------------------------------------------------------------------
@@ -177,7 +169,6 @@ def format_file(path: Path) -> bool:
         path.write_text("".join(lines))
     return c1 or c2
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Post-verible SV formatting: align localparams and trailing comments."
@@ -188,7 +179,6 @@ def main() -> int:
     for f in args.files:
         format_file(Path(f))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
