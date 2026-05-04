@@ -322,16 +322,16 @@ config instead of `jv32.cfg` (which targets the VPI TCP socket).
 ```bash
 # cJTAG (default bitstream)
 openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \
-        -c "gdb_port 3333" \
-        -c "tcl_port disabled" \
-        -c "telnet_port disabled" \
+        -c "gdb port 3333" \
+        -c "tcl port disabled" \
+        -c "telnet port disabled" \
         -c init
 
 # 4-wire JTAG (USE_CJTAG=0 bitstream)
 openocd -f fpga/jtag/jv32_fpga_jtag.cfg \
-        -c "gdb_port 3333" \
-        -c "tcl_port disabled" \
-        -c "telnet_port disabled" \
+        -c "gdb port 3333" \
+        -c "tcl port disabled" \
+        -c "telnet port disabled" \
         -c init
 ```
 
