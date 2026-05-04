@@ -16,9 +16,9 @@
 //   - 0x04-0x0f: data0-data11 (Abstract data registers)
 //   - 0x10: dmcontrol (Debug Module Control)
 //   - 0x11: dmstatus (Debug Module Status)
-//   - 0x16: hartinfo (Hart Information)
-//   - 0x17: abstracts (Abstract Control and Status)
-//   - 0x18: command (Abstract Command)
+//   - 0x12: hartinfo (Hart Information)
+//   - 0x16: abstractcs (Abstract Control and Status)
+//   - 0x17: command (Abstract Command)
 //   - 0x20-0x2f: progbuf0-progbuf15 (Program Buffer)
 //   - 0x40: haltsum0 (Halt Summary)
 //
@@ -890,12 +890,13 @@ module jv32_dtm #(
                                dmi_shift[2], dmi_shift[33], dmi_shift[32], dmi_shift[3], dmi_shift[27:18]));
                     end
                     DMI_ABSTRACTCS: begin
-                        // W1C: each set bit in the write clears the corresponding cmderr bit
-                        if (dmi_shift[10:8] != 3'b0) begin
-                            cmderr             <= cmderr & ~dmi_shift[10:8];
-                            cmderr_clr_tck     <= dmi_shift[10:8];
+                        // W1C: abstractcs.cmderr is at data[10:8] = dmi_shift[12:10]
+                        // (dmi_shift = {addr[40:34], data[33:2], op[1:0]}, so data[N] = dmi_shift[N+2])
+                        if (dmi_shift[12:10] != 3'b0) begin
+                            cmderr             <= cmderr & ~dmi_shift[12:10];
+                            cmderr_clr_tck     <= dmi_shift[12:10];
                             cmderr_clr_tog_tck <= ~cmderr_clr_tog_tck;
-                            `DEBUG2(`DBG_GRP_DTM, ("Clear ABSTRACTCS cmderr mask=%0b", dmi_shift[10:8]));
+                            `DEBUG2(`DBG_GRP_DTM, ("Clear ABSTRACTCS cmderr mask=%0b", dmi_shift[12:10]));
                         end
                     end
                     DMI_COMMAND: begin

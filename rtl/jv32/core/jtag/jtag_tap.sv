@@ -186,7 +186,7 @@ module jtag_tap #(
 
                 CAPTURE_IR: begin
                     // IEEE 1149.1 requires bits[1:0] of the captured value to be 2'b01
-                    // for scan integrity checking by the host.  Upper bits carry the
+                    // for scan integrity checking by the host. Upper bits carry the
                     // current instruction for readback.
                     ir_shift <= {ir_reg[IR_LEN-1:2], 2'b01};
                     `DEBUG2(`DBG_GRP_JTAG,

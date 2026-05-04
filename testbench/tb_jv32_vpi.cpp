@@ -237,9 +237,13 @@ static bool process_vpi_cmd(int fd, struct vpi_cmd *c) {
         run_clocks(g_tck_half_clks);
 
         // Read TMSC_out when the bridge is driving (oe active-low = 0)
-        uint8_t tmsc_out = (g_dut->jtag_pin1_tms_oe == 0u)
-                           ? (g_dut->jtag_pin1_tms_o & 1u)
-                           : 0u;
+        uint8_t oe  = g_dut->jtag_pin1_tms_oe & 1u;
+        uint8_t out = g_dut->jtag_pin1_tms_o  & 1u;
+        uint8_t tmsc_out = (oe == 0u) ? out : 0u;
+#ifdef DEBUG
+        fprintf(stderr, "[VPI] OSCAN1_RAW tckc=%u tmsc_in=%u oe=%u out=%u → tmsc_out=%u\n",
+                tckc, tmsc, oe, out, tmsc_out);
+#endif
         memset(c->buffer_in, 0, sizeof(c->buffer_in));
         c->buffer_in[0] = tmsc_out;
         return send_exact(fd, c, sizeof(*c));

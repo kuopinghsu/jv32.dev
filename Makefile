@@ -251,7 +251,7 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
 # ============================================================================
 .PHONY: all build-rtl rtl-build sim sw-all sw-% wave clean help info \
         rtl-% rtl-all sim-% sim-all lint lint-full lint-modules lint-decl lint-ffreset \
-	lint-verible lint-svlint format-rtl sim-build compare-% compare-all arch-test-% FORCE \
+        lint-verible lint-svlint format-rtl sim-build compare-% compare-all arch-test-% FORCE \
         build-vpi-jtag build-vpi-cjtag build-vpi-jtag-cov \
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
