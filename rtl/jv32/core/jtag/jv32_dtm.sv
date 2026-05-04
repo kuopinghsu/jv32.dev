@@ -1092,6 +1092,9 @@ module jv32_dtm #(
             sbdata0_clk             <= 32'b0;
             sbdata0_result_valid    <= 1'b0;
             sbaddress0_result_valid <= 1'b0;
+            sba_wstrb               <= 4'b0;
+            sba_wdata_positioned    <= 32'b0;
+            sba_rdata_masked        <= 32'b0;
 
             // State machine
             cmd_state               <= CMD_IDLE;
@@ -1750,10 +1753,11 @@ module jv32_dtm #(
                         case (sb_access_clk)
                             SBA_ACCESS8: begin
                                 case (sbaddress0_clk[1:0])
-                                    2'b00: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[7:0]};
-                                    2'b01: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[15:8]};
-                                    2'b10: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[23:16]};
-                                    2'b11: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[31:24]};
+                                    2'b00:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[7:0]};
+                                    2'b01:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[15:8]};
+                                    2'b10:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[23:16]};
+                                    2'b11:   sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[31:24]};
+                                    default: sba_rdata_masked <= {24'b0, dbg_mem_rdata_i[7:0]};
                                 endcase
                             end
                             SBA_ACCESS16: begin
@@ -1811,6 +1815,10 @@ module jv32_dtm #(
                                     2'b11: begin
                                         sba_wstrb            <= 4'b1000;
                                         sba_wdata_positioned <= {sbdata0_clk[7:0], 24'b0};
+                                    end
+                                    default: begin
+                                        sba_wstrb            <= 4'b0001;
+                                        sba_wdata_positioned <= {24'b0, sbdata0_clk[7:0]};
                                     end
                                 endcase
                             end

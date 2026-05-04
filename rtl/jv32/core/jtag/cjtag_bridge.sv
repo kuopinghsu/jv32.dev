@@ -311,23 +311,16 @@ module cjtag_bridge (
                             // OAC: bits [3:0], EC: bits [7:4], CP: bits [11:8]
 
 `ifdef DEBUG
-                            begin
-                                logic [11:0] full_packet;
-                                logic [3:0] oac_field, ec_field, cp_field, calc_cp;
-                                full_packet = {tmsc_s, activation_shift[10:0]};
-                                oac_field   = full_packet[3:0];
-                                ec_field    = full_packet[7:4];
-                                cp_field    = full_packet[11:8];
-                                calc_cp     = oac_field ^ ec_field;
-
-                                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] Checking activation packet:", $time));
-                                `DEBUG2(`DBG_GRP_JTAG, ("    Full packet: %b", full_packet));
-                                `DEBUG2(`DBG_GRP_JTAG,
-                                        ("    OAC=%b (expected=1100), EC=%b (expected=1000), CP=%b", oac_field,
-                                         ec_field, cp_field));
-                                `DEBUG2(`DBG_GRP_JTAG,
-                                        ("    Calculated CP=%b, CP valid=%b", calc_cp, cp_field == calc_cp));
-                            end
+                            `DEBUG2(`DBG_GRP_JTAG, ("[%0t] Checking activation packet:", $time));
+                            `DEBUG2(`DBG_GRP_JTAG, ("    Full packet: %b", {tmsc_s, activation_shift[10:0]}));
+                            `DEBUG2(`DBG_GRP_JTAG,
+                                    ("    OAC=%b (expected=1100), EC=%b (expected=1000), CP=%b",
+                                     activation_shift[3:0], activation_shift[7:4], {
+                                    tmsc_s, activation_shift[10:8]}));
+                            `DEBUG2(`DBG_GRP_JTAG,
+                                    ("    Calculated CP=%b, CP valid=%b",
+                                     activation_shift[3:0] ^ activation_shift[7:4],
+                                     {tmsc_s, activation_shift[10:8]} == (activation_shift[3:0] ^ activation_shift[7:4])));
 `endif
 
                             // Validate: OAC=1100, EC=1000.
