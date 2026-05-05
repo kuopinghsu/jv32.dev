@@ -3,16 +3,22 @@
 // Project: JV32 RISC-V Processor
 // Description: Verilator C++ Testbench Driver
 //
-// Usage: ./sim.exe <elf> [--trace <file.fst>] [--max-cycles <N>] [--timeout=<sec>]
+// Usage: ./jv32soc <elf> [--trace <file.fst|file.vcd>] [--rtl-trace <file>]
+//                        [--max-cycles <N>] [--timeout=<sec>] [--kanata=<file>]
 // ============================================================================
 
 #include <verilated.h>
+#if VM_TRACE_VCD
+#include <verilated_vcd_c.h>
+#else
 #include <verilated_fst_c.h>
+#endif
 #if VM_COVERAGE
 #include <verilated_cov.h>
 #endif
 #include "Vtb_jv32_soc.h"
 #include "elfloader.h"
+#include <svdpi.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -127,6 +133,239 @@ static void emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc, uint32_t pc, uint
     }
 }
 
+// ============================================================================
+// Kanata RTL Pipeline Visualizer
+// ============================================================================
+// Emits Kanata 0004 format logs for pipeline visualization in the Kanata tool.
+// Tracks the 3-stage jv32 pipeline (F/EX/WB) via DPI pipeline snapshot.
+//
+// Stage names:
+//   F   – Fetch       (instruction at rvc expander output)
+//   EX  – Execute     (instruction in if_ex_r: decode+ALU+CSR)
+//   WB  – Writeback   (instruction in ex_wb_r: memory/writeback)
+//   stl – Stall overlay (lane 1): instruction held in stage for ≥2 cycles
+//   msp – Misprediction penalty (lane 2): annotated on the branch at WB
+// ============================================================================
+
+struct PipelineSnapshot {
+    // IF stage (rvc expander output, instruction entering EX next cycle)
+    bool     if_valid;
+    uint32_t pc_if;
+    uint32_t orig_instr_if;
+    // EX stage (if_ex_r pipeline register)
+    bool     ex_valid;
+    uint32_t pc_ex;
+    uint32_t orig_instr_ex;
+    // WB stage (ex_wb_r pipeline register)
+    bool     wb_valid;
+    bool     retire;
+    uint32_t pc_wb;
+    uint32_t orig_instr_wb;
+    // Stall / flush / redirect
+    bool     if_stall;    // EX stall: if_ex_r held this cycle
+    bool     ex_stall;    // WB stall: ex_wb_r held this cycle (multi-cycle / load)
+    bool     if_flush;    // IF flush (branch mispred / exception redirect)
+    bool     ex_flush;    // EX flush (inject bubble into EX stage)
+    // Branch prediction
+    bool     bp_taken_ex; // prediction flag carried into EX (if_ex_r.bp_taken)
+    bool     redirect_ex; // EX redirect fired (ex_wb_r.redirect & !ex_stall)
+};
+
+class KanataRTL {
+public:
+    static constexpr uint64_t INVALID_FID = ~0ULL;
+    static constexpr int STAGE_IF  = 0;
+    static constexpr int STAGE_EX  = 1;
+    static constexpr int STAGE_WB  = 2;
+    static constexpr int NUM_STAGES = 3;
+    static constexpr const char* STAGE_NAME[3] = {"F", "EX", "WB"};
+
+    struct SlotState {
+        bool     valid       = false;
+        uint32_t pc          = 0;
+        uint32_t instr       = 0;
+        uint64_t fid         = INVALID_FID;
+        bool     stl_open    = false;   // lane-1 "stl" stage is open
+        bool     msp_open    = false;   // lane-2 "msp" stage is open
+        bool     retired     = false;   // retire fired while in WB
+        void clear() { *this = SlotState{}; }
+    };
+
+private:
+    std::ofstream     file_;
+    bool              enabled_    = false;
+    uint64_t          cur_cycle_  = 0;
+    uint64_t          file_id_    = 0;
+    uint64_t          retire_id_  = 0;
+    SlotState         st_[NUM_STAGES]; // pipeline stage shadows: IF, EX, WB
+    RiscvDisassembler dis_;
+
+    // ── Low-level emit helpers ────────────────────────────────────────────
+    void emit_I(uint64_t fid, int tid) {
+        file_ << "I\t" << fid << "\t" << fid << "\t" << tid << "\n";
+    }
+    void emit_L(uint64_t fid, int type, const std::string& text) {
+        file_ << "L\t" << fid << "\t" << type << "\t" << text << "\n";
+    }
+    void emit_S(uint64_t fid, int lane, const char* stage) {
+        file_ << "S\t" << fid << "\t" << lane << "\t" << stage << "\n";
+    }
+    void emit_E(uint64_t fid, int lane, const char* stage) {
+        file_ << "E\t" << fid << "\t" << lane << "\t" << stage << "\n";
+    }
+    void emit_R(uint64_t fid, uint64_t ret_id, int type) {
+        file_ << "R\t" << fid << "\t" << ret_id << "\t" << type << "\n";
+    }
+
+    // Close overlay lanes then end lane-0 stage
+    void close_stage(SlotState& sl, int stage) {
+        if (!sl.valid || sl.fid == INVALID_FID) return;
+        if (sl.stl_open) { emit_E(sl.fid, 1, "stl"); sl.stl_open = false; }
+        if (sl.msp_open) { emit_E(sl.fid, 2, "msp"); sl.msp_open = false; }
+        emit_E(sl.fid, 0, STAGE_NAME[stage]);
+    }
+
+    static std::string hex8(uint32_t v) {
+        std::ostringstream ss;
+        ss << std::hex << std::setfill('0') << std::setw(8) << v;
+        return ss.str();
+    }
+
+    // ── Check if snapshot has (pc,instr) at given stage ──────────────────
+    bool snap_has(const PipelineSnapshot& s, int stage, uint32_t pc, uint32_t instr) const {
+        switch (stage) {
+        case STAGE_IF: return s.if_valid && s.pc_if == pc && s.orig_instr_if == instr;
+        case STAGE_EX: return s.ex_valid && s.pc_ex == pc && s.orig_instr_ex == instr;
+        case STAGE_WB: return s.wb_valid && s.pc_wb == pc && s.orig_instr_wb == instr;
+        default:       return false;
+        }
+    }
+
+    // ── Per-cycle forward pass ────────────────────────────────────────────
+    void step_pipeline(const PipelineSnapshot& snap) {
+        const bool     sv[NUM_STAGES] = { snap.if_valid, snap.ex_valid, snap.wb_valid };
+        const uint32_t sp[NUM_STAGES] = { snap.pc_if,    snap.pc_ex,    snap.pc_wb   };
+        const uint32_t si[NUM_STAGES] = { snap.orig_instr_if, snap.orig_instr_ex,
+                                          snap.orig_instr_wb };
+
+        uint64_t carry_fid = INVALID_FID;
+
+        for (int s = STAGE_IF; s <= STAGE_WB; s++) {
+            bool     new_v = sv[s];
+            uint32_t new_p = sp[s];
+            uint32_t new_i = si[s];
+
+            // Stall: same instruction held this cycle
+            bool same = st_[s].valid && new_v &&
+                        st_[s].pc == new_p && st_[s].instr == new_i;
+            if (same) {
+                if (s == STAGE_WB && snap.retire)
+                    st_[s].retired = true;
+                else if (!st_[s].stl_open) {
+                    emit_S(st_[s].fid, 1, "stl");
+                    st_[s].stl_open = true;
+                }
+                carry_fid = INVALID_FID;
+                continue;
+            }
+
+            // Old instruction departing this stage
+            uint64_t next_carry = INVALID_FID;
+            if (st_[s].valid && st_[s].fid != INVALID_FID) {
+                close_stage(st_[s], s);
+                if (s < STAGE_WB) {
+                    if (snap_has(snap, s + 1, st_[s].pc, st_[s].instr))
+                        next_carry = st_[s].fid;
+                    else
+                        emit_R(st_[s].fid, 0, 1);  // flushed
+                } else {
+                    if (st_[s].retired)
+                        emit_R(st_[s].fid, retire_id_++, 0);  // normal retirement
+                    else
+                        emit_R(st_[s].fid, 0, 1);              // flush / exception
+                }
+            }
+
+            // New instruction arriving this stage
+            if (new_v) {
+                uint64_t use_fid;
+                if (s == STAGE_IF) {
+                    // New instruction entering the pipeline
+                    use_fid = file_id_++;
+                    emit_I(use_fid, 0);
+                    emit_L(use_fid, 0, "0x" + hex8(new_p) + ": " +
+                                       dis_.disassemble(new_i, new_p));
+                } else {
+                    // Carry fid from previous stage, or create fallback entry
+                    if (carry_fid != INVALID_FID) {
+                        use_fid = carry_fid;
+                    } else {
+                        use_fid = file_id_++;
+                        emit_I(use_fid, 0);
+                        emit_L(use_fid, 0, "0x" + hex8(new_p) + ": " +
+                                           dis_.disassemble(new_i, new_p));
+                    }
+                }
+                emit_S(use_fid, 0, STAGE_NAME[s]);
+                bool wb_retired = (s == STAGE_WB && snap.retire);
+                st_[s] = { true, new_p, new_i, use_fid, false, false, wb_retired };
+            } else {
+                st_[s].clear();
+            }
+
+            carry_fid = next_carry;
+        }
+
+        // ── Branch misprediction annotation on WB instruction ────────────
+        // redirect_ex fires the cycle ex_wb_r.redirect is sampled non-stalled.
+        // Annotate the instruction currently in WB (which caused the redirect).
+        if (snap.redirect_ex && st_[STAGE_WB].valid &&
+            st_[STAGE_WB].fid != INVALID_FID && !st_[STAGE_WB].msp_open) {
+            std::string pred = snap.bp_taken_ex ? "pred=T" : "pred=NT";
+            emit_L(st_[STAGE_WB].fid, 1, "EX redirect: " + pred);
+            emit_S(st_[STAGE_WB].fid, 2, "msp");
+            st_[STAGE_WB].msp_open = true;
+        }
+    }
+
+public:
+    void open(const char* filename) {
+        file_.open(filename);
+        if (!file_.is_open()) {
+            std::cerr << "WARNING: Cannot open Kanata log file: " << filename << "\n";
+            return;
+        }
+        enabled_ = true;
+        file_ << "Kanata\t0004\n";
+        file_ << "C=\t0\n";
+    }
+
+    bool enabled() const { return enabled_; }
+
+    // Called every clock cycle (after DUT eval on posedge).
+    void step(const PipelineSnapshot& snap) {
+        if (!enabled_) return;
+        cur_cycle_++;
+        file_ << "C\t1\n";
+        step_pipeline(snap);
+    }
+
+    void finish() {
+        if (!enabled_) return;
+        // Flush any instructions still in the pipeline
+        for (int s = STAGE_IF; s <= STAGE_WB; s++) {
+            if (st_[s].valid && st_[s].fid != INVALID_FID) {
+                if (st_[s].stl_open) emit_E(st_[s].fid, 1, "stl");
+                if (st_[s].msp_open) emit_E(st_[s].fid, 2, "msp");
+                emit_E(st_[s].fid, 0, STAGE_NAME[s]);
+                emit_R(st_[s].fid, 0, 1);
+            }
+        }
+        file_.flush();
+        file_.close();
+    }
+};
+
 #ifndef CLK_FREQ_HZ
 #  define CLK_FREQ_HZ    80'000'000ULL   // default; override via -DCLK_FREQ_HZ=
 #endif
@@ -191,17 +430,31 @@ extern "C" void sim_request_exit(int exit_code) {
 // ============================================================================
 static uint64_t sim_time = 0;
 
-static void tick(Vtb_jv32_soc* dut, VerilatedFstC* tfp) {
+static void tick(Vtb_jv32_soc* dut
+#if VM_TRACE_VCD
+                 , VerilatedVcdC* vcdp
+#else
+                 , VerilatedFstC* tfp
+#endif
+                 ) {
     // Rising edge
     dut->clk = 1;
     dut->eval();
-    if (tfp) tfp->dump(sim_time);
+#if VM_TRACE_VCD
+    if (vcdp) vcdp->dump(sim_time);
+#else
+    if (tfp)  tfp->dump(sim_time);
+#endif
     sim_time += CLK_HALF_PS;
 
     // Falling edge
     dut->clk = 0;
     dut->eval();
-    if (tfp) tfp->dump(sim_time);
+#if VM_TRACE_VCD
+    if (vcdp) vcdp->dump(sim_time);
+#else
+    if (tfp)  tfp->dump(sim_time);
+#endif
     sim_time += CLK_HALF_PS;
 }
 
@@ -214,6 +467,7 @@ int main(int argc, char** argv) {
     const char* elf_path        = nullptr;
     const char* trace_file      = nullptr;
     const char* rtl_trace_file  = nullptr;
+    const char* kanata_file     = nullptr;
     uint64_t    max_cycles      = 0;   // 0 = unlimited
     uint64_t    timeout_seconds = 0;   // 0 = no timeout
 
@@ -230,6 +484,8 @@ int main(int argc, char** argv) {
             timeout_seconds = (uint64_t)strtoull(argv[++i], nullptr, 10);
         } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
             timeout_seconds = (uint64_t)strtoull(argv[i] + 10, nullptr, 10);
+        } else if (strncmp(argv[i], "--kanata=", 9) == 0) {
+            kanata_file = argv[i] + 9;
         } else if (argv[i][0] == '+') {
             // +verilator+... Verilator runtime args (e.g. +verilator+coverage+file+<path>)
             // are handled by ctx->commandArgs() below; skip in manual parser.
@@ -242,7 +498,22 @@ int main(int argc, char** argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s <elf> [--trace <file.fst>] [--rtl-trace <file>] [--max-cycles <N>] [--timeout=<sec>]\n", argv[0]);
+        fprintf(stderr, "JV32 RISC-V RTL Simulator (Verilator)\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Usage: %s <elf> [options]\n", argv[0]);
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  --trace <file.fst|file.vcd>   Dump waveform to FST or VCD file\n");
+        fprintf(stderr, "  --rtl-trace <file>            Enable Spike-format RTL trace log (use '-' for stdout)\n");
+        fprintf(stderr, "  --max-cycles <N>              Stop after N clock cycles (default: unlimited)\n");
+        fprintf(stderr, "  --max-cycles=<N>              Same as above (= form)\n");
+        fprintf(stderr, "  --timeout=<sec>               Stop after wall-clock timeout in seconds\n");
+        fprintf(stderr, "  --kanata=<file>               Enable Kanata pipeline visualization log (default: disabled)\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Examples:\n");
+        fprintf(stderr, "  %s hello.elf\n", argv[0]);
+        fprintf(stderr, "  %s hello.elf --rtl-trace trace.log --kanata pipeline.log\n", argv[0]);
+        fprintf(stderr, "  %s hello.elf --trace sim.fst --max-cycles=1000000\n", argv[0]);
         return 1;
     }
 
@@ -255,12 +526,22 @@ int main(int argc, char** argv) {
 
     Vtb_jv32_soc* dut = new Vtb_jv32_soc(ctx);
 
-    VerilatedFstC* tfp = nullptr;
+#if VM_TRACE_VCD
+    VerilatedVcdC* vcdp = nullptr;
+#else
+    VerilatedFstC* tfp  = nullptr;
+#endif
     if (trace_file) {
         Verilated::traceEverOn(true);
+#if VM_TRACE_VCD
+        vcdp = new VerilatedVcdC;
+        dut->trace(vcdp, 99);
+        vcdp->open(trace_file);
+#else
         tfp = new VerilatedFstC;
         dut->trace(tfp, 99);
         tfp->open(trace_file);
+#endif
     }
 
     // -------------------------------------------------------------------------
@@ -276,7 +557,13 @@ int main(int argc, char** argv) {
     dut->jtag_pin2_tdi_i   = 0;
     dut->eval();
 
-    for (int i = 0; i < 10; i++) tick(dut, tfp);
+    for (int i = 0; i < 10; i++) tick(dut
+#if VM_TRACE_VCD
+                                       , vcdp
+#else
+                                       , tfp
+#endif
+                                       );
 
     // -------------------------------------------------------------------------
     // Load ELF
@@ -309,6 +596,16 @@ int main(int argc, char** argv) {
     }
 
     // -------------------------------------------------------------------------
+    // Open Kanata pipeline log
+    // -------------------------------------------------------------------------
+    KanataRTL kanata;
+    if (kanata_file) {
+        kanata.open(kanata_file);
+        if (kanata.enabled())
+            fprintf(stderr, "[SIM] Kanata pipeline log: %s\n", kanata_file);
+    }
+
+    // -------------------------------------------------------------------------
     // Simulation loop
     // -------------------------------------------------------------------------
     uint64_t cycle = 0;
@@ -337,8 +634,39 @@ int main(int argc, char** argv) {
                 break;
             }
         }
-        tick(dut, tfp);
+        tick(dut
+#if VM_TRACE_VCD
+             , vcdp
+#else
+             , tfp
+#endif
+             );
         cycle++;
+
+        // Kanata pipeline snapshot (collected after posedge eval).
+        if (kanata.enabled()) {
+            PipelineSnapshot snap{};
+            svBit if_v=0, ex_v=0, wb_v=0, ret=0;
+            svBit if_stl=0, ex_stl=0, if_fl=0, ex_fl=0;
+            svBit bp_taken=0, redir=0;
+            svBitVecVal pc_if[1]={}, oi_if[1]={};
+            svBitVecVal pc_ex[1]={}, oi_ex[1]={};
+            svBitVecVal pc_wb[1]={}, oi_wb[1]={};
+            dut->get_pipeline_snapshot(
+                &if_v,  pc_if, oi_if,
+                &ex_v,  pc_ex, oi_ex,
+                &wb_v,  &ret,  pc_wb, oi_wb,
+                &if_stl, &ex_stl, &if_fl, &ex_fl,
+                &bp_taken, &redir);
+            snap.if_valid      = if_v;     snap.pc_if        = pc_if[0]; snap.orig_instr_if = oi_if[0];
+            snap.ex_valid      = ex_v;     snap.pc_ex        = pc_ex[0]; snap.orig_instr_ex = oi_ex[0];
+            snap.wb_valid      = wb_v;     snap.retire       = ret;
+            snap.pc_wb         = pc_wb[0]; snap.orig_instr_wb = oi_wb[0];
+            snap.if_stall      = if_stl;   snap.ex_stall     = ex_stl;
+            snap.if_flush      = if_fl;    snap.ex_flush     = ex_fl;
+            snap.bp_taken_ex   = bp_taken; snap.redirect_ex  = redir;
+            kanata.step(snap);
+        }
 
         // Count and emit every retired instruction.
         if (dut->trace_valid) {
@@ -396,7 +724,13 @@ int main(int argc, char** argv) {
         uint64_t idle_count = 0;
         while (idle_count < UART_IDLE_THRESH &&
                (max_cycles == 0 || cycle < max_cycles)) {
-            tick(dut, tfp);
+            tick(dut
+#if VM_TRACE_VCD
+                 , vcdp
+#else
+                 , tfp
+#endif
+                 );
             cycle++;
             if (dut->uart_tx_o_monitor) idle_count++;
             else idle_count = 0;
@@ -443,6 +777,7 @@ int main(int argc, char** argv) {
          eff_mhz,
          cpi);
 
+    kanata.finish();
     dut->final();
 
 #if VM_COVERAGE
@@ -452,7 +787,11 @@ int main(int argc, char** argv) {
     delete dut;
     delete ctx;
 
-    if (tfp) delete tfp;
+#if VM_TRACE_VCD
+    if (vcdp) delete vcdp;
+#else
+    if (tfp)  delete tfp;
+#endif
 
     if (rtl_tfp && rtl_tfp != stdout) {
         fflush(rtl_tfp);

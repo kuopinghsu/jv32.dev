@@ -39,7 +39,7 @@ export SPIKE
 # so exporting here overrides their defaults consistently.
 ifeq ($(RV32E_EN),1)
   # GCC 15 maps rv32ec_zicsr to the rv32ec/ilp32e multilib while allowing
-  # CSR instructions (zicsr) — no separate -Wa workaround needed.
+  # CSR instructions (zicsr) -- no separate -Wa workaround needed.
   export ARCH := rv32ec_zicsr
   export ABI  := ilp32e
 else
@@ -182,9 +182,9 @@ ifdef CLK_FREQ
   VERILATOR_FLAGS += -pvalue+CLK_FREQ=$(CLK_FREQ)
   VERILATOR_FLAGS += -CFLAGS "-DCLK_FREQ_HZ=$(CLK_FREQ)ULL"
 endif
-#   DEBUG=1  — enable level-1 messages (DEBUG1 macro)
-#   DEBUG=2  — enable level-1 + level-2 per-group messages (DEBUG1 + DEBUG2)
-#   DEBUG_GROUP=0x<hex>  — bitmask of groups to show (default: all)
+#   DEBUG=1  -- enable level-1 messages (DEBUG1 macro)
+#   DEBUG=2  -- enable level-1 + level-2 per-group messages (DEBUG1 + DEBUG2)
+#   DEBUG_GROUP=0x<hex>  -- bitmask of groups to show (default: all)
 DEBUG       ?=
 DEBUG_GROUP ?=
 ifdef DEBUG
@@ -224,7 +224,7 @@ TB_SOURCES = \
     $(TB_DIR)/elfloader.cpp \
     $(SIM_DIR)/riscv-dis.cpp
 
-# VPI testbench sources (no riscv-dis — the VPI testbench does not emit traces)
+# VPI testbench sources (no riscv-dis -- the VPI testbench does not emit traces)
 VPI_SOURCES = \
     $(TB_DIR)/tb_jv32_vpi.cpp \
     $(TB_DIR)/elfloader.cpp
@@ -234,10 +234,17 @@ VPI_TARGET_JTAG     = $(BUILD_DIR)/jv32vpi_jtag
 VPI_TARGET_CJTAG    = $(BUILD_DIR)/jv32vpi_cjtag
 VPI_TARGET_JTAG_COV = $(BUILD_DIR)/jv32vpi_jtag_cov
 
+# Trace mode stamp files: trigger VPI binary rebuild when WAVE format changes
+VPI_TRACE_MODE        := $(if $(filter vcd,$(WAVE)),vcd,fst)
+VPI_JTAG_TRACE_STAMP  := $(BUILD_DIR)/.vpi_jtag_trace
+VPI_CJTAG_TRACE_STAMP := $(BUILD_DIR)/.vpi_cjtag_trace
+
 # VERILATOR_FLAGS with any caller-supplied USE_CJTAG stripped out, so VPI
 # build targets can set USE_CJTAG precisely without risk of duplication.
 VERILATOR_FLAGS_VPI     = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_FLAGS))
 VERILATOR_COV_FLAGS_VPI = $(filter-out -pvalue+USE_CJTAG%,$(VERILATOR_COV_FLAGS))
+# Select trace backend flags based on WAVE (default: FST; WAVE=vcd: VCD)
+VERILATOR_FLAGS_VPI_CUR = $(if $(filter vcd,$(WAVE)),$(subst --trace-fst,--trace-vcd,$(VERILATOR_FLAGS_VPI)),$(VERILATOR_FLAGS_VPI))
 
 # Output binary
 BUILD_TARGET = $(BUILD_DIR)/jv32soc
@@ -317,21 +324,27 @@ FORCE:
 # ============================================================================
 # VPI Testbench builds (for OpenOCD JTAG/cJTAG interface testing)
 # ============================================================================
-# build-vpi-jtag:  Compile with USE_CJTAG=0 → build/jv32vpi_jtag
-# build-vpi-cjtag: Compile with USE_CJTAG=1 → build/jv32vpi_cjtag
+# build-vpi-jtag:  Compile with USE_CJTAG=0 -> build/jv32vpi_jtag
+# build-vpi-cjtag: Compile with USE_CJTAG=1 -> build/jv32vpi_cjtag
 #
 # The VPI testbench uses the same tb_jv32_soc.sv RTL module as the normal
 # simulator, but replaces the C++ driver with tb_jv32_vpi.cpp which implements
 # a JTAG VPI TCP server (default port 3333) for OpenOCD to connect to.
 # ============================================================================
 build-vpi-jtag: $(VPI_TARGET_JTAG)
-$(VPI_TARGET_JTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
+
+$(VPI_JTAG_TRACE_STAMP): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s' "$(VPI_TRACE_MODE)" | cmp -s - $@ || \
+	    { printf '%s' "$(VPI_TRACE_MODE)" > $@; rm -f $(VPI_TARGET_JTAG); }
+
+$(VPI_TARGET_JTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES) $(VPI_JTAG_TRACE_STAMP)
 	@echo "=========================================="
-	@echo "Building JV32 VPI testbench (JTAG, USE_CJTAG=0)"
+	@echo "Building JV32 VPI testbench (JTAG, USE_CJTAG=0, trace=$(VPI_TRACE_MODE))"
 	@echo "=========================================="
 	@mkdir -p $(BUILD_DIR)
 	@rm -rf $(BUILD_DIR)/objdir_vpi_jtag
-	$(VERILATOR) $(VERILATOR_FLAGS_VPI) \
+	$(VERILATOR) $(VERILATOR_FLAGS_VPI_CUR) \
 	    -pvalue+USE_CJTAG=0 \
 	    -Mdir $(BUILD_DIR)/objdir_vpi_jtag \
 	    -o ../jv32vpi_jtag \
@@ -349,13 +362,19 @@ $(VPI_TARGET_JTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
 	@echo "=========================================="
 
 build-vpi-cjtag: $(VPI_TARGET_CJTAG)
-$(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES)
+
+$(VPI_CJTAG_TRACE_STAMP): FORCE
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s' "$(VPI_TRACE_MODE)" | cmp -s - $@ || \
+	    { printf '%s' "$(VPI_TRACE_MODE)" > $@; rm -f $(VPI_TARGET_CJTAG); }
+
+$(VPI_TARGET_CJTAG): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES) $(VPI_CJTAG_TRACE_STAMP)
 	@echo "=========================================="
-	@echo "Building JV32 VPI testbench (cJTAG, USE_CJTAG=1)"
+	@echo "Building JV32 VPI testbench (cJTAG, USE_CJTAG=1, trace=$(VPI_TRACE_MODE))"
 	@echo "=========================================="
 	@mkdir -p $(BUILD_DIR)
 	@rm -rf $(BUILD_DIR)/objdir_vpi_cjtag
-	$(VERILATOR) $(VERILATOR_FLAGS_VPI) \
+	$(VERILATOR) $(VERILATOR_FLAGS_VPI_CUR) \
 	    -pvalue+USE_CJTAG=1 \
 	    -Mdir $(BUILD_DIR)/objdir_vpi_cjtag \
 	    -o ../jv32vpi_cjtag \
@@ -395,9 +414,6 @@ $(VPI_TARGET_JTAG_COV): $(RTL_SOURCES) $(TB_SV_SOURCES) $(VPI_SOURCES) $(COV_PAR
 	@echo "VPI JTAG coverage testbench: $(VPI_TARGET_JTAG_COV)"
 
 # ============================================================================
-# Lint
-# ============================================================================
-
 # Lint umbrella: runs all lint passes in sequence.
 # Stops on the first failing pass.
 lint: lint-full lint-modules lint-decl lint-ffreset lint-verible lint-svlint
@@ -511,9 +527,9 @@ lint-svlint:
 	@echo "svlint RTL check"
 	@echo "=========================================="
 	@if [ "$(SVLINT)" = "None" ] || [ -z "$(SVLINT)" ]; then \
-	    echo "SVLINT is set to None or unset — skipping svlint."; \
+	    echo "SVLINT is set to None or unset -- skipping svlint."; \
 	elif ! [ -x "$(SVLINT)" ]; then \
-	    echo "svlint binary not found at: $(SVLINT) — skipping."; \
+	    echo "svlint binary not found at: $(SVLINT) -- skipping."; \
 	else \
 	    echo "svlint: $(SVLINT)"; \
 	    echo "config: .svlint.toml"; \
@@ -531,13 +547,15 @@ lint-svlint:
 #   make rtl-hello          (build sw/tests/hello.elf then simulate)
 #   make rtl-trap           (build sw/tests/trap.elf then simulate)
 # Optional:
-#   WAVE=fst    — dump FST waveform to $(BUILD_DIR)/jv32soc.fst
-#   TRACE=1     — print instruction trace
-#   MAX_CYCLES=N — stop after N cycles (default: unlimited)
-#   TIMEOUT=N    — wall-clock timeout in seconds (default: 120; 0=no limit)
+#   WAVE=fst    -- dump FST waveform to $(BUILD_DIR)/jv32soc.fst
+#   TRACE=1     -- print instruction trace
+#   MAX_CYCLES=N -- stop after N cycles (default: unlimited)
+#   TIMEOUT=N    -- wall-clock timeout in seconds (default: 120; 0=no limit)
+#   KANATA=1    -- generate Konata pipeline visualization log ($(BUILD_DIR)/jv32soc.kanata)
 # ============================================================================
 TIMEOUT     ?= 120
 TIMEOUT_ARG  = $(if $(MAX_CYCLES),--max-cycles=$(MAX_CYCLES)) $(if $(TIMEOUT),--timeout=$(TIMEOUT))
+KANATA_ARG   = $(if $(filter 1,$(KANATA)),--kanata=jv32soc.kanata)
 RTL_TRACE_FILE = $(abspath $(BUILD_DIR))/rtl_trace.txt
 
 sim: build-rtl
@@ -547,6 +565,7 @@ endif
 	@cd $(BUILD_DIR) && ./jv32soc \
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    $(abspath $(ELF))
 	@echo ""
@@ -555,10 +574,13 @@ endif
 	elif [ "$(WAVE)" = "vcd" ]; then \
 	    echo "Waveform: $(BUILD_DIR)/jv32soc.vcd"; \
 	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
+	fi
 
 # Convenience pattern: build sw/<test> then simulate with RTL
 # Examples: make rtl-hello, make rtl-coremark, make rtl-dhry
-# Optional: WAVE=fst, TRACE=1, MAX_CYCLES=N, TIMEOUT=N
+# Optional: WAVE=fst, TRACE=1, MAX_CYCLES=N, TIMEOUT=N, KANATA=1
 rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	@echo "=========================================="
 	@echo "Running test '$*' with RTL simulator"
@@ -567,11 +589,15 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    $*.elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
 	fi
 
 # Build FreeRTOS ELF via rtos/freertos/Makefile
@@ -793,11 +819,15 @@ __rtl-freertos-run: build-rtl
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    freertos-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
 	fi
 
 # Run a FreeRTOS test with the RTL simulator
@@ -917,11 +947,15 @@ __rtl-zephyr-run: build-rtl
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    zephyr-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
 	fi
 
 # Run a Zephyr test with the RTL simulator
@@ -1041,11 +1075,15 @@ __rtl-threadx-run: build-rtl
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    threadx-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
 	fi
 
 # Run a ThreadX test with the RTL simulator
@@ -1165,11 +1203,15 @@ __rtl-riot-run: build-rtl
 	    $(if $(filter 1 fst,$(WAVE)),--trace jv32soc.fst) \
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
+	    $(KANATA_ARG) \
 	    $(TIMEOUT_ARG) \
 	    riot-$(TEST).elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
 	    echo "Waveform saved to: $(BUILD_DIR)/jv32soc.fst"; \
+	fi
+	@if [ "$(KANATA)" = "1" ]; then \
+	    echo "Kanata log: $(BUILD_DIR)/jv32soc.kanata"; \
 	fi
 
 # Run a RIOT test with the RTL simulator
@@ -1265,8 +1307,8 @@ compare-riot-all:
 # ============================================================================
 # Submodule initialization (avoids pulling large nested submodules like llvm-project)
 # ============================================================================
-# DO NOT use `git clone --recurse-submodules` — it will recursively clone
-# riscv-arch-test → riscv-unified-db → llvm-project (~4 GB).
+# DO NOT use `git clone --recurse-submodules` -- it will recursively clone
+# riscv-arch-test -> riscv-unified-db -> llvm-project (~4 GB).
 # Use `make submodule-init` instead after a plain `git clone`.
 # ============================================================================
 submodule-init:
@@ -1277,7 +1319,7 @@ submodule-init:
 	@echo "[submodule] Done. llvm-project was intentionally skipped (not needed for arch tests)."
 
 # ============================================================================
-# Arch-test (ACT4) — delegated to verif/Makefile
+# Arch-test (ACT4) -- delegated to verif/Makefile
 # ============================================================================
 # All arch-test-* targets are implemented in verif/Makefile to keep this
 # file focused on RTL build and simulation.  Variables are passed through.
@@ -1295,9 +1337,9 @@ submodule-init:
 #      against the reference generated by Spike (configured via SPIKE in
 #      env.config).  Any mismatch is a compliance failure.
 #
-# Notable constraint — I-jal-00 IRAM requirement:
+# Notable constraint -- I-jal-00 IRAM requirement:
 #   The I-jal-00 test places its .text segment at 0x80004000 and the section
-#   is ~0x1C080 bytes long, ending at 0x80020080 — 128 bytes past the normal
+#   is ~0x1C080 bytes long, ending at 0x80020080 -- 128 bytes past the normal
 #   128 KB IRAM boundary (0x80020000).  All other tests fit in 128 KB.
 #   The arch-test RTL build therefore overrides IRAM_SIZE=262144 (256 KB)
 #   automatically.  The default IRAM_SIZE in Makefile.cfg stays at 128 KB.
@@ -1326,11 +1368,11 @@ arch-test-%:
 # ============================================================================
 # Summary of all verification targets:
 #
-#   make all           — runs every verification step below end-to-end
-#   make arch-test-run — RISC-V ACT4 compliance tests (see section above)
-#   make openocd-test  — JTAG + cJTAG debug interface tests via OpenOCD VPI
-#   make -C syn        — ASIC synthesis + P&R (OpenLane2 / Nangate45)
-#   make -C fpga       — FPGA build (Vivado ML Standard Edition, free license)
+#   make all           -- runs every verification step below end-to-end
+#   make arch-test-run -- RISC-V ACT4 compliance tests (see section above)
+#   make openocd-test  -- JTAG + cJTAG debug interface tests via OpenOCD VPI
+#   make -C syn        -- ASIC synthesis + P&R (OpenLane2 / Nangate45)
+#   make -C fpga       -- FPGA build (Vivado ML Standard Edition, free license)
 #
 # openocd-test builds two VPI testbench variants (JTAG and cJTAG) and then
 # runs every Tcl test script in openocd/ against both transports.
@@ -1577,7 +1619,8 @@ help:
 	@echo "  sw-<test>            Build sw/tests/<test>.elf"
 	@echo "  wave                 Open FST waveform in GTKWave"
 	@echo "  format-rtl           Format SystemVerilog files with Verible (all RTL or FILES=...)"
-	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl + lint-ffreset + lint-verible + lint-svlint)"
+	@echo "  lint                 Run all lint passes (lint-full + lint-modules + lint-decl +"
+	@echo "                       lint-ffreset + lint-verible + lint-svlint)"
 	@echo "  lint-full            Full-design Verilator lint (all warnings + -Werror-IMPLICIT)"
 	@echo "  lint-modules         Lint every RTL module as Verilator top (catches MULTIDRIVEN etc.)"
 	@echo "  lint-decl            Check signal declaration order (use-before-declare)"
@@ -1588,9 +1631,11 @@ help:
 	@echo ""
 	@echo "Simulation variables:"
 	@echo "  ELF=<path>           ELF to load (required for 'sim')"
-	@echo "  WAVE=fst|vcd         Enable waveform dump"
+	@echo "  WAVE=fst|vcd         Enable waveform dump (output: build/jv32soc.fst|.vcd)"
+	@echo "  TRACE=1              Print Spike-format RTL instruction trace"
 	@echo "  MAX_CYCLES=<N>       RTL cycle limit (default: unlimited)"
 	@echo "  TIMEOUT=<sec>        Wall-clock timeout in seconds (default: 120; 0=no limit)"
+	@echo "  KANATA=1             Generate Konata pipeline visualization log (build/jv32soc.kanata)"
 	@echo "  DEBUG=1              Enable RTL debug output"
 	@echo ""
 	@echo "Toolchain variables (set in env.config or command line):"

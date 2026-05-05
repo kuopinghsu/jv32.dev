@@ -31,7 +31,8 @@
 //
 // Options:
 //   --port N            TCP port for VPI server (default: 3333)
-//   --trace <file.fst>  Write FST waveform
+//   --trace <file.fst>  Write FST waveform (extension .fst)
+//   --trace <file.vcd>  Write VCD waveform (extension .vcd)
 //   --max-cycles N      Exit after N simulation cycles (default: 50 000 000)
 //   --boot-clocks N     System clocks before accepting connections (default: 2000)
 //   --tck-half-clks N   System clocks per TCK/TCKC half-period (default: 10)
@@ -39,7 +40,11 @@
 // ============================================================================
 
 #include <verilated.h>
+#if VM_TRACE_VCD
+#include <verilated_vcd_c.h>
+#else
 #include <verilated_fst_c.h>
+#endif
 #if VM_COVERAGE
 #include <verilated_cov.h>
 #endif
@@ -84,7 +89,11 @@ static_assert(sizeof(vpi_cmd) == 1036,
 
 // ─── Simulation globals ──────────────────────────────────────────────────────
 static Vtb_jv32_soc* g_dut     = nullptr;
+#if VM_TRACE_VCD
+static VerilatedVcdC* g_vcdp   = nullptr;
+#else
 static VerilatedFstC* g_tfp    = nullptr;
+#endif
 static uint64_t       g_sim_time = 0;
 static uint64_t       g_cycle    = 0;
 static volatile bool  g_abort    = false;
@@ -114,7 +123,11 @@ extern "C" void sim_request_exit(int exit_code) {
 // ─── Clock helpers ───────────────────────────────────────────────────────────
 static inline void tick_half() {
     g_dut->eval();
-    if (g_tfp) g_tfp->dump(g_sim_time);
+#if VM_TRACE_VCD
+    if (g_vcdp) g_vcdp->dump(g_sim_time);
+#else
+    if (g_tfp)  g_tfp->dump(g_sim_time);
+#endif
     g_sim_time += CLK_HALF_PS;
 }
 
@@ -347,9 +360,15 @@ int main(int argc, char **argv) {
 
     if (trace_file) {
         Verilated::traceEverOn(true);
+#if VM_TRACE_VCD
+        g_vcdp = new VerilatedVcdC;
+        g_dut->trace(g_vcdp, 99);
+        g_vcdp->open(trace_file);
+#else
         g_tfp = new VerilatedFstC;
         g_dut->trace(g_tfp, 99);
         g_tfp->open(trace_file);
+#endif
     }
 
     // ── Reset sequence ───────────────────────────────────────────────────────
@@ -439,14 +458,22 @@ int main(int argc, char **argv) {
     // ── Cleanup ───────────────────────────────────────────────────────────────
     close(client_fd);
     close(server_fd);
-    if (g_tfp) { g_tfp->flush(); g_tfp->close(); }
+#if VM_TRACE_VCD
+    if (g_vcdp) { g_vcdp->flush(); g_vcdp->close(); }
+#else
+    if (g_tfp)  { g_tfp->flush();  g_tfp->close();  }
+#endif
 #if VM_COVERAGE
     VerilatedCov::write(ctx->coverageFilename());
 #endif
     g_dut->final();
     delete g_dut;
     delete ctx;
-    if (g_tfp) delete g_tfp;
+#if VM_TRACE_VCD
+    if (g_vcdp) delete g_vcdp;
+#else
+    if (g_tfp)  delete g_tfp;
+#endif
 
     return 0;
 }

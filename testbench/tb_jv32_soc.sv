@@ -86,6 +86,9 @@ module tb_jv32_soc #(
     // DPI-C export: read GPR by index (used for Ctrl-C register dump)
     export "DPI-C" function get_gpr;
 
+    // DPI-C export: pipeline snapshot for Konata pipeline visualizer
+    export "DPI-C" function get_pipeline_snapshot;
+
     localparam int unsigned IRAM_LIMIT      = IRAM_BASE + IRAM_SIZE;
     localparam int unsigned DRAM_LIMIT      = DRAM_BASE + DRAM_SIZE;
     localparam logic [31:0] IRAM_ALIAS_BASE = 32'h6000_0000;
@@ -401,6 +404,65 @@ module tb_jv32_soc #(
     function int get_gpr(input int idx);
         if (idx <= 0 || idx > 31) return 0;
         return int'(u_soc.u_jv32.u_core.u_regfile.regs[idx]);
+    endfunction
+
+    // Pipeline snapshot for Konata visualizer (called once per rising edge).
+    // Exports IF/EX/WB pipeline register state, stall, flush, and branch
+    // redirect information for use by the KanataRTL C++ class.
+    //
+    // IF stage  : instruction at rvc_instr output (ready to enter EX)
+    // EX stage  : instruction in if_ex_r (decode + execute)
+    // WB stage  : instruction in ex_wb_r (writeback / memory completion)
+    function void get_pipeline_snapshot(
+        // IF stage
+        output bit if_valid,
+        output bit [31:0] pc_if,
+        output bit [31:0] orig_instr_if,
+        // EX stage
+        output bit ex_valid,
+        output bit [31:0] pc_ex,
+        output bit [31:0] orig_instr_ex,
+        // WB stage
+        output bit wb_valid, output bit retire,  // instruction retired this cycle
+        output bit [31:0] pc_wb,
+        output bit [31:0] orig_instr_wb,
+        // Stall / flush / redirect
+        output bit if_stall,  // EX/WB stall: if_ex_r held
+        output bit ex_stall,  // WB stall: ex_wb_r held (multi-cycle/load)
+        output bit if_flush,  // IF-stage flush (bp mispred / exception)
+        output bit ex_flush,  // EX-stage flush (inject bubble into EX)
+        // Branch prediction (EX stage, for misprediction annotation)
+        output bit bp_taken_ex,        // prediction carried into EX (bp_taken field)
+        output bit        redirect_ex  // actual EX redirect fired (misprediction)
+    );
+        // IF stage: instruction about to enter EX next cycle
+        if_valid       = u_soc.u_jv32.u_core.rvc_instr_valid
+                         & ~u_soc.u_jv32.u_core.if_stall
+                         & ~u_soc.u_jv32.u_core.if_flush
+                         & ~u_soc.u_jv32.u_core.ex_flush;
+        pc_if = 32'(u_soc.u_jv32.u_core.rvc_instr_pc);
+        orig_instr_if = 32'(u_soc.u_jv32.u_core.rvc_orig_instr);
+
+        // EX stage: if_ex_r pipeline register
+        ex_valid = u_soc.u_jv32.u_core.if_ex_r.valid;
+        pc_ex = u_soc.u_jv32.u_core.if_ex_r.pc;
+        orig_instr_ex = u_soc.u_jv32.u_core.if_ex_r.orig_instr;
+
+        // WB stage: ex_wb_r pipeline register
+        wb_valid = u_soc.u_jv32.u_core.ex_wb_r.valid;
+        retire = logic'(u_soc.u_jv32.u_core.wb_retire);
+        pc_wb = u_soc.u_jv32.u_core.ex_wb_r.pc;
+        orig_instr_wb = u_soc.u_jv32.u_core.ex_wb_r.orig_instr;
+
+        // Control
+        if_stall = logic'(u_soc.u_jv32.u_core.if_stall);
+        ex_stall = logic'(u_soc.u_jv32.u_core.ex_stall);
+        if_flush = logic'(u_soc.u_jv32.u_core.if_flush);
+        ex_flush = logic'(u_soc.u_jv32.u_core.ex_flush);
+
+        // Branch/redirect info
+        bp_taken_ex = logic'(u_soc.u_jv32.u_core.if_ex_r.bp_taken);
+        redirect_ex = logic'(u_soc.u_jv32.u_core.ex_wb_r.redirect) & ~logic'(u_soc.u_jv32.u_core.ex_stall);
     endfunction
 
     logic uart_tx_o;

@@ -41,6 +41,8 @@
 #   VPI_PORT     — TCP port for VPI server   (default: 5555)
 #   GDB_PORT     — TCP port for GDB server   (default: 3333)
 #   BOOT_ELF     — ELF loaded into the SoC  (default: build/hello.elf)
+#   WAVE=1|fst   — dump FST waveform to build/<type>_<name>.fst
+#   WAVE=vcd     — dump VCD waveform to build/<type>_<name>.vcd
 # ============================================================================
 
 SHELL := /bin/bash
@@ -98,7 +100,9 @@ LOG_DIR := $(BUILD_DIR)/openocd_logs
 # ─────────────────────────────────────────────────────────────────────────────
 # Phony targets
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-%
+.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% FORCE
+
+FORCE:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default
@@ -114,11 +118,11 @@ all-with-gdb: test-jtag test-cjtag test-gdb
 $(BOOT_ELF):
 	$(MAKE) -C $(ROOT_DIR) sw-hello BUILD_DIR=$(BUILD_DIR)
 
-$(VPI_JTAG):
-	$(MAKE) -C $(ROOT_DIR) build-vpi-jtag
+$(VPI_JTAG): FORCE
+	$(MAKE) -C $(ROOT_DIR) build-vpi-jtag WAVE=$(WAVE)
 
-$(VPI_CJTAG):
-	$(MAKE) -C $(ROOT_DIR) build-vpi-cjtag
+$(VPI_CJTAG): FORCE
+	$(MAKE) -C $(ROOT_DIR) build-vpi-cjtag WAVE=$(WAVE)
 
 build-jtag:  $(VPI_JTAG)
 build-cjtag: $(VPI_CJTAG)
@@ -247,6 +251,8 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 	@t=$*; LOG="$(LOG_DIR)/jtag_$$t"; \
 	echo "--- [jtag] test_$$t ---"; \
 	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/jtag_$$t.fst") \
+	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/jtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
 	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
@@ -264,6 +270,8 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 	OCD_RC=$$?; \
 	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	cat "$$LOG.ocd.log"; \
+	if [ -n "$(filter 1 fst,$(WAVE))" ]; then echo ""; echo "Waveform: $(BUILD_DIR)/jtag_$$t.fst"; \
+	elif [ -n "$(filter vcd,$(WAVE))" ]; then echo ""; echo "Waveform: $(BUILD_DIR)/jtag_$$t.vcd"; fi; \
 	if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	    if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        echo ""; echo "[SKIP] jtag: test_$$t"; \
@@ -283,6 +291,8 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
 	@t=$*; LOG="$(LOG_DIR)/cjtag_$$t"; \
 	echo "--- [cjtag] test_$$t ---"; \
 	"$(VPI_CJTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/cjtag_$$t.fst") \
+	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/cjtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
 	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
@@ -300,6 +310,8 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
 	OCD_RC=$$?; \
 	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	cat "$$LOG.ocd.log"; \
+	if [ -n "$(filter 1 fst,$(WAVE))" ]; then echo ""; echo "Waveform: $(BUILD_DIR)/cjtag_$$t.fst"; \
+	elif [ -n "$(filter vcd,$(WAVE))" ]; then echo ""; echo "Waveform: $(BUILD_DIR)/cjtag_$$t.vcd"; fi; \
 	if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	    if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        echo ""; echo "[SKIP] cjtag: test_$$t"; \

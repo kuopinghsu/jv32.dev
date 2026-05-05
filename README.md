@@ -36,6 +36,7 @@ This repository is part of a family of open-source RV32 cores targeting differen
   - [4) Run lint and regression checks](#4-run-lint-and-regression-checks)
   - [5) Run synthesis / P&R](#5-run-synthesis--pr)
 - [Useful Targets](#useful-targets)
+- [Pipeline Visualization](#pipeline-visualization)
 - [Core Configuration](#core-configuration)
 - [RTOS Support](#rtos-support)
 - [Verification](#verification)
@@ -264,6 +265,41 @@ make synth
 | `make compare-zephyr-all` | RTL-vs-ISS trace comparison for all Zephyr samples |
 | `cd syn && make synth` | Launch the OpenLane2 synthesis / P&R flow |
 
+## Pipeline Visualization
+
+Pass `KANATA=1` to any `rtl-*` or `sim` target to generate a
+[Konata](https://github.com/shioyadan/Konata) pipeline log (`build/jv32soc.kanata`) in
+**Kanata 0004** format (compatible with the Onikiri2-Konata viewer).
+
+```bash
+make rtl-coremark KANATA=1
+# → build/jv32soc.kanata
+```
+
+Open the `.kanata` file in the [Konata viewer](https://github.com/shioyadan/Konata) to
+interactively inspect the 3-stage pipeline (`F → EX → WB`) for every retired instruction.
+
+<p align="center">
+  <img src="docs/kanata.png" alt="Konata pipeline view" width="900"><br>
+  <em>Konata pipeline view — branch misprediction (<code>msp</code>) and load-store stall (<code>stl</code>) overlays</em>
+</p>
+
+The visualizer renders three lane types per instruction:
+
+| Lane | Colour | Meaning |
+|------|--------|---------|
+| 0 (solid) | green / blue / purple | Normal pipeline stage: **F** (Fetch), **EX** (Execute), **WB** (Writeback) |
+| 1 (`stl`) | teal | Instruction held in stage for ≥ 2 cycles (load-use hazard, multi-cycle ALU, store buffer full) |
+| 2 (`msp`) | pink | Branch misprediction penalty — annotated on the branch instruction at EX |
+
+In the example above:
+- **Row 227** — `bltu a0,a1,0x80000024` shows a `msp` (misprediction) overlay: the branch
+  resolved incorrectly in EX, flushing the instructions already in F/EX and redirecting the
+  fetch to the correct target.
+- **Rows 236 / 241** — `sw t0,0(a1)` shows a `stl` overlay in EX: the store instruction
+  stalls for one extra cycle waiting for a preceding load result (load-use hazard) to
+  become available before the address and data can commit.
+
 ## Core Configuration
 
 Hardware parameters are set in `Makefile.cfg` and can be overridden on the command line:
@@ -409,6 +445,7 @@ Verilator line + branch + expression + toggle coverage over all `sw/` tests and 
 - Tool requirements: [TOOLS.md](TOOLS.md)
 - Core configuration reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - Performance features (branch predictor, store buffer, multiplier modes, …): [Performance Features](#performance-features)
+- Pipeline visualization (Konata/Kanata 0004 format): [Pipeline Visualization](#pipeline-visualization) — example: [docs/kanata.png](docs/kanata.png)
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`
 - Generated PDF: `docs/jv32_soc_datasheet.pdf`
 - Performance analysis: [docs/performance_analysis.pdf](docs/performance_analysis.pdf)
