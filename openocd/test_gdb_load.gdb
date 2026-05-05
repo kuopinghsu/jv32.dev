@@ -14,6 +14,7 @@
 #   2. PC after load is within IRAM (0x80000000–0x80FFFFFF).
 #   3. At least one stepi succeeds and advances PC.
 #   4. At least one nexti succeeds and advances PC.
+#   5. Memory contents at entry point match ELF bytes.
 # ============================================================================
 
 # ── 1. Reset and halt the core ───────────────────────────────────────────────
@@ -66,7 +67,43 @@ if pc2 == pc1:
 print('  nexti after load: 0x{:08x} -> 0x{:08x}  OK'.format(pc1, pc2))
 end
 
-# ── 6. Verify DCSR.cause == 4 (step) via monitor ────────────────────────────
+# ── 6. Verify loaded memory contents match ELF ───────────────────────────────
+python
+import gdb
+
+# Read first instruction at entry point (should be: auipc gp,0x10001)
+entry_addr = _gdb_load['pc_entry']
+instr_word = int(gdb.parse_and_eval('*(unsigned int*){:#x}'.format(entry_addr))) & 0xFFFFFFFF
+
+# Read ELF file to get expected bytes
+elf_file = gdb.current_progspace().filename
+if not elf_file:
+    raise gdb.GdbError('[FAIL] gdb_load: cannot determine ELF filename')
+
+import subprocess
+objdump_out = subprocess.check_output(
+    ['riscv64-unknown-elf-objdump', '-d', '-j', '.text', '--start-address={:#x}'.format(entry_addr),
+     '--stop-address={:#x}'.format(entry_addr + 4), elf_file],
+    universal_newlines=True)
+
+# Parse objdump output to extract instruction word
+import re
+m = re.search(r'{:08x}:\s+([0-9a-f]+)\s+'.format(entry_addr), objdump_out)
+if not m:
+    raise gdb.GdbError('[FAIL] gdb_load: could not parse objdump output:\n' + objdump_out)
+
+expected_instr = int(m.group(1), 16)
+
+if instr_word != expected_instr:
+    raise gdb.GdbError(
+        '[FAIL] gdb_load: memory corrupted at entry point {:#x}\n'
+        '  Expected: {:#010x}\n'
+        '  Got:      {:#010x}'.format(entry_addr, expected_instr, instr_word))
+
+print('  load memory verify: [{:#010x}] = {:#010x}  OK'.format(entry_addr, instr_word))
+end
+
+# ── 7. Verify DCSR.cause == 4 (step) via monitor ────────────────────────────
 python
 import gdb, re
 

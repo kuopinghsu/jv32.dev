@@ -275,9 +275,10 @@ module jv32_dtm #(
     logic        sb_err_clr_tog_r;                             // Edge-detect for toggle (CLK domain)
 
     // sb_access synced to CLK domain so FSM can check access width at SBA trigger
-    logic [ 2:0] sb_access_clk;  // CLK-domain copy of sb_access (2-stage sync)
-    logic [31:0] sbaddress0;     // SBA address (TCK domain - written by TCK/DMI only)
-    logic [31:0] sbdata0;        // SBA data (TCK domain - written by TCK/DMI only)
+    logic [ 2:0] sb_access_clk;      // CLK-domain copy of sb_access (2-stage sync)
+    logic [31:0] sbaddress0;         // SBA address (TCK domain - written by TCK/DMI only)
+    logic [31:0] sbaddress0_stable;  // Holding register: captured when toggle fires, stable during CDC
+    logic [31:0] sbdata0;            // SBA data (TCK domain - written by TCK/DMI only)
 
     // CLK-domain copies driven exclusively by the SBA FSM.
     // sbaddress0_clk is seeded from sbaddress0 at trigger and auto-incremented here;
@@ -438,6 +439,9 @@ module jv32_dtm #(
     logic cmd_wr_toggle_tck_nx;
     logic sb_busyerr_nx;
     logic sba_rd_toggle_tck_nx;
+
+    // Track if we have a pending SBA read (toggled but not yet result received)
+    logic sba_rd_pending_tck;
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
@@ -618,6 +622,7 @@ module jv32_dtm #(
     (* ASYNC_REG = "TRUE" *) logic [31:0] sbaddress0_result_sync[2:0];
     (* ASYNC_REG = "TRUE" *) logic sbaddress0_result_valid_sync[2:0];
     logic sbaddress0_result_valid_sync_r;  // One-cycle delayed [2]
+    logic sbaddress0_written_tck;          // Flag: SBADDRESS0 explicitly written this cycle
 
     // ========================================================================
     // Next-value logic for signals assigned in both capture_dr_i and
@@ -651,11 +656,8 @@ module jv32_dtm #(
                 DMI_PROGBUF0: if (!busy_tck && autoexec_pbuf[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_PROGBUF1: if (!busy_tck && autoexec_pbuf[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_SBCS: if (dmi_shift[24]) sb_busyerr_nx = 1'b0;
-                DMI_SBADDRESS0:
-                if (sb_readonaddr && sb_err_tck == 3'b0) begin
-                    if (sba_busy_tck) sb_busyerr_nx = 1'b1;
-                    else sba_rd_toggle_tck_nx = ~sba_rd_toggle_tck;
-                end
+                // DMI_SBADDRESS0: read-on-addr trigger is now delayed (see always_ff block)
+                // to ensure address stabilizes before toggle fires
                 DMI_SBDATA0: if (sb_err_tck == 3'b0 && sba_busy_tck) sb_busyerr_nx = 1'b1;
                 default: ;
             endcase
@@ -664,14 +666,22 @@ module jv32_dtm #(
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
-            cmd_wr_toggle_tck <= 1'b0;
-            sb_busyerr        <= 1'b0;
-            sba_rd_toggle_tck <= 1'b0;
+            halted_tck_chain    <= 3'b0;
+            resumeack_tck_chain <= 3'b0;
+            cmd_wr_toggle_tck   <= 1'b0;
+            sb_busyerr          <= 1'b0;
+            sba_rd_toggle_tck   <= 1'b0;
+            sba_rd_pending_tck  <= 1'b0;
         end
         else begin
             cmd_wr_toggle_tck <= cmd_wr_toggle_tck_nx;
             sb_busyerr        <= sb_busyerr_nx;
             sba_rd_toggle_tck <= sba_rd_toggle_tck_nx;
+
+            // Track pending read: set when toggle changes, clear when result arrives
+            if (sba_rd_toggle_tck_nx != sba_rd_toggle_tck) sba_rd_pending_tck <= 1'b1;
+            else if (sbdata0_result_valid_sync[2] && sbdata0_result_valid_sync_r == 1'b0)
+                sba_rd_pending_tck <= 1'b0;  // Rising edge of result_valid = new result arrived
         end
     end
 
@@ -721,6 +731,7 @@ module jv32_dtm #(
             sb_err_clr_tck     <= 3'b0;
             sb_err_clr_tog_tck <= 1'b0;
             sbaddress0         <= 32'b0;
+            sbaddress0_stable  <= 32'b0;
             sbdata0            <= 32'b0;
             sba_wr_toggle_tck  <= 1'b0;
             havereset_r        <= 1'b0;
@@ -769,7 +780,7 @@ module jv32_dtm #(
                                     sba_busy_tck,   // [21] sbbusy: live from clk domain
                                     sb_readonaddr,  // [20]
                                     sb_access,      // [19:17]
-                                    sb_autoincr,    // [16]
+                                    1'b0,           // [16] sbautoincrement (DISABLED: CDC timing bug)
                                     sb_readondata,  // [15]
                                     sb_err_tck,     // [14:12] CLK->TCK synchronised copy
                                     SBA_ASIZE,      // [11:5] asize=32
@@ -784,11 +795,15 @@ module jv32_dtm #(
                         end
                         DMI_SBADDRESS0:
                         dmi_shift <= {
-                            dmi_address, sbaddress0_result_valid_sync[2] ? sbaddress0_result_sync[2] : sbaddress0, 2'b00
+                            dmi_address, sbaddress0, 2'b00  // Autoincrement disabled: always return explicit value
                         };
                         DMI_SBDATA0: begin
+                            // Return synchronized result only if valid and operation complete
+                            // If busy or no valid result, return 0 (OpenOCD should check sbbusy first)
                             dmi_shift <= {
-                                dmi_address, sbdata0_result_valid_sync[2] ? sbdata0_result_sync[2] : sbdata0, 2'b00
+                                dmi_address,
+                                (sbdata0_result_valid_sync[2] && !sba_busy_tck) ? sbdata0_result_sync[2] : 32'h0,
+                                2'b00
                             };
                         end
                         default: dmi_shift <= {dmi_address, 32'h0, 2'b00};
@@ -860,9 +875,37 @@ module jv32_dtm #(
                 sbdata0 <= sbdata0_result_sync[2];
                 `DEBUG2(`DBG_GRP_DTM, ("Sync SBDATA0 result = 0x%h", sbdata0_result_sync[2]));
             end
-            if (sbaddress0_result_valid_sync[2] && !sbaddress0_result_valid_sync_r) begin
+            // Sync autoincremented address back from CLK domain: DISABLED (autoincrement disabled)
+            // The following sync-back logic is disabled because autoincrement is not supported
+            // due to CDC timing issues. Leaving it active could cause stale values to corrupt reads.
+            /*
+            if (sbaddress0_written_tck) begin
+                // Explicit write detected - do NOT sync autoincrement this cycle
+                `DEBUG2(`DBG_GRP_DTM, ("SBADDRESS0 explicit write - suppressing autoincr sync"));
+            end
+            else if (sbaddress0_result_valid_sync[2] && !sbaddress0_result_valid_sync_r) begin
                 sbaddress0 <= sbaddress0_result_sync[2];
-                `DEBUG2(`DBG_GRP_DTM, ("Sync SBADDRESS0 after autoincrement = 0x%h", sbaddress0_result_sync[2]));
+                `DEBUG2(`DBG_GRP_DTM, ("Sync SBADDRESS0 autoincr = 0x%h", sbaddress0_result_sync[2]));
+            end
+            */
+
+            // Always capture sbaddress0 into stable holding register when written
+            // This ensures data stability for CDC regardless of sb_readonaddr/sb_readondata mode
+            if (sbaddress0_written_tck) begin
+                sbaddress0_stable <= sbaddress0;
+                `DEBUG2(`DBG_GRP_DTM, ("Capture SBADDRESS0 stable = 0x%h", sbaddress0));
+            end
+
+            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0 written (if sb_readonaddr)
+            // This ensures sbaddress0 has stabilized before CLK domain samples it
+            if (sbaddress0_written_tck && sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
+                sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
+                `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0));
+            end
+
+            // Clear the explicit-write flag unconditionally (autoincrement is disabled)
+            if (sbaddress0_written_tck) begin
+                sbaddress0_written_tck <= 1'b0;
             end
 
             // Process write operations (op == 2'b10)
@@ -940,7 +983,7 @@ module jv32_dtm #(
                         // [21:19] sbaccess; [18] autoincrement; [17] readondata; [16:14] W1C error
                         sb_readonaddr <= dmi_shift[22];     // bit[20]
                         sb_access     <= dmi_shift[21:19];  // bits[19:17]
-                        sb_autoincr   <= dmi_shift[18];     // bit[16]
+                        sb_autoincr   <= 1'b0;              // FORCE DISABLED (CDC timing bug with autoincr)
                         sb_readondata <= dmi_shift[17];     // bit[15]
                         // W1C sb_err: request CLK domain to clear via toggle-sync
                         if (dmi_shift[16:14] != 3'b0) begin
@@ -951,8 +994,9 @@ module jv32_dtm #(
                                 ("Write SBCS: readonaddr=%b sbaccess=%0d", dmi_shift[22], dmi_shift[21:19]));
                     end
                     DMI_SBADDRESS0: begin
-                        sbaddress0 <= dmi_shift[33:2];
-                        `DEBUG2(`DBG_GRP_DTM, ("Write SBADDRESS0 = 0x%h", dmi_shift[33:2]));
+                        sbaddress0             <= dmi_shift[33:2];
+                        sbaddress0_written_tck <= 1'b1;  // Suppress autoincr sync next cycle
+                        `DEBUG2(`DBG_GRP_DTM, ("Write SBADDRESS0 = 0x%h (overrides any autoincr)", dmi_shift[33:2]));
                     end
                     DMI_SBDATA0: begin
                         sbdata0 <= dmi_shift[33:2];
@@ -997,6 +1041,7 @@ module jv32_dtm #(
             sbaddress0_result_valid_sync[1] <= 1'b0;
             sbaddress0_result_valid_sync[2] <= 1'b0;
             sbaddress0_result_valid_sync_r  <= 1'b0;
+            sbaddress0_written_tck          <= 1'b0;
         end
         else begin
             cmderr_sync[0]                  <= cmderr_sys;
@@ -1482,15 +1527,15 @@ module jv32_dtm #(
                     // SBA: handle pending SBA read/write (independent of halt/abstract state)
                     if (!command_valid_sys || cmd_busy) begin
                         if (sba_rd_toggle_sync[2] != sba_rd_toggle_r && !mem_req_pending) begin
-                            // Sample TCK-domain address into CLK-domain register (safe: toggle has synced)
-                            sbaddress0_clk          <= sbaddress0;
+                            // Toggle synced: data in TCK domain is stable, safe to sample from holding register
+                            sbaddress0_clk          <= sbaddress0_stable;  // Use stable holding register for CDC
                             sbdata0_result_valid    <= 1'b0;
                             sbaddress0_result_valid <= 1'b0;
                             cmd_state               <= CMD_SBA_READ;
                             sba_wait_cnt            <= 4'b0;
                         end
                         else if (sba_wr_toggle_sync[2] != sba_wr_toggle_r && !mem_req_pending) begin
-                            // Sample TCK-domain address and data into CLK-domain registers
+                            // Toggle synced: data in TCK domain is stable, safe to sample directly
                             sbaddress0_clk          <= sbaddress0;
                             sbdata0_clk             <= sbdata0;
                             sbdata0_result_valid    <= 1'b0;
@@ -1799,28 +1844,23 @@ module jv32_dtm #(
 
                 CMD_SBA_READ: begin
                     if (!mem_req_pending) begin
-                        // Issue SBA memory read using CLK-domain address (always read full 32-bit word)
+                        // Use address already sampled when toggle was detected (line ~1506)
+                        // Issue SBA memory read (always read full 32-bit word)
                         dbg_mem_req_o   <= 1'b1;
-                        dbg_mem_addr_o  <= {sbaddress0_clk[31:2], 2'b00};  // Word-aligned
+                        dbg_mem_addr_o  <= {sbaddress0_clk[31:2], 2'b00};
                         dbg_mem_we_o    <= 4'b0;
                         mem_req_pending <= 1'b1;
                         sba_wait_cnt    <= 4'b0;
                     end
                     else if (dbg_mem_ready_i) begin
                         // Store extracted result (from always_comb) in CLK-domain register
-                        sbdata0_clk          <= sba_rdata_masked;
-                        sbdata0_result_valid <= 1'b1;
-                        dbg_mem_req_o        <= 1'b0;
-                        mem_req_pending      <= 1'b0;
-                        if (sb_autoincr) begin
-                            case (sb_access_clk)
-                                SBA_ACCESS8:  sbaddress0_clk <= sbaddress0_clk + 1;
-                                SBA_ACCESS16: sbaddress0_clk <= sbaddress0_clk + 2;
-                                default:      sbaddress0_clk <= sbaddress0_clk + 4;  // SBA_ACCESS32
-                            endcase
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        cmd_state <= CMD_IDLE;
+                        sbdata0_clk             <= sba_rdata_masked;
+                        sbdata0_result_valid    <= 1'b1;
+                        dbg_mem_req_o           <= 1'b0;
+                        mem_req_pending         <= 1'b0;
+                        // Autoincrement DISABLED (removed to fix CDC bug)
+                        sbaddress0_result_valid <= 1'b0;
+                        cmd_state               <= CMD_IDLE;
                         `DEBUG2(`DBG_GRP_DTM, ("SBA Read [0x%h] = 0x%h", sbaddress0_clk, sba_rdata_masked));
                     end
                     else begin
@@ -1846,17 +1886,11 @@ module jv32_dtm #(
                         sba_wait_cnt    <= 4'b0;
                     end
                     else if (dbg_mem_ready_i) begin
-                        dbg_mem_req_o   <= 1'b0;
-                        mem_req_pending <= 1'b0;
-                        if (sb_autoincr) begin
-                            case (sb_access_clk)
-                                SBA_ACCESS8:  sbaddress0_clk <= sbaddress0_clk + 1;
-                                SBA_ACCESS16: sbaddress0_clk <= sbaddress0_clk + 2;
-                                default:      sbaddress0_clk <= sbaddress0_clk + 4;  // SBA_ACCESS32
-                            endcase
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        cmd_state <= CMD_IDLE;
+                        dbg_mem_req_o           <= 1'b0;
+                        mem_req_pending         <= 1'b0;
+                        // Autoincrement DISABLED (removed to fix CDC bug)
+                        sbaddress0_result_valid <= 1'b0;
+                        cmd_state               <= CMD_IDLE;
                         `DEBUG2(`DBG_GRP_DTM,
                                 ("SBA Write [0x%h] = 0x%h (wstrb=%b)", sbaddress0_clk, sbdata0_clk, sba_wstrb));
                     end
