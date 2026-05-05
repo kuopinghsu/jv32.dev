@@ -894,17 +894,23 @@ module jv32_dtm #(
             // Always capture sbaddress0 into stable holding register when written
             // This ensures data stability for CDC regardless of sb_readonaddr/sb_readondata mode
             if (sbaddress0_written_tck) begin
-                sbaddress0_stable       <= sbaddress0;
-                sbaddress0_stable_ready <= 1'b1;  // Mark as ready for toggle next cycle
+                sbaddress0_stable <= sbaddress0;
                 `DEBUG2(`DBG_GRP_DTM, ("Capture SBADDRESS0 stable = 0x%h", sbaddress0));
             end
 
-            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_stable captured (if sb_readonaddr)
-            // This ensures sbaddress0_stable has been stable for one full cycle before CLK domain samples it
-            if (sbaddress0_stable_ready && sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
-                sba_rd_toggle_tck       <= ~sba_rd_toggle_tck;
-                sbaddress0_stable_ready <= 1'b0;  // Clear after toggle fires
-                `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
+            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_written_tck (if sb_readonaddr)
+            // Use sbaddress0_stable_ready to ensure sbaddress0_stable was stable for a full cycle
+            if (sbaddress0_stable_ready) begin
+                sbaddress0_stable_ready <= 1'b0;  // Auto-clear
+                if (sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
+                    sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
+                    `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
+                end
+            end
+
+            // Set ready flag when address is written
+            if (sbaddress0_written_tck) begin
+                sbaddress0_stable_ready <= 1'b1;
             end
 
             // Clear the explicit-write flag unconditionally (autoincrement is disabled)
@@ -985,10 +991,10 @@ module jv32_dtm #(
                     DMI_SBCS: begin
                         // [24] W1C sbbusyerror (handled by always_comb); [22] readonaddr
                         // [21:19] sbaccess; [18] autoincrement; [17] readondata; [16:14] W1C error
-                        sb_readonaddr <= dmi_shift[22];     // bit[20]
+                        // FORCE sb_readonaddr=1 always to ensure read trigger works
                         sb_access     <= dmi_shift[21:19];  // bits[19:17]
                         sb_autoincr   <= 1'b0;              // FORCE DISABLED (CDC timing bug with autoincr)
-                        sb_readondata <= dmi_shift[17];     // bit[15]
+                        sb_readondata <= 1'b0;              // FORCE DISABLED (use readonaddr only)
                         // W1C sb_err: request CLK domain to clear via toggle-sync
                         if (dmi_shift[16:14] != 3'b0) begin
                             sb_err_clr_tck     <= dmi_shift[16:14];
