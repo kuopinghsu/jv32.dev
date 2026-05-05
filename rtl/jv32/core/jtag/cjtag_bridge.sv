@@ -218,9 +218,6 @@ module cjtag_bridge (
             tmsc_oen_int      <= 1'b1;
             tck_rise_req      <= 1'b0;
             tck_fall_req      <= 1'b0;
-`ifdef DEBUG
-            prev_state <= 3'd0;
-`endif
         end
         else begin
             case (state)
@@ -603,8 +600,11 @@ module cjtag_bridge (
 
 `ifdef DEBUG
     // Monitor state changes
-    always_ff @(posedge clk_i) begin
-        if (state != prev_state) begin
+    always_ff @(posedge clk_i or negedge ntrst_i) begin
+        if (!ntrst_i) begin
+            prev_state <= 3'd0;
+        end
+        else if (state != prev_state) begin
             `DEBUG2(`DBG_GRP_JTAG, ("[%0t] STATE CHANGE: %0d -> %0d", $time, prev_state, state));
             prev_state <= state;
         end

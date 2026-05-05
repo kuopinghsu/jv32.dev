@@ -275,10 +275,11 @@ module jv32_dtm #(
     logic        sb_err_clr_tog_r;                             // Edge-detect for toggle (CLK domain)
 
     // sb_access synced to CLK domain so FSM can check access width at SBA trigger
-    logic [ 2:0] sb_access_clk;      // CLK-domain copy of sb_access (2-stage sync)
-    logic [31:0] sbaddress0;         // SBA address (TCK domain - written by TCK/DMI only)
-    logic [31:0] sbaddress0_stable;  // Holding register: captured when toggle fires, stable during CDC
-    logic [31:0] sbdata0;            // SBA data (TCK domain - written by TCK/DMI only)
+    logic [ 2:0] sb_access_clk;            // CLK-domain copy of sb_access (2-stage sync)
+    logic [31:0] sbaddress0;               // SBA address (TCK domain - written by TCK/DMI only)
+    logic [31:0] sbaddress0_stable;        // Holding register: captured when toggle fires, stable during CDC
+    logic        sbaddress0_stable_ready;  // Flag: sbaddress0_stable captured and ready for toggle (TCK domain)
+    logic [31:0] sbdata0;                  // SBA data (TCK domain - written by TCK/DMI only)
 
     // CLK-domain copies driven exclusively by the SBA FSM.
     // sbaddress0_clk is seeded from sbaddress0 at trigger and auto-incremented here;
@@ -691,50 +692,51 @@ module jv32_dtm #(
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
             // Shift registers (loaded during CAPTURE_DR)
-            idcode_shift       <= 32'b0;
-            dtmcs_shift        <= 32'b0;
-            dmi_shift          <= 41'b0;
-            bypass_shift       <= 1'b0;
+            idcode_shift            <= 32'b0;
+            dtmcs_shift             <= 32'b0;
+            dmi_shift               <= 41'b0;
+            bypass_shift            <= 1'b0;
 
             // DMI address and control registers
-            dmi_address        <= 7'b0;
-            haltreq            <= 1'b0;
-            resumereq          <= 1'b0;
-            hartreset          <= 1'b0;
-            ndmreset           <= 1'b0;
-            dmactive           <= 1'b0;
-            hartsello          <= 10'b0;
-            data0              <= 32'b0;
-            data1              <= 32'b0;
+            dmi_address             <= 7'b0;
+            haltreq                 <= 1'b0;
+            resumereq               <= 1'b0;
+            hartreset               <= 1'b0;
+            ndmreset                <= 1'b0;
+            dmactive                <= 1'b0;
+            hartsello               <= 10'b0;
+            data0                   <= 32'b0;
+            data1                   <= 32'b0;
 
             // Default to EBREAK so a progbuf execute with untouched entries
             // immediately returns to debug mode instead of running garbage.
-            progbuf0           <= 32'h0010_0073;
-            progbuf1           <= 32'h0010_0073;
-            command_reg        <= 32'b0;
-            cmderr             <= 3'b0;
-            cmderr_clr_tck     <= 3'b0;
-            cmderr_clr_tog_tck <= 1'b0;
+            progbuf0                <= 32'h0010_0073;
+            progbuf1                <= 32'h0010_0073;
+            command_reg             <= 32'b0;
+            cmderr                  <= 3'b0;
+            cmderr_clr_tck          <= 3'b0;
+            cmderr_clr_tog_tck      <= 1'b0;
 
             // abstractauto
-            autoexec_data      <= 2'b0;
-            autoexec_pbuf      <= 2'b0;
+            autoexec_data           <= 2'b0;
+            autoexec_pbuf           <= 2'b0;
 
             // Synthetic debug CSRs: owned by CLK domain, reset there; not here.
             // SBA
-            sb_readonaddr      <= 1'b0;
-            sb_access          <= SBA_ACCESS32;
-            sb_autoincr        <= 1'b0;
-            sb_readondata      <= 1'b0;
+            sb_readonaddr           <= 1'b1;  // Default ON so OpenOCD doesn't need to configure
+            sb_access               <= SBA_ACCESS32;
+            sb_autoincr             <= 1'b0;
+            sb_readondata           <= 1'b0;
 
             // sb_err owned by CLK domain; only the clr-request fields live here
-            sb_err_clr_tck     <= 3'b0;
-            sb_err_clr_tog_tck <= 1'b0;
-            sbaddress0         <= 32'b0;
-            sbaddress0_stable  <= 32'b0;
-            sbdata0            <= 32'b0;
-            sba_wr_toggle_tck  <= 1'b0;
-            havereset_r        <= 1'b0;
+            sb_err_clr_tck          <= 3'b0;
+            sb_err_clr_tog_tck      <= 1'b0;
+            sbaddress0              <= 32'b0;
+            sbaddress0_stable       <= 32'b0;
+            sbaddress0_stable_ready <= 1'b0;
+            sbdata0                 <= 32'b0;
+            sba_wr_toggle_tck       <= 1'b0;
+            havereset_r             <= 1'b0;
         end
         else if (capture_dr_i) begin
             case (ir_i)
@@ -892,15 +894,17 @@ module jv32_dtm #(
             // Always capture sbaddress0 into stable holding register when written
             // This ensures data stability for CDC regardless of sb_readonaddr/sb_readondata mode
             if (sbaddress0_written_tck) begin
-                sbaddress0_stable <= sbaddress0;
+                sbaddress0_stable       <= sbaddress0;
+                sbaddress0_stable_ready <= 1'b1;  // Mark as ready for toggle next cycle
                 `DEBUG2(`DBG_GRP_DTM, ("Capture SBADDRESS0 stable = 0x%h", sbaddress0));
             end
 
-            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0 written (if sb_readonaddr)
-            // This ensures sbaddress0 has stabilized before CLK domain samples it
-            if (sbaddress0_written_tck && sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
-                sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
-                `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0));
+            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_stable captured (if sb_readonaddr)
+            // This ensures sbaddress0_stable has been stable for one full cycle before CLK domain samples it
+            if (sbaddress0_stable_ready && sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
+                sba_rd_toggle_tck       <= ~sba_rd_toggle_tck;
+                sbaddress0_stable_ready <= 1'b0;  // Clear after toggle fires
+                `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
             end
 
             // Clear the explicit-write flag unconditionally (autoincrement is disabled)
@@ -1844,7 +1848,7 @@ module jv32_dtm #(
 
                 CMD_SBA_READ: begin
                     if (!mem_req_pending) begin
-                        // Use address already sampled when toggle was detected (line ~1506)
+                        // Use address already sampled when toggle was detected (line ~1531)
                         // Issue SBA memory read (always read full 32-bit word)
                         dbg_mem_req_o   <= 1'b1;
                         dbg_mem_addr_o  <= {sbaddress0_clk[31:2], 2'b00};
