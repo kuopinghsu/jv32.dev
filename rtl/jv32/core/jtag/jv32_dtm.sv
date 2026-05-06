@@ -217,7 +217,7 @@ module jv32_dtm #(
     // W1C cmderr clear from TCK->CLK via toggle-sync
     logic [2:0] cmderr_clr_tck;                               // TCK domain clear mask
     logic       cmderr_clr_tog_tck;
-    (* ASYNC_REG = "TRUE" *)logic [2:0] cmderr_clr_tog_sync;  // CLK domain toggle sync chain
+    (* ASYNC_REG = "TRUE" *)logic [1:0] cmderr_clr_tog_sync;  // CLK domain 2-stage toggle sync
     logic       cmderr_clr_tog_r;                             // CLK edge detect
     localparam [3:0] ABSTRACTCS_DATACOUNT   = 4'd2;           // data0+data1 (RV32 abstract mem uses both)
     localparam [4:0] ABSTRACTCS_PROGBUFSIZE = 5'd2;           // 2 program buffer registers
@@ -271,14 +271,18 @@ module jv32_dtm #(
     logic [ 2:0] sb_err;                                       // SBA error status (CLK domain)
     logic [ 2:0] sb_err_clr_tck;                               // TCK domain: mask of bits to clear (W1C)
     logic        sb_err_clr_tog_tck;                           // TCK domain: toggles to trigger W1C
-    (* ASYNC_REG = "TRUE" *)logic [ 2:0] sb_err_clr_tog_sync;  // 3-stage sync for toggle (CLK domain)
+    (* ASYNC_REG = "TRUE" *)logic [ 1:0] sb_err_clr_tog_sync;  // 2-stage sync for toggle (CLK domain)
     logic        sb_err_clr_tog_r;                             // Edge-detect for toggle (CLK domain)
 
-    // sb_access synced to CLK domain so FSM can check access width at SBA trigger
-    logic [ 2:0] sb_access_clk;            // CLK-domain copy of sb_access (2-stage sync)
+    // sb_access and sb_autoincr synced to CLK domain so FSM can check at SBA trigger
+    logic [ 2:0] sb_access_clk;            // CLK-domain copy of sb_access (final stage of sync chain)
+    logic        sb_autoincr_clk;          // CLK-domain copy of sb_autoincr (final stage of sync chain)
+    logic [ 2:0] sb_access_latched;        // Latched at SBA operation start
+    logic        sb_autoincr_latched;      // Latched at SBA operation start
     logic [31:0] sbaddress0;               // SBA address (TCK domain - written by TCK/DMI only)
     logic [31:0] sbaddress0_stable;        // Holding register: captured when toggle fires, stable during CDC
     logic        sbaddress0_stable_ready;  // Flag: sbaddress0_stable captured and ready for toggle (TCK domain)
+    logic [ 2:0] sbcs_sync_delay;          // Counter: ensure SBCS control signals sync before SBA operation
     logic [31:0] sbdata0;                  // SBA data (TCK domain - written by TCK/DMI only)
 
     // CLK-domain copies driven exclusively by the SBA FSM.
@@ -372,23 +376,27 @@ module jv32_dtm #(
     logic [3:0] mem_wait_cnt;  // 16-cycle timeout for memory operations
 
     // Command trigger: toggle-sync from TCK->clk domain
-    logic cmd_wr_toggle_tck;                                          // toggles in TCK domain when COMMAND is written
-    (* ASYNC_REG = "TRUE" *) logic [2:0] cmd_wr_toggle_sync;          // 3-stage sync chain in clk domain
-    logic cmd_wr_toggle_r;                                            // delayed version for edge detect
-    (* ASYNC_REG = "TRUE" *) logic [31:0] command_reg_tck_sync[2:0];  // TCK->CLK sync chain for command payload
-    (* ASYNC_REG = "TRUE" *) logic [31:0] data0_tck_sync[2:0];        // TCK->CLK sync chain for data0 payload
-    (* ASYNC_REG = "TRUE" *) logic [31:0] data1_tck_sync[2:0];        // TCK->CLK sync chain for data1 payload
+    logic cmd_wr_toggle_tck;                                            // toggles in TCK domain when COMMAND is written
+    (* ASYNC_REG = "TRUE" *) logic [1:0] cmd_wr_toggle_sync;            // 3-stage sync chain in clk domain
+    logic cmd_wr_toggle_r;                                              // delayed version for edge detect
+    (* ASYNC_REG = "TRUE" *) logic [31:0] command_reg_tck_sync[1:0];    // TCK->CLK 2-stage sync for command payload
+    (* ASYNC_REG = "TRUE" *) logic [31:0] data0_tck_sync[1:0];          // TCK->CLK 2-stage sync for data0 payload
+    (* ASYNC_REG = "TRUE" *) logic [31:0] data1_tck_sync[1:0];          // TCK->CLK 2-stage sync for data1 payload
+    (* ASYNC_REG = "TRUE" *) logic [2:0] sb_access_tck_sync[1:0];       // TCK->CLK 2-stage sync for sb_access
+    (* ASYNC_REG = "TRUE" *) logic sb_autoincr_tck_sync[1:0];           // TCK->CLK 2-stage sync for sb_autoincr (UNPACKED array)
+    (* ASYNC_REG = "TRUE" *) logic [31:0] sbaddress0_stable_sync[1:0];  // TCK->CLK 2-stage sync for sbaddress0_stable
 
     // SBA trigger: separate toggle-syncs for SBA reads and writes (TCK->clk)
-    (* ASYNC_REG = "TRUE" *) logic [2:0] sba_wr_toggle_sync;  // SBA write toggle sync chain
+    (* ASYNC_REG = "TRUE" *) logic [1:0] sba_wr_toggle_sync;  // SBA write toggle 2-stage sync
     logic sba_wr_toggle_r;
-    (* ASYNC_REG = "TRUE" *) logic [2:0] sba_rd_toggle_sync;  // SBA read toggle sync chain
+    (* ASYNC_REG = "TRUE" *) logic [1:0] sba_rd_toggle_sync;  // SBA read toggle 2-stage sync
     logic sba_rd_toggle_r;
     logic [3:0] sba_wait_cnt;                                 // SBA timeout counter
+    logic [3:0] sba_clr_cnt;                                  // SBA result valid auto-clear counter
 
     // SBA busy: sync from clk domain back to TCK domain for SBCS.sbbusy read
     logic sba_busy_clk;                                       // clk domain: SBA FSM is active
-    (* ASYNC_REG = "TRUE" *) logic [2:0] sba_busy_tck_chain;  // 3-stage sync to TCK
+    (* ASYNC_REG = "TRUE" *) logic [1:0] sba_busy_tck_chain;  // 2-stage sync to TCK
     logic sba_busy_tck;                                       // TCK domain: SBA is busy
 
     // ========================================================================
@@ -450,7 +458,7 @@ module jv32_dtm #(
             resumeack_tck_chain  <= 3'b0;
             halted_tck           <= 1'b0;
             resumeack_tck        <= 1'b0;
-            sba_busy_tck_chain   <= 3'b0;
+            sba_busy_tck_chain   <= 2'b0;
             sba_busy_tck         <= 1'b0;
             busy_tck_chain       <= 3'b0;
             busy_tck             <= 1'b0;
@@ -458,24 +466,23 @@ module jv32_dtm #(
             cmd_busy_holdoff_tck <= 2'd0;
             sb_err_tck_chain[0]  <= 3'b0;
             sb_err_tck_chain[1]  <= 3'b0;
-            sb_err_tck_chain[2]  <= 3'b0;
             sb_err_tck           <= 3'b0;
         end
         else begin
             // Double-synchronize CPU status signals
             halted_tck_chain    <= {halted_tck_chain[1:0], dbg_halted_i};
-            halted_tck          <= halted_tck_chain[2];
+            halted_tck          <= halted_tck_chain[1];
 
             resumeack_tck_chain <= {resumeack_tck_chain[1:0], dbg_resumeack_i};
-            resumeack_tck       <= resumeack_tck_chain[2];
+            resumeack_tck       <= resumeack_tck_chain[1];
 
             // Sync SBA busy from clk domain back to TCK domain
-            sba_busy_tck_chain  <= {sba_busy_tck_chain[1:0], sba_busy_clk};
-            sba_busy_tck        <= sba_busy_tck_chain[2];
+            sba_busy_tck_chain  <= {sba_busy_tck_chain[0], sba_busy_clk};
+            sba_busy_tck        <= sba_busy_tck_chain[1];
 
             // Sync cmd_busy from CLK domain to TCK domain
             busy_tck_chain      <= {busy_tck_chain[1:0], cmd_busy};
-            busy_tck            <= busy_tck_chain[2];
+            busy_tck            <= busy_tck_chain[1];
 
             // Set pending flag immediately when a COMMAND is dispatched (toggle changes).
             // The holdoff counter keeps it asserted for at least 3 TCK cycles so that
@@ -494,8 +501,7 @@ module jv32_dtm #(
             // Sync sb_err from CLK domain to TCK domain (each bit independently)
             sb_err_tck_chain[0] <= sb_err;
             sb_err_tck_chain[1] <= sb_err_tck_chain[0];
-            sb_err_tck_chain[2] <= sb_err_tck_chain[1];
-            sb_err_tck          <= sb_err_tck_chain[2];
+            sb_err_tck          <= sb_err_tck_chain[1];
         end
     end
 
@@ -522,7 +528,7 @@ module jv32_dtm #(
             halt_req_sync_chain   <= {halt_req_sync_chain[1:0], haltreq};
             resume_req_sync_chain <= {resume_req_sync_chain[1:0], resumereq};
             halted_clk_chain      <= {halted_clk_chain[1:0], dbg_halted_i};
-            halted_clk            <= halted_clk_chain[2];
+            halted_clk            <= halted_clk_chain[1];
 
             // dcsr.cause update: detect rising edge of dbg_halted_i
             dbg_halted_prev       <= dbg_halted_i;
@@ -530,8 +536,8 @@ module jv32_dtm #(
         end
     end
 
-    assign dbg_halt_req_o   = (cmd_busy ? 1'b0 : halt_req_sync_chain[2]) | exec_halt_req;
-    assign dbg_resume_req_o = (cmd_busy ? 1'b0 : resume_req_sync_chain[2]) || exec_resume_req;
+    assign dbg_halt_req_o   = (cmd_busy ? 1'b0 : halt_req_sync_chain[1]) | exec_halt_req;
+    assign dbg_resume_req_o = (cmd_busy ? 1'b0 : resume_req_sync_chain[1]) || exec_resume_req;
 
     // ========================================================================
     // Shift Registers
@@ -611,19 +617,27 @@ module jv32_dtm #(
     // ========================================================================
     // Synchronize system domain status back to TCK domain (declarations)
     // ========================================================================
-    (* ASYNC_REG = "TRUE" *) logic [2:0] cmderr_sync[2:0];
-    (* ASYNC_REG = "TRUE" *) logic [31:0] data0_result_sync[2:0];
-    (* ASYNC_REG = "TRUE" *) logic data0_result_valid_sync[2:0];
-    logic data0_result_valid_sync_r;  // One-cycle delayed [2] for rising-edge detect
+    (* ASYNC_REG = "TRUE" *) logic [2:0] cmderr_sync[1:0];  // 2-stage sync for 3-bit error code
+    (* ASYNC_REG = "TRUE" *) logic [31:0] data0_result_sync[1:0];
+    (* ASYNC_REG = "TRUE" *) logic data0_result_valid_sync[1:0];
+    logic data0_result_valid_sync_r;                        // One-cycle delayed [1] for rising-edge detect
 
-    // CLK->TCK sync chains for SBA results (mirrors data0_result_sync mechanism)
-    (* ASYNC_REG = "TRUE" *) logic [31:0] sbdata0_result_sync[2:0];
-    (* ASYNC_REG = "TRUE" *) logic sbdata0_result_valid_sync[2:0];
-    logic sbdata0_result_valid_sync_r;     // One-cycle delayed [2]
-    (* ASYNC_REG = "TRUE" *) logic [31:0] sbaddress0_result_sync[2:0];
-    (* ASYNC_REG = "TRUE" *) logic sbaddress0_result_valid_sync[2:0];
-    logic sbaddress0_result_valid_sync_r;  // One-cycle delayed [2]
+    // CLK->TCK 2-stage sync chains for SBA results
+    (* ASYNC_REG = "TRUE" *) logic [31:0] sbdata0_result_sync[1:0];
+    (* ASYNC_REG = "TRUE" *) logic sbdata0_result_valid_sync[1:0];
+    logic sbdata0_result_valid_sync_r;     // One-cycle delayed [1]
+    (* ASYNC_REG = "TRUE" *) logic [31:0] sbaddress0_result_sync[1:0];
+    (* ASYNC_REG = "TRUE" *) logic sbaddress0_result_valid_sync[1:0];
+    logic sbaddress0_result_valid_sync_r;  // One-cycle delayed [1]
     logic sbaddress0_written_tck;          // Flag: SBADDRESS0 explicitly written this cycle
+
+    // TCK->CLK toggle signals to clear result_valid flags (avoids races with state machine sets)
+    logic sbdata0_clr_toggle_tck;                                     // TCK domain: toggle to request clear
+    logic sbaddress0_clr_toggle_tck;                                  // TCK domain: toggle to request clear
+    (* ASYNC_REG = "TRUE" *) logic [1:0] sbdata0_clr_toggle_sync;     // CLK domain 2-stage sync
+    (* ASYNC_REG = "TRUE" *) logic [1:0] sbaddress0_clr_toggle_sync;  // CLK domain 2-stage sync
+    logic sbdata0_clr_toggle_r;                                       // CLK domain: previous toggle value
+    logic sbaddress0_clr_toggle_r;                                    // CLK domain: previous toggle value
 
     // ========================================================================
     // Next-value logic for signals assigned in both capture_dr_i and
@@ -681,7 +695,7 @@ module jv32_dtm #(
 
             // Track pending read: set when toggle changes, clear when result arrives
             if (sba_rd_toggle_tck_nx != sba_rd_toggle_tck) sba_rd_pending_tck <= 1'b1;
-            else if (sbdata0_result_valid_sync[2] && sbdata0_result_valid_sync_r == 1'b0)
+            else if (sbdata0_result_valid_sync[1] && sbdata0_result_valid_sync_r == 1'b0)
                 sba_rd_pending_tck <= 1'b0;  // Rising edge of result_valid = new result arrived
         end
     end
@@ -734,6 +748,7 @@ module jv32_dtm #(
             sbaddress0              <= 32'b0;
             sbaddress0_stable       <= 32'b0;
             sbaddress0_stable_ready <= 1'b0;
+            sbcs_sync_delay         <= 3'b0;
             sbdata0                 <= 32'b0;
             sba_wr_toggle_tck       <= 1'b0;
             havereset_r             <= 1'b0;
@@ -756,7 +771,7 @@ module jv32_dtm #(
                             // Waiting for the shadow DATA0 register to be updated in a
                             // later UPDATE_DR makes abstract reads visible one scan late.
                             dmi_shift <= {
-                                dmi_address, data0_result_valid_sync[2] ? data0_result_sync[2] : data0, 2'b00
+                                dmi_address, data0_result_valid_sync[1] ? data0_result_sync[1] : data0, 2'b00
                             };
                         end
                         DMI_DATA1: begin
@@ -782,7 +797,7 @@ module jv32_dtm #(
                                     sba_busy_tck,   // [21] sbbusy: live from clk domain
                                     sb_readonaddr,  // [20]
                                     sb_access,      // [19:17]
-                                    1'b0,           // [16] sbautoincrement (DISABLED: CDC timing bug)
+                                    sb_autoincr,    // [16] sbautoincrement
                                     sb_readondata,  // [15]
                                     sb_err_tck,     // [14:12] CLK->TCK synchronised copy
                                     SBA_ASIZE,      // [11:5] asize=32
@@ -795,16 +810,18 @@ module jv32_dtm #(
                                 2'b00
                             };
                         end
-                        DMI_SBADDRESS0:
-                        dmi_shift <= {
-                            dmi_address, sbaddress0, 2'b00  // Autoincrement disabled: always return explicit value
-                        };
+                        DMI_SBADDRESS0: begin
+                            $display("[TCK @ %0t] CAPTURE SBADDRESS0: returning 0x%08x", $time, sbaddress0);
+                            dmi_shift <= {
+                                dmi_address, sbaddress0, 2'b00  // Autoincrement disabled: always return explicit value
+                            };
+                        end
                         DMI_SBDATA0: begin
                             // Return synchronized result only if valid and operation complete
                             // If busy or no valid result, return 0 (OpenOCD should check sbbusy first)
                             dmi_shift <= {
                                 dmi_address,
-                                (sbdata0_result_valid_sync[2] && !sba_busy_tck) ? sbdata0_result_sync[2] : 32'h0,
+                                (sbdata0_result_valid_sync[1] && !sba_busy_tck) ? sbdata0_result_sync[1] : 32'h0,
                                 2'b00
                             };
                         end
@@ -861,35 +878,25 @@ module jv32_dtm #(
                     ("DMI UPDATE: op=%0d addr=0x%02h data=0x%08h", dmi_shift[1:0], dmi_shift[40:34], dmi_shift[33:2]));
 
             // Sync results from system domain even when not writing.
-            // Update whenever valid_sync[2] is high: by the time UPDATE-DR fires after
+            // Update whenever valid_sync[1] is high: by the time UPDATE-DR fires after
             // a command completes, the sync chain has stabilized and data0_result holds
             // the correct result. OpenOCD always reads DATA0 after seeing abstractcs.busy=0.
-            if (data0_result_valid_sync[2] && !data0_result_valid_sync_r) begin
-                data0 <= data0_result_sync[2];
-                `DEBUG2(`DBG_GRP_DTM, ("Sync DATA0 result = 0x%h", data0_result_sync[2]));
+            if (data0_result_valid_sync[1] && !data0_result_valid_sync_r) begin
+                data0 <= data0_result_sync[1];
+                `DEBUG2(`DBG_GRP_DTM, ("Sync DATA0 result = 0x%h", data0_result_sync[1]));
             end
-            if (cmderr_sync[2] != cmderr) begin
-                cmderr <= cmderr_sync[2];
-                `DEBUG2(`DBG_GRP_DTM, ("Sync ABSTRACTCS cmderr = %0d", cmderr_sync[2]));
+            if (cmderr_sync[1] != cmderr) begin
+                cmderr <= cmderr_sync[1];
+                `DEBUG2(`DBG_GRP_DTM, ("Sync ABSTRACTCS cmderr = %0d", cmderr_sync[1]));
             end
             // Sync SBA results back from CLK domain
-            if (sbdata0_result_valid_sync[2] && !sbdata0_result_valid_sync_r) begin
-                sbdata0 <= sbdata0_result_sync[2];
-                `DEBUG2(`DBG_GRP_DTM, ("Sync SBDATA0 result = 0x%h", sbdata0_result_sync[2]));
+            if (sbdata0_result_valid_sync[1] && !sbdata0_result_valid_sync_r) begin
+                sbdata0                <= sbdata0_result_sync[1];
+                sbdata0_clr_toggle_tck <= ~sbdata0_clr_toggle_tck;  // Toggle to request clear
+                `DEBUG2(`DBG_GRP_DTM, ("Sync SBDATA0 result = 0x%h", sbdata0_result_sync[1]));
             end
-            // Sync autoincremented address back from CLK domain: DISABLED (autoincrement disabled)
-            // The following sync-back logic is disabled because autoincrement is not supported
-            // due to CDC timing issues. Leaving it active could cause stale values to corrupt reads.
-            /*
-            if (sbaddress0_written_tck) begin
-                // Explicit write detected - do NOT sync autoincrement this cycle
-                `DEBUG2(`DBG_GRP_DTM, ("SBADDRESS0 explicit write - suppressing autoincr sync"));
-            end
-            else if (sbaddress0_result_valid_sync[2] && !sbaddress0_result_valid_sync_r) begin
-                sbaddress0 <= sbaddress0_result_sync[2];
-                `DEBUG2(`DBG_GRP_DTM, ("Sync SBADDRESS0 autoincr = 0x%h", sbaddress0_result_sync[2]));
-            end
-            */
+            // Note: SBADDRESS0 autoincrement sync moved to continuous TCK always block
+            // to ensure edge detection happens before sync_r catches up
 
             // Always capture sbaddress0 into stable holding register when written
             // This ensures data stability for CDC regardless of sb_readonaddr/sb_readondata mode
@@ -898,12 +905,20 @@ module jv32_dtm #(
                 `DEBUG2(`DBG_GRP_DTM, ("Capture SBADDRESS0 stable = 0x%h", sbaddress0));
             end
 
-            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_written_tck (if sb_readonaddr)
+            // Decrement SBCS sync delay counter
+            if (sbcs_sync_delay != 3'b0) begin
+                sbcs_sync_delay <= sbcs_sync_delay - 1'b1;
+            end
+
+            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_written_tck
+            // This delay ensures control signals (sb_access, sb_autoincr) have time to sync through
+            // 2-stage CDC chains from TCK to CLK domain before the toggle edge is detected
             // Use sbaddress0_stable_ready to ensure sbaddress0_stable was stable for a full cycle
-            if (sbaddress0_stable_ready) begin
-                sbaddress0_stable_ready <= 1'b0;  // Auto-clear
-                if (sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck) begin
-                    sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
+            if (sbaddress0_stable_ready && sb_err_tck == 3'b0 && !sba_busy_tck && sbcs_sync_delay == 3'b0) begin
+                // Fire toggle for sbreadononaddr OR sbautoincrement (control signals fully synced now)
+                if (sb_readonaddr || sb_autoincr) begin
+                    sba_rd_toggle_tck       <= ~sba_rd_toggle_tck;
+                    sbaddress0_stable_ready <= 1'b0;  // Clear only when toggle fires
                     `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
                 end
             end
@@ -913,10 +928,8 @@ module jv32_dtm #(
                 sbaddress0_stable_ready <= 1'b1;
             end
 
-            // Clear the explicit-write flag unconditionally (autoincrement is disabled)
-            if (sbaddress0_written_tck) begin
-                sbaddress0_written_tck <= 1'b0;
-            end
+            // Clear sbaddress0_written_tck unless being set this cycle (for one-cycle pulse)
+            sbaddress0_written_tck <= 1'b0;
 
             // Process write operations (op == 2'b10)
             if (dmi_shift[1:0] == 2'b10) begin  // Write operation
@@ -989,23 +1002,30 @@ module jv32_dtm #(
                                 ("Write ABSTRACTAUTO execdata=%h execprogbuf=%h", dmi_shift[3:2], dmi_shift[19:18]));
                     end
                     DMI_SBCS: begin
-                        // [24] W1C sbbusyerror (handled by always_comb); [22] readonaddr
-                        // [21:19] sbaccess; [18] autoincrement; [17] readondata; [16:14] W1C error
-                        // FORCE sb_readonaddr=1 always to ensure read trigger works
-                        sb_access     <= dmi_shift[21:19];  // bits[19:17]
-                        sb_autoincr   <= 1'b0;              // FORCE DISABLED (CDC timing bug with autoincr)
-                        sb_readondata <= 1'b0;              // FORCE DISABLED (use readonaddr only)
+                        // SBCS register bits (RISC-V Debug Spec 0.13): [22]sbbusyerror [21]sbbusy [20]sbreadononaddr
+                        // [19:17]sbaccess [16]sbautoincrement [15]sbreadondata [14:12]sberror
+                        // DMI format: [33:2]=data, so SBCS bit N → dmi_shift[N+2]
+                        sb_readonaddr           <= dmi_shift[22];     // SBCS[20] - sbreadononaddr
+                        sb_access               <= dmi_shift[21:19];  // SBCS[19:17] - sbaccess
+                        sb_autoincr             <= dmi_shift[18];     // SBCS[16] - sbautoincrement
+                        sb_readondata           <= 1'b0;              // FORCE DISABLED (use readonaddr only)
+                        // Start sync delay counter to ensure control signals propagate through CDC
+                        sbcs_sync_delay         <= 3'd3;  // Wait 3 TCK cycles for 2-stage CDC sync
+                        // Clear stable_ready to prevent delayed trigger from firing with stale address
+                        // sb_readonaddr semantics: trigger read when SBADDRESS0 is WRITTEN, not when sb_readonaddr enables
+                        sbaddress0_stable_ready <= 1'b0;
                         // W1C sb_err: request CLK domain to clear via toggle-sync
                         if (dmi_shift[16:14] != 3'b0) begin
                             sb_err_clr_tck     <= dmi_shift[16:14];
                             sb_err_clr_tog_tck <= ~sb_err_clr_tog_tck;
                         end
                         `DEBUG2(`DBG_GRP_DTM,
-                                ("Write SBCS: readonaddr=%b sbaccess=%0d", dmi_shift[22], dmi_shift[21:19]));
+                                ("Write SBCS: readonaddr=%b sbaccess=%0d sbautoincrement=%b", dmi_shift[22], dmi_shift[21:19], dmi_shift[18]));
                     end
                     DMI_SBADDRESS0: begin
+                        $display("[TCK @ %0t] WRITE SBADDRESS0: 0x%08x -> 0x%08x", $time, sbaddress0, dmi_shift[33:2]);
                         sbaddress0             <= dmi_shift[33:2];
-                        sbaddress0_written_tck <= 1'b1;  // Suppress autoincr sync next cycle
+                        sbaddress0_written_tck <= 1'b1;
                         `DEBUG2(`DBG_GRP_DTM, ("Write SBADDRESS0 = 0x%h (overrides any autoincr)", dmi_shift[33:2]));
                     end
                     DMI_SBDATA0: begin
@@ -1029,56 +1049,53 @@ module jv32_dtm #(
         if (!jtag_rst_n) begin
             cmderr_sync[0]                  <= 3'b0;
             cmderr_sync[1]                  <= 3'b0;
-            cmderr_sync[2]                  <= 3'b0;
             data0_result_sync[0]            <= 32'b0;
             data0_result_sync[1]            <= 32'b0;
-            data0_result_sync[2]            <= 32'b0;
             data0_result_valid_sync[0]      <= 1'b0;
             data0_result_valid_sync[1]      <= 1'b0;
-            data0_result_valid_sync[2]      <= 1'b0;
             data0_result_valid_sync_r       <= 1'b0;
             sbdata0_result_sync[0]          <= 32'b0;
             sbdata0_result_sync[1]          <= 32'b0;
-            sbdata0_result_sync[2]          <= 32'b0;
             sbdata0_result_valid_sync[0]    <= 1'b0;
             sbdata0_result_valid_sync[1]    <= 1'b0;
-            sbdata0_result_valid_sync[2]    <= 1'b0;
             sbdata0_result_valid_sync_r     <= 1'b0;
+            sbdata0_clr_toggle_tck          <= 1'b0;
             sbaddress0_result_sync[0]       <= 32'b0;
             sbaddress0_result_sync[1]       <= 32'b0;
-            sbaddress0_result_sync[2]       <= 32'b0;
             sbaddress0_result_valid_sync[0] <= 1'b0;
             sbaddress0_result_valid_sync[1] <= 1'b0;
-            sbaddress0_result_valid_sync[2] <= 1'b0;
             sbaddress0_result_valid_sync_r  <= 1'b0;
+            sbaddress0_clr_toggle_tck       <= 1'b0;
             sbaddress0_written_tck          <= 1'b0;
         end
         else begin
             cmderr_sync[0]                  <= cmderr_sys;
             cmderr_sync[1]                  <= cmderr_sync[0];
-            cmderr_sync[2]                  <= cmderr_sync[1];
             data0_result_sync[0]            <= data0_result;
             data0_result_sync[1]            <= data0_result_sync[0];
-            data0_result_sync[2]            <= data0_result_sync[1];
             data0_result_valid_sync[0]      <= data0_result_valid;
             data0_result_valid_sync[1]      <= data0_result_valid_sync[0];
-            data0_result_valid_sync[2]      <= data0_result_valid_sync[1];
-            data0_result_valid_sync_r       <= data0_result_valid_sync[2];  // delayed for edge detect
+            data0_result_valid_sync_r       <= data0_result_valid_sync[1];  // delayed for edge detect
             // SBA result sync chains (CLK->TCK)
             sbdata0_result_sync[0]          <= sbdata0_clk;
             sbdata0_result_sync[1]          <= sbdata0_result_sync[0];
-            sbdata0_result_sync[2]          <= sbdata0_result_sync[1];
             sbdata0_result_valid_sync[0]    <= sbdata0_result_valid;
             sbdata0_result_valid_sync[1]    <= sbdata0_result_valid_sync[0];
-            sbdata0_result_valid_sync[2]    <= sbdata0_result_valid_sync[1];
-            sbdata0_result_valid_sync_r     <= sbdata0_result_valid_sync[2];
+            sbdata0_result_valid_sync_r     <= sbdata0_result_valid_sync[1];
             sbaddress0_result_sync[0]       <= sbaddress0_clk;
             sbaddress0_result_sync[1]       <= sbaddress0_result_sync[0];
-            sbaddress0_result_sync[2]       <= sbaddress0_result_sync[1];
             sbaddress0_result_valid_sync[0] <= sbaddress0_result_valid;
             sbaddress0_result_valid_sync[1] <= sbaddress0_result_valid_sync[0];
-            sbaddress0_result_valid_sync[2] <= sbaddress0_result_valid_sync[1];
-            sbaddress0_result_valid_sync_r  <= sbaddress0_result_valid_sync[2];
+            sbaddress0_result_valid_sync_r  <= sbaddress0_result_valid_sync[1];
+
+            // Sync autoincremented address back from CLK domain (edge detection every TCK cycle)
+            // Must run continuously, not just during UPDATE-DR, otherwise sync_r catches up
+            // before the next DMI transaction and the edge is missed
+            if (sbaddress0_result_valid_sync[1] && !sbaddress0_result_valid_sync_r) begin
+                sbaddress0                <= sbaddress0_result_sync[1];
+                sbaddress0_clr_toggle_tck <= ~sbaddress0_clr_toggle_tck;
+                sbaddress0_stable_ready   <= 1'b0;
+            end
         end
     end
 
@@ -1178,139 +1195,175 @@ module jv32_dtm #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // Toggle-sync state
-            cmd_wr_toggle_sync      <= 3'b0;
-            cmd_wr_toggle_r         <= 1'b0;
-            command_reg_sys         <= 32'b0;
-            data0_sys               <= 32'b0;
-            command_valid_sys       <= 1'b0;
-            command_reg_tck_sync[0] <= 32'b0;
-            command_reg_tck_sync[1] <= 32'b0;
-            command_reg_tck_sync[2] <= 32'b0;
-            data0_tck_sync[0]       <= 32'b0;
-            data0_tck_sync[1]       <= 32'b0;
-            data0_tck_sync[2]       <= 32'b0;
-            data1_tck_sync[0]       <= 32'b0;
-            data1_tck_sync[1]       <= 32'b0;
-            data1_tck_sync[2]       <= 32'b0;
-            sba_wr_toggle_sync      <= 3'b0;
-            sba_wr_toggle_r         <= 1'b0;
-            sba_rd_toggle_sync      <= 3'b0;
-            sba_rd_toggle_r         <= 1'b0;
-            sba_wait_cnt            <= 4'b0;
-            cmderr_clr_tog_sync     <= 3'b0;
-            cmderr_clr_tog_r        <= 1'b0;
-            sb_err_clr_tog_sync     <= 3'b0;
-            sb_err_clr_tog_r        <= 1'b0;
-            sb_access_clk           <= SBA_ACCESS32;
+            cmd_wr_toggle_sync         <= 2'b0;
+            cmd_wr_toggle_r            <= 1'b0;
+            command_reg_sys            <= 32'b0;
+            data0_sys                  <= 32'b0;
+            command_valid_sys          <= 1'b0;
+            command_reg_tck_sync[0]    <= 32'b0;
+            command_reg_tck_sync[1]    <= 32'b0;
+            data0_tck_sync[0]          <= 32'b0;
+            data0_tck_sync[1]          <= 32'b0;
+            data1_tck_sync[0]          <= 32'b0;
+            data1_tck_sync[1]          <= 32'b0;
+            sb_access_tck_sync[0]      <= 3'b0;
+            sb_access_tck_sync[1]      <= 3'b0;
+            sb_autoincr_tck_sync[0]    <= 1'b0;
+            sb_autoincr_tck_sync[1]    <= 1'b0;
+            sbaddress0_stable_sync[0]  <= 32'b0;
+            sbaddress0_stable_sync[1]  <= 32'b0;
+            sba_wr_toggle_sync         <= 2'b0;
+            sba_wr_toggle_r            <= 1'b0;
+            sba_rd_toggle_sync         <= 2'b0;
+            sba_rd_toggle_r            <= 1'b0;
+            sba_wait_cnt               <= 4'b0;
+            sba_clr_cnt                <= 4'b0;
+            sbdata0_clr_toggle_sync    <= 2'b0;
+            sbdata0_clr_toggle_r       <= 1'b0;
+            sbaddress0_clr_toggle_sync <= 2'b0;
+            sbaddress0_clr_toggle_r    <= 1'b0;
+            cmderr_clr_tog_sync        <= 2'b0;
+            cmderr_clr_tog_r           <= 1'b0;
+            sb_err_clr_tog_sync        <= 2'b0;
+            sb_err_clr_tog_r           <= 1'b0;
+            sb_access_clk              <= SBA_ACCESS32;
+            sb_autoincr_clk            <= 1'b0;
 
             // CLK-domain SBA registers
-            sbaddress0_clk          <= 32'b0;
-            sbdata0_clk             <= 32'b0;
-            sbdata0_result_valid    <= 1'b0;
-            sbaddress0_result_valid <= 1'b0;
+            sbaddress0_clk             <= 32'b0;
+            sbdata0_clk                <= 32'b0;
+            sbdata0_result_valid       <= 1'b0;
+            sbaddress0_result_valid    <= 1'b0;
 
             // State machine
-            cmd_state               <= CMD_IDLE;
-            cmd_busy                <= 1'b0;
-            cmderr_sys              <= 3'b0;
-            data0_result            <= 32'b0;
-            data0_result_valid      <= 1'b0;
-            data0_sys               <= 32'b0;
-            data1_sys               <= 32'b0;
-            dbg_reg_we_o            <= 1'b0;
-            dbg_pc_we_o             <= 1'b0;
-            dbg_mem_req_o           <= 1'b0;
-            dbg_mem_we_o            <= 4'b0;
-            exec_resume_req         <= 1'b0;
-            exec_waiting_halt       <= 1'b0;
-            exec_seen_running       <= 1'b0;
-            exec_wait_cnt           <= '0;
-            exec_halt_req           <= 1'b0;
-            exec_fault_halting      <= 1'b0;
-            read_after_exec         <= 1'b0;
-            exec_phase_done         <= 1'b0;
-            mem_req_pending         <= 1'b0;
-            mem_wait_cnt            <= 4'b0;
-            mem_aarpostincrement_r  <= 1'b0;
-            mem_post_addr           <= 32'b0;
+            cmd_state                  <= CMD_IDLE;
+            cmd_busy                   <= 1'b0;
+            cmderr_sys                 <= 3'b0;
+            data0_result               <= 32'b0;
+            data0_result_valid         <= 1'b0;
+            data0_sys                  <= 32'b0;
+            data1_sys                  <= 32'b0;
+            dbg_reg_we_o               <= 1'b0;
+            dbg_pc_we_o                <= 1'b0;
+            dbg_mem_req_o              <= 1'b0;
+            dbg_mem_we_o               <= 4'b0;
+            exec_resume_req            <= 1'b0;
+            exec_waiting_halt          <= 1'b0;
+            exec_seen_running          <= 1'b0;
+            exec_wait_cnt              <= '0;
+            exec_halt_req              <= 1'b0;
+            exec_fault_halting         <= 1'b0;
+            read_after_exec            <= 1'b0;
+            exec_phase_done            <= 1'b0;
+            mem_req_pending            <= 1'b0;
+            mem_wait_cnt               <= 4'b0;
+            mem_aarpostincrement_r     <= 1'b0;
+            mem_post_addr              <= 32'b0;
 
             // Synthetic CSRs - CLK domain only
-            dcsr_reg                <= 32'h40000003;   // xdebugver=4 [31:28], prv=3 [1:0]
-            dcsr_cause_r            <= 3'd0;
-            dscratch0_reg           <= 32'b0;
-            dscratch1_reg           <= 32'b0;
-            dpc_reg                 <= 32'h8000_0000;  // Boot address (matches jv32 BOOT_ADDR)
+            dcsr_reg                   <= 32'h40000003;   // xdebugver=4 [31:28], prv=3 [1:0]
+            dcsr_cause_r               <= 3'd0;
+            dscratch0_reg              <= 32'b0;
+            dscratch1_reg              <= 32'b0;
+            dpc_reg                    <= 32'h8000_0000;  // Boot address (matches jv32 BOOT_ADDR)
 
             // Trigger register reset: type=2 (mcontrol), all mode/action bits=0 (disabled)
-            tselect_reg             <= 32'b0;
-            tdata1_reg[0]           <= 32'h2000_0000;  // type=2, disabled
-            tdata2_reg[0]           <= 32'b0;
-            tdata1_reg[1]           <= 32'h2000_0000;
-            tdata2_reg[1]           <= 32'b0;
+            tselect_reg                <= 32'b0;
+            tdata1_reg[0]              <= 32'h2000_0000;  // type=2, disabled
+            tdata2_reg[0]              <= 32'b0;
+            tdata1_reg[1]              <= 32'h2000_0000;
+            tdata2_reg[1]              <= 32'b0;
 
-            sb_err                  <= 3'b0;
+            sb_err                     <= 3'b0;
+
             // Debug command output registers
-            dbg_reg_addr_o          <= '0;
-            dbg_reg_wdata_o         <= '0;
-            dbg_pc_wdata_o          <= '0;
-            dbg_mem_addr_o          <= '0;
-            dbg_mem_wdata_o         <= '0;
-            mem_addr                <= '0;
-            dbg_halted_prev_fsm     <= 1'b0;
-            trigger_hit_latch       <= '0;
+            dbg_reg_addr_o             <= '0;
+            dbg_reg_wdata_o            <= '0;
+            dbg_pc_wdata_o             <= '0;
+            dbg_mem_addr_o             <= '0;
+            dbg_mem_wdata_o            <= '0;
+            mem_addr                   <= '0;
+            dbg_halted_prev_fsm        <= 1'b0;
+            trigger_hit_latch          <= '0;
         end
         else begin
             // ----------------------------------------------------------------
             // Part 1: Unconditional synchronizer advances (always run)
             // ----------------------------------------------------------------
-            cmd_wr_toggle_sync      <= {cmd_wr_toggle_sync[1:0], cmd_wr_toggle_tck};
-            cmd_wr_toggle_r         <= cmd_wr_toggle_sync[2];
+            cmd_wr_toggle_sync        <= {cmd_wr_toggle_sync[0], cmd_wr_toggle_tck};
+            cmd_wr_toggle_r           <= cmd_wr_toggle_sync[1];
 
             // Synchronize TCK-domain command payload buses into CLK domain.
             // Payload is held stable in TCK domain until next write.
-            command_reg_tck_sync[0] <= command_reg;
-            command_reg_tck_sync[1] <= command_reg_tck_sync[0];
-            command_reg_tck_sync[2] <= command_reg_tck_sync[1];
-            data0_tck_sync[0]       <= data0;
-            data0_tck_sync[1]       <= data0_tck_sync[0];
-            data0_tck_sync[2]       <= data0_tck_sync[1];
-            data1_tck_sync[0]       <= data1;
-            data1_tck_sync[1]       <= data1_tck_sync[0];
-            data1_tck_sync[2]       <= data1_tck_sync[1];
+            command_reg_tck_sync[0]   <= command_reg;
+            command_reg_tck_sync[1]   <= command_reg_tck_sync[0];
+            data0_tck_sync[0]         <= data0;
+            data0_tck_sync[1]         <= data0_tck_sync[0];
+            data1_tck_sync[0]         <= data1;
+            data1_tck_sync[1]         <= data1_tck_sync[0];
 
-            // Sync sb_access to CLK (stable before any SBA trigger toggle fires)
-            sb_access_clk           <= sb_access;
+            // Sync sb_access and sb_autoincr from TCK domain (for payload capture at trigger time)
+            // These are held stable in TCK domain until next SBCS write
+            sb_access_tck_sync[0]     <= sb_access;
+            sb_access_tck_sync[1]     <= sb_access_tck_sync[0];
+            sb_autoincr_tck_sync[0]   <= sb_autoincr;
+            sb_autoincr_tck_sync[1]   <= sb_autoincr_tck_sync[0];
+            sb_access_clk             <= sb_access_tck_sync[1];
+            sb_autoincr_clk           <= sb_autoincr_tck_sync[1];
+
+            // Sync sbaddress0_stable from TCK domain for SBA reads
+            sbaddress0_stable_sync[0] <= sbaddress0_stable;
+            sbaddress0_stable_sync[1] <= sbaddress0_stable_sync[0];
 
             // abstractcs.cmderr W1C clear from TCK domain
-            cmderr_clr_tog_sync     <= {cmderr_clr_tog_sync[1:0], cmderr_clr_tog_tck};
-            cmderr_clr_tog_r        <= cmderr_clr_tog_sync[2];
+            cmderr_clr_tog_sync       <= {cmderr_clr_tog_sync[0], cmderr_clr_tog_tck};
+            cmderr_clr_tog_r          <= cmderr_clr_tog_sync[1];
 
-            if (cmderr_clr_tog_sync[2] != cmderr_clr_tog_r) cmderr_sys <= cmderr_sys & ~cmderr_clr_tck;
+            if (cmderr_clr_tog_sync[1] != cmderr_clr_tog_r) cmderr_sys <= cmderr_sys & ~cmderr_clr_tck;
 
             // sb_err W1C: priority LOWER than the state-machine error-set
             // below (NBA ordering: state machine assignment later in source wins
             // if both fire on the same cycle - a new bus error beats an old clear).
-            sb_err_clr_tog_sync <= {sb_err_clr_tog_sync[1:0], sb_err_clr_tog_tck};
-            sb_err_clr_tog_r    <= sb_err_clr_tog_sync[2];
+            sb_err_clr_tog_sync <= {sb_err_clr_tog_sync[0], sb_err_clr_tog_tck};
+            sb_err_clr_tog_r    <= sb_err_clr_tog_sync[1];
 
-            if (sb_err_clr_tog_sync[2] != sb_err_clr_tog_r) begin
+            if (sb_err_clr_tog_sync[1] != sb_err_clr_tog_r) begin
                 sb_err <= sb_err & ~sb_err_clr_tck;
             end
 
             // SBA write/read toggle syncs
-            sba_wr_toggle_sync <= {sba_wr_toggle_sync[1:0], sba_wr_toggle_tck};
-            sba_rd_toggle_sync <= {sba_rd_toggle_sync[1:0], sba_rd_toggle_tck};
-            sba_wr_toggle_r    <= sba_wr_toggle_sync[2];
-            sba_rd_toggle_r    <= sba_rd_toggle_sync[2];
+            sba_wr_toggle_sync         <= {sba_wr_toggle_sync[0], sba_wr_toggle_tck};
+            sba_rd_toggle_sync         <= {sba_rd_toggle_sync[0], sba_rd_toggle_tck};
+            sba_wr_toggle_r            <= sba_wr_toggle_sync[1];
+            sba_rd_toggle_r            <= sba_rd_toggle_sync[1];
+
+            // SBA result clear toggle syncs (TCK→CLK to clear result_valid flags)
+            sbdata0_clr_toggle_sync    <= {sbdata0_clr_toggle_sync[0], sbdata0_clr_toggle_tck};
+            sbaddress0_clr_toggle_sync <= {sbaddress0_clr_toggle_sync[0], sbaddress0_clr_toggle_tck};
+            sbdata0_clr_toggle_r       <= sbdata0_clr_toggle_sync[1];
+            sbaddress0_clr_toggle_r    <= sbaddress0_clr_toggle_sync[1];
+
+            // Clear result_valid flags when TCK requests (toggle edge detected)
+            // sbdata0: Don't clear if FSM is currently setting it (avoid race condition)
+            if (sbdata0_clr_toggle_sync[1] != sbdata0_clr_toggle_r && cmd_state != CMD_SBA_READ && cmd_state != CMD_SBA_WRITE) begin
+                sbdata0_result_valid <= 1'b0;
+            end
+            // sbaddress0: No state guard needed - autoincrement sets the flag and completes
+            // before clear toggle can arrive (CDC delay ~10+ cycles). Allows proper toggle
+            // for rapid successive autoincrement operations.
+            if (sbaddress0_clr_toggle_sync[1] != sbaddress0_clr_toggle_r) begin
+                $display("[CLK @ %0t] CLEAR sbaddress0_result_valid: 1->0 (toggle detected)", $time);
+                sbaddress0_result_valid <= 1'b0;
+            end
 
             // ----------------------------------------------------------------
             // Part 2: Command-write toggle edge detection
             // ----------------------------------------------------------------
-            if (cmd_wr_toggle_sync[2] != cmd_wr_toggle_r) begin
+            if (cmd_wr_toggle_sync[1] != cmd_wr_toggle_r) begin
                 // New command edge from TCK domain - latch command & data
-                command_reg_sys    <= command_reg_tck_sync[2];
-                data0_sys          <= data0_tck_sync[2];
-                data1_sys          <= data1_tck_sync[2];
+                command_reg_sys    <= command_reg_tck_sync[1];
+                data0_sys          <= data0_tck_sync[1];
+                data1_sys          <= data1_tck_sync[1];
                 command_valid_sys  <= 1'b1;
 
                 // Start each new command with a clean cmderr state.
@@ -1321,7 +1374,7 @@ module jv32_dtm #(
                 read_after_exec    <= 1'b0;
                 exec_phase_done    <= 1'b0;
 
-                `DEBUG2(`DBG_GRP_DTM, ("Toggle-sync: command latched = 0x%h", command_reg_tck_sync[2]));
+                `DEBUG2(`DBG_GRP_DTM, ("Toggle-sync: command latched = 0x%h", command_reg_tck_sync[1]));
             end
             else if (cmd_state == CMD_DONE || (command_valid_sys && cmderr_sys != 3'b0)) begin
                 // Clear after FSM finishes or rejected (error set)
@@ -1536,20 +1589,30 @@ module jv32_dtm #(
 
                     // SBA: handle pending SBA read/write (independent of halt/abstract state)
                     if (!command_valid_sys || cmd_busy) begin
-                        if (sba_rd_toggle_sync[2] != sba_rd_toggle_r && !mem_req_pending) begin
-                            // Toggle synced: data in TCK domain is stable, safe to sample from holding register
-                            sbaddress0_clk          <= sbaddress0_stable;  // Use stable holding register for CDC
-                            sbdata0_result_valid    <= 1'b0;
-                            sbaddress0_result_valid <= 1'b0;
-                            cmd_state               <= CMD_SBA_READ;
-                            sba_wait_cnt            <= 4'b0;
+                        if (sba_rd_toggle_sync[1] != sba_rd_toggle_r && !mem_req_pending) begin
+                            // Toggle synced: all TCK-domain payload signals now stable in CLK domain
+                            // Use synced values that arrived together through the same CDC timing
+                            sbaddress0_clk       <= sbaddress0_stable_sync[1];
+                            sbdata0_result_valid <= 1'b0;
+                            // Latch SBA control signals - guaranteed synced with same timing as address
+                            sb_access_latched    <= sb_access_tck_sync[1];
+                            sb_autoincr_latched  <= sb_autoincr_tck_sync[1];
+`ifdef VERBOSE_DEBUG
+                            $display("[CLK @ %0t] SBA READ START: addr=0x%08x, autoincr_sync=%d, access_sync=%d",
+                                     $time, sbaddress0_stable_sync[1], sb_autoincr_tck_sync[1], sb_access_tck_sync[1]);
+`endif
+                            cmd_state    <= CMD_SBA_READ;
+                            sba_wait_cnt <= 4'b0;
                         end
-                        else if (sba_wr_toggle_sync[2] != sba_wr_toggle_r && !mem_req_pending) begin
+                        else if (sba_wr_toggle_sync[1] != sba_wr_toggle_r && !mem_req_pending) begin
                             // Toggle synced: data in TCK domain is stable, safe to sample directly
                             sbaddress0_clk          <= sbaddress0;
                             sbdata0_clk             <= sbdata0;
                             sbdata0_result_valid    <= 1'b0;
                             sbaddress0_result_valid <= 1'b0;
+                            // Latch SBA control signals - synced with same timing as address/data
+                            sb_access_latched       <= sb_access_tck_sync[1];
+                            sb_autoincr_latched     <= sb_autoincr_tck_sync[1];
                             cmd_state               <= CMD_SBA_WRITE;
                             sba_wait_cnt            <= 4'b0;
                         end
@@ -1856,21 +1919,39 @@ module jv32_dtm #(
                     if (!mem_req_pending) begin
                         // Use address already sampled when toggle was detected (line ~1531)
                         // Issue SBA memory read (always read full 32-bit word)
-                        dbg_mem_req_o   <= 1'b1;
-                        dbg_mem_addr_o  <= {sbaddress0_clk[31:2], 2'b00};
-                        dbg_mem_we_o    <= 4'b0;
-                        mem_req_pending <= 1'b1;
-                        sba_wait_cnt    <= 4'b0;
+                        dbg_mem_req_o           <= 1'b1;
+                        dbg_mem_addr_o          <= {sbaddress0_clk[31:2], 2'b00};
+                        dbg_mem_we_o            <= 4'b0;
+                        mem_req_pending         <= 1'b1;
+                        sba_wait_cnt            <= 4'b0;
+                        // Clear result_valid at operation start to ensure clean 0→1 edge when complete
+                        sbaddress0_result_valid <= 1'b0;
                     end
                     else if (dbg_mem_ready_i) begin
                         // Store extracted result (from always_comb) in CLK-domain register
-                        sbdata0_clk             <= sba_rdata_masked;
-                        sbdata0_result_valid    <= 1'b1;
-                        dbg_mem_req_o           <= 1'b0;
-                        mem_req_pending         <= 1'b0;
-                        // Autoincrement DISABLED (removed to fix CDC bug)
-                        sbaddress0_result_valid <= 1'b0;
-                        cmd_state               <= CMD_IDLE;
+                        sbdata0_clk          <= sba_rdata_masked;
+                        sbdata0_result_valid <= 1'b1;
+                        dbg_mem_req_o        <= 1'b0;
+                        mem_req_pending      <= 1'b0;
+                        // Autoincrement address if enabled (use latched values from operation start)
+                        if (sb_access_latched[2:0] == SBA_ACCESS32 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd4;
+                            sbaddress0_result_valid <= 1'b1;
+                            $display("[CLK @ %0t] AUTOINCR: sbaddress0_clk 0x%08x -> 0x%08x, result_valid=1", $time,
+                                     sbaddress0_clk, sbaddress0_clk + 32'd4);
+                        end
+                        else if (sb_access_latched[2:0] == SBA_ACCESS16 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd2;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
+                        else if (sb_access_latched[2:0] == SBA_ACCESS8 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd1;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
+                        else begin
+                            sbaddress0_result_valid <= 1'b0;
+                        end
+                        cmd_state <= CMD_IDLE;
                         `DEBUG2(`DBG_GRP_DTM, ("SBA Read [0x%h] = 0x%h", sbaddress0_clk, sba_rdata_masked));
                     end
                     else begin
@@ -1896,11 +1977,25 @@ module jv32_dtm #(
                         sba_wait_cnt    <= 4'b0;
                     end
                     else if (dbg_mem_ready_i) begin
-                        dbg_mem_req_o           <= 1'b0;
-                        mem_req_pending         <= 1'b0;
-                        // Autoincrement DISABLED (removed to fix CDC bug)
-                        sbaddress0_result_valid <= 1'b0;
-                        cmd_state               <= CMD_IDLE;
+                        dbg_mem_req_o   <= 1'b0;
+                        mem_req_pending <= 1'b0;
+                        // Autoincrement address if enabled (use latched values from operation start)
+                        if (sb_access_latched[2:0] == SBA_ACCESS8 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd1;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
+                        else if (sb_access_latched[2:0] == SBA_ACCESS16 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd2;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
+                        else if (sb_access_latched[2:0] == SBA_ACCESS32 && sb_autoincr_latched) begin
+                            sbaddress0_clk          <= sbaddress0_clk + 32'd4;
+                            sbaddress0_result_valid <= 1'b1;
+                        end
+                        else begin
+                            sbaddress0_result_valid <= 1'b0;
+                        end
+                        cmd_state <= CMD_IDLE;
                         `DEBUG2(`DBG_GRP_DTM,
                                 ("SBA Write [0x%h] = 0x%h (wstrb=%b)", sbaddress0_clk, sbdata0_clk, sba_wstrb));
                     end

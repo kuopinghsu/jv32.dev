@@ -222,6 +222,9 @@ check_sberrors
 
 # Configure SBCS: sbreadononaddr=1, sbautoincrement=1, sbaccess=2.
 riscv dmi_write 0x38 [expr {(1 << 20) | (2 << 17) | (1 << 16)}]
+# Read back SBCS to verify autoincrement bit is set
+set sbcs_readback [as_u32 [riscv dmi_read 0x38]]
+puts [format "SBCS after write: 0x%08x (sbautoincrement bit=%d)" $sbcs_readback [expr {($sbcs_readback >> 16) & 1}]]
 
 # Read 4 words: each write to sbaddress0 triggers a SBA read, and after the
 # read completes sbaddress0 is auto-incremented by 4.
@@ -232,6 +235,8 @@ for {set i 0} {$i < 4} {incr i} {
     after 30
     check_sberrors
     lappend results [as_u32 [riscv dmi_read 0x3C]]
+    # Wait longer for autoincrement to sync back from CLK domain (needs ~6-10 TCK cycles)
+    after 500
     # After the read, sbaddress0 auto-incremented; read it back to verify.
     set addr_after [as_u32 [riscv dmi_read 0x39]]
     set expected_next [expr {$addr + 4}]
