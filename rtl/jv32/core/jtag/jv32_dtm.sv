@@ -302,6 +302,10 @@ module jv32_dtm #(
     logic [31:0] sba_wdata_positioned;  // Data positioned within 32-bit word
     logic [31:0] sba_rdata_masked;      // Read data extracted/masked based on width
 
+    // Abstract memory byte enable and data positioning (CMD_MEM_WRITE, computed combinationally)
+    logic [ 3:0] mem_wstrb;             // Byte enables for abstract mem write (aamsize-aware)
+    logic [31:0] mem_wdata_positioned;  // Data positioned for abstract mem write
+
     // Remaining SBA localparams
     localparam [2:0] SBA_ACCESS8  = 3'd0;   // 8-bit access width code
     localparam [2:0] SBA_ACCESS16 = 3'd1;   // 16-bit access width code
@@ -959,11 +963,17 @@ module jv32_dtm #(
                 // 2-stage CDC chains from TCK to CLK domain before the toggle edge is detected
                 // Use sbaddress0_stable_ready to ensure sbaddress0_stable was stable for a full cycle
                 if (sbaddress0_stable_ready && sb_err_tck == 3'b0 && !sba_busy_tck && sbcs_sync_delay == 3'b0) begin
-                    // Fire toggle for sbreadononaddr OR sbautoincrement (control signals fully synced now)
-                    if (sb_readonaddr || sb_autoincr) begin
+                    // Per RISC-V Debug Spec §3.6.2: an SBA access is triggered when SBADDRESS0 is
+                    // written IFF sbreadononaddr=1.  sbautoincrement=1 only means "increment address
+                    // after each access" — it must NOT trigger a new read on address write.
+                    if (sb_readonaddr) begin
                         sba_rd_toggle_tck       <= ~sba_rd_toggle_tck;
                         sbaddress0_stable_ready <= 1'b0;  // Clear only when toggle fires
                         `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
+                    end
+                    else begin
+                        // No trigger; clear the ready flag so we don't re-fire on subsequent UPDATE-DRs
+                        sbaddress0_stable_ready <= 1'b0;
                     end
                 end
 
@@ -1231,6 +1241,52 @@ module jv32_dtm #(
                 sba_wstrb            = 4'b1111;
                 sba_wdata_positioned = sbdata0_clk;
                 sba_rdata_masked     = dbg_mem_rdata_i;
+            end
+        endcase
+    end
+
+    // Abstract memory byte enable and data positioning (combinational, mirrors SBA logic)
+    always_comb begin
+        mem_wstrb            = 4'b1111;
+        mem_wdata_positioned = data0_sys;
+        case (mem_aamsize_r)
+            3'd0: begin  // byte
+                case (mem_addr[1:0])
+                    2'b00: begin
+                        mem_wstrb            = 4'b0001;
+                        mem_wdata_positioned = {24'b0, data0_sys[7:0]};
+                    end
+                    2'b01: begin
+                        mem_wstrb            = 4'b0010;
+                        mem_wdata_positioned = {16'b0, data0_sys[7:0], 8'b0};
+                    end
+                    2'b10: begin
+                        mem_wstrb            = 4'b0100;
+                        mem_wdata_positioned = {8'b0, data0_sys[7:0], 16'b0};
+                    end
+                    2'b11: begin
+                        mem_wstrb            = 4'b1000;
+                        mem_wdata_positioned = {data0_sys[7:0], 24'b0};
+                    end
+                    default: begin
+                        mem_wstrb            = 4'b0001;
+                        mem_wdata_positioned = {24'b0, data0_sys[7:0]};
+                    end
+                endcase
+            end
+            3'd1: begin  // halfword
+                if (mem_addr[1]) begin
+                    mem_wstrb            = 4'b1100;
+                    mem_wdata_positioned = {data0_sys[15:0], 16'b0};
+                end
+                else begin
+                    mem_wstrb            = 4'b0011;
+                    mem_wdata_positioned = {16'b0, data0_sys[15:0]};
+                end
+            end
+            default: begin  // word (aamsize=2) or unsupported
+                mem_wstrb            = 4'b1111;
+                mem_wdata_positioned = data0_sys;
             end
         endcase
     end
@@ -1651,31 +1707,29 @@ module jv32_dtm #(
                             `DEBUG2(`DBG_GRP_DTM, ("execute progbuf (no transfer): DPC=0x%h", DEBUG_ROM_BASE));
                         end
                         else if (cmd_is_access_mem) begin
-                            cmd_busy               <= 1'b1;
-
-                            // Load address: use data1 if address hasn't been postincremented yet,
-                            // otherwise use the pre-incremented value from previous mem op.
-                            // Check if data1 has changed since last dispatch by comparing with stored value.
-                            // For simplicity, always load from data1 or mem_post_addr.
-                            // If postincrement was enabled, mem_post_addr holds the next address.
-                            // First access: mem_post_addr = 0 (or use data1).
-                            // Always load address from data1_sys — updated by OpenOCD via DMI for
-                            // each command.  The spec requires postincrement to write back to arg1
-                            // (data1); we do that via data1_result/data1_result_valid → TCK domain
-                            // sync, so data1 is correct when the next cmd_wr_toggle fires.
-                            mem_addr               <= data1_sys;
-                            mem_aarpostincrement_r <= mem_aarpostincrement;
-                            mem_aamsize_r          <= command_reg_sys[22:20];  // aamsize: 0=byte, 1=hword, 2=word
-
-                            if (mem_write_cmd) begin
-                                cmd_state <= CMD_MEM_WRITE;
-
-                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Write memory[0x%h] = 0x%h", data1_sys, data0_sys));
+                            if (command_reg_sys[23]) begin  // aamvirtual=1: virtual memory not supported
+                                cmderr_sys <= CMDERR_NOTSUP;
+                                `DEBUG2(`DBG_GRP_DTM, ("CMD_ACCESS_MEM: aamvirtual=1 not supported, cmderr=NOTSUP"));
                             end
                             else begin
-                                cmd_state <= CMD_MEM_READ;
+                                cmd_busy               <= 1'b1;
 
-                                `DEBUG2(`DBG_GRP_DTM, ("Execute: Read memory[0x%h]", data1_sys));
+                                // Always load address from data1_sys — updated by OpenOCD via DMI for
+                                // each command.  The spec requires postincrement to write back to arg1
+                                // (data1); we do that via data1_result/data1_result_valid → TCK domain
+                                // sync, so data1 is correct when the next cmd_wr_toggle fires.
+                                mem_addr               <= data1_sys;
+                                mem_aarpostincrement_r <= mem_aarpostincrement;
+                                mem_aamsize_r          <= command_reg_sys[22:20];  // aamsize: 0=byte, 1=hword, 2=word
+
+                                if (mem_write_cmd) begin
+                                    cmd_state <= CMD_MEM_WRITE;
+                                    `DEBUG2(`DBG_GRP_DTM, ("Execute: Write memory[0x%h] = 0x%h", data1_sys, data0_sys));
+                                end
+                                else begin
+                                    cmd_state <= CMD_MEM_READ;
+                                    `DEBUG2(`DBG_GRP_DTM, ("Execute: Read memory[0x%h]", data1_sys));
+                                end
                             end
                         end
                         else begin
@@ -2018,11 +2072,11 @@ module jv32_dtm #(
 
                 CMD_MEM_WRITE: begin
                     if (!mem_req_pending) begin
-                        // Issue memory write request
+                        // Issue memory write request with aamsize-aware byte enables and positioning
                         dbg_mem_req_o   <= 1'b1;
-                        dbg_mem_addr_o  <= mem_addr;
-                        dbg_mem_wdata_o <= data0_sys;
-                        dbg_mem_we_o    <= 4'b1111;  // Write all bytes
+                        dbg_mem_addr_o  <= {mem_addr[31:2], 2'b00};  // word-aligned bus address
+                        dbg_mem_wdata_o <= mem_wdata_positioned;
+                        dbg_mem_we_o    <= mem_wstrb;
                         mem_req_pending <= 1'b1;
                         mem_wait_cnt    <= 4'b0;
                     end
@@ -2324,12 +2378,12 @@ module jv32_dtm #(
     // Lint sink: signals not consumed in current implementation.
     logic _unused_ok_dtm;
     assign _unused_ok_dtm = &{1'b0, dcsr_reg[31:28],  // xdebugver always forced to 4'd4; these bits never used
-        dcsr_reg[14:13],                           // ebreaks/ebreaku: not individually consumed here
-        dcsr_reg[12:9],                            // stepie/stopcount/stoptime/halt: forwarded but not consumed individually
-        dcsr_reg[3],                               // nmip: not implemented in this core
-        command_reg_sys[23], command_reg_sys[19],  // reserved bits in AC_ACCESS_REGISTER
-        data0_result_valid_sync_r,                 // retained for future edge-detect use
-        halted_clk,                                // synchronized debug-halted status (reserved)
+        dcsr_reg[14:13],            // ebreaks/ebreaku: not individually consumed here
+        dcsr_reg[12:9],             // stepie/stopcount/stoptime/halt: forwarded but not consumed individually
+        dcsr_reg[3],                // nmip: not implemented in this core
+        command_reg_sys[19],        // reserved bit in AC_ACCESS_REGISTER (aamvirtual bit[23] now checked)
+        data0_result_valid_sync_r,  // retained for future edge-detect use
+        halted_clk,                 // synchronized debug-halted status (reserved)
         sbdata0_result_valid_sync_r, sbaddress0_result_valid_sync_r};
 `endif  // SYNTHESIS
 

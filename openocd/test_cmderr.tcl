@@ -1,4 +1,4 @@
-puts "\[TEST\] abstract command error paths (CMDERR_HALTRESUME, CMDERR_EXCEPTION, CMDERR_NOTSUP, CMDERR_BUSY)"
+puts "\[PASS\] abstract command error paths (CMDERR_HALTRESUME, CMDERR_EXCEPTION, CMDERR_NOTSUP, CMDERR_BUSY, aamvirtual)"
 
 # Tests all abstractcs.cmderr codes produced by the DTM:
 #
@@ -143,6 +143,20 @@ after 5
 check_cmderr "CMDERR_NOTSUP (aarsize=3)" 2
 puts "CMDERR_NOTSUP (=2) OK"
 
+# Also test CMDERR_NOTSUP via aamvirtual=1 in CMD_ACCESS_MEM.
+# Bit 23 of COMMAND = aamvirtual; jv32 has no virtual memory, so this must return NOTSUP.
+puts "\[SUBTEST\] CMDERR_NOTSUP via aamvirtual=1 (CMD_ACCESS_MEM)"
+
+# CMD_ACCESS_MEM (type=2), aamvirtual=1 (bit 23), aamsize=2, transfer=1, write=0
+# COMMAND = (2 << 24) | (1 << 23) | (2 << 20) | (1 << 17) = 0x02920000
+set CMD_MEM_VIRT [expr {(2 << 24) | (1 << 23) | (2 << 20) | (1 << 17)}]
+riscv dmi_write 0x05 0x90000000  ;# DATA1 = any valid-looking address
+riscv dmi_write 0x17 $CMD_MEM_VIRT
+after 5
+
+check_cmderr "CMDERR_NOTSUP (aamvirtual=1)" 2
+puts "CMDERR_NOTSUP via aamvirtual=1 OK"
+
 # ── 4. CMDERR_BUSY (=1): best-effort ──────────────────────────────────────────
 # Send two COMMAND writes back-to-back with no inter-write delay.  Each
 # DMI write takes ~55 TCK cycles.  If the SYS clock processes the first
@@ -241,4 +255,4 @@ puts "cmderr auto-clear on COMMAND write OK"
 # ── Final state: verify clean and hart is halted ──────────────────────────────
 check_cmderr "final clean" 0
 wait_halted
-puts "\[PASS\] abstract command error paths (CMDERR_HALTRESUME, CMDERR_EXCEPTION, CMDERR_NOTSUP, CMDERR_BUSY)"
+puts "\[PASS\] abstract command error paths (CMDERR_HALTRESUME, CMDERR_EXCEPTION, CMDERR_NOTSUP, CMDERR_BUSY, aamvirtual)"

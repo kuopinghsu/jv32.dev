@@ -113,7 +113,7 @@ are listed below in execution order.  The 6 GDB tests are described separately i
 
 | File | What it tests |
 |---|---|
-| `test_dtmcs.tcl` | DMI/TAP preflight: dmstatus version, authenticated, dmcontrol dmactive |
+| `test_dtmcs.tcl` | DMI/TAP preflight: dmstatus version, authenticated; dmcontrol dmactive; hartinfo nscratch/datasize/dataaccess field validation |
 | `test_halt_resume.tcl` | halt/resume/re-halt cycle; dmstatus anyrunning/allrunning bits |
 | `test_registers.tcl` | GPR (a0, t0) and CSR (mstatus, mepc, mcause, mscratch) read/write via abstract commands |
 | `test_abstract_regs.tcl` | All 32 GPRs + mscratch, mtvec BASE alignment, mie — exhaustive abstract command coverage |
@@ -133,9 +133,9 @@ are listed below in execution order.  The 6 GDB tests are described separately i
 | `test_sba.tcl` | SBA raw DMI: sbversion=1/sbasize=32; SBA write+read; sbreadonaddr; autoincrement burst; sbbusyerror W1C |
 | `test_havereset.tcl` | impebreak=1; non-existent hart; havereset sticky; ackhavereset; hartreset; CMD_QUICK_ACCESS rejected; postexec-only |
 | `test_abstractauto.tcl` | ABSTRACTAUTO default=0; round-trip; autoexec_data[0] re-executes on DATA0 read; no cmderr accumulation |
-| `test_debug_ext_alias.tcl` | Out-of-TCM alias routing: IRAM alias↔canonical and DRAM alias↔canonical via sysbus |
-| `test_cmderr.tcl` | All cmderr codes: HALTRESUME(4), EXCEPTION(3), NOTSUP(2), BUSY(1); W1C clear; auto-clear on new COMMAND |
-| `test_aampostincrement.tcl` | CMD_ACCESS_MEM aampostincrement: 8/16/32-bit reads/writes; DATA1 auto-advances by access size |
+| `test_debug_ext_alias.tcl` | Out-of-TCM alias routing: all 3 access modes (abstract/progbuf/sysbus); IRAM alias↔canonical and DRAM alias↔canonical; all data widths (8/16/32-bit) |
+| `test_cmderr.tcl` | All cmderr codes: HALTRESUME(4), EXCEPTION(3), NOTSUP(2) via cmdtype/aarsize/aamvirtual, BUSY(1); W1C clear; auto-clear on new COMMAND |
+| `test_aampostincrement.tcl` | CMD_ACCESS_MEM aampostincrement: 8/16/32-bit reads **and writes**; DATA1 auto-advances by access size; SBA read-back verify |
 | `test_dscratch.tcl` | dscratch0 (0x7b2) / dscratch1 (0x7b3): write/read round-trip, independence, raw DMI path |
 | `test_sbreadondata.tcl` | sbreadondata: SBCS bit round-trip; functional re-read on SBDATA0 capture; disabled-mode verification |
 | `test_haltsum.tcl` | HALTSUM0 (DMI 0x40): bit0=1 when halted, bit0=0 when running; consistent with dmstatus |
@@ -633,8 +633,10 @@ Tests all `abstractcs.cmderr` error codes produced by the DTM, plus the W1C clea
    `cmderr=4` is set, then re-halt and clear.
 2. **CMDERR_EXCEPTION (=3)** — issue `CMD_ACCESS_MEM` read and write to an unmapped address
    (`0xDEAD0000`); verify `cmderr=3` in each case.
-3. **CMDERR_NOTSUP (=2)** — issue `CMD_QUICK_ACCESS` (cmdtype=1); verify `cmderr=2`.
-   Also test `aarsize=3` (64-bit, unsupported on RV32); verify `cmderr=2`.
+3. **CMDERR_NOTSUP (=2)** — three paths:
+   - `CMD_QUICK_ACCESS` (cmdtype=1); verify `cmderr=2`.
+   - `aarsize=3` (64-bit register access, unsupported on RV32); verify `cmderr=2`.
+   - `aamvirtual=1` in `CMD_ACCESS_MEM` (virtual memory not supported on jv32); verify `cmderr=2`.
 4. **CMDERR_BUSY (=1)** — best-effort: send two `COMMAND` writes with no delay between them.
    A `cmderr=1` result is verified and cleared if triggered; `cmderr=0` (command completed fast)
    is also accepted (timing-dependent in simulation).
@@ -659,6 +661,8 @@ OpenOCD's internal DPC reads from contaminating DATA0 between iterations.
 |---------|---------|-----------|------------|--------|
 | 32-bit read | 2 (word) | read | 4 | DATA0 matches memory; DATA1 advances by 4 |
 | 32-bit write | 2 (word) | write | 4 | DATA1 advances by 4; SBA read-back verifies values |
+| 16-bit write | 1 (halfword) | write | 4 | DATA1 advances by 2; SBA read-back verifies halfwords |
+| 8-bit write | 0 (byte) | write | 8 | DATA1 advances by 1; SBA read-back verifies bytes |
 | 16-bit read | 1 (halfword) | read | 4 | DATA0 correct halfword; DATA1 advances by 2 |
 | 8-bit read | 0 (byte) | read | 8 | DATA0 correct byte; DATA1 advances by 1 |
 | No postincrement | 2 (word) | read | 4 | DATA1 must not change |
@@ -776,10 +780,11 @@ The table below maps `jv32_dtm.sv` features against the test scripts that exerci
 
 | Feature | Test | Status |
 |---------|------|--------|
-| IR=DTMCS (0x10) | All DMI tests (implicit) | ✅ OpenOCD selects DTMCS on init |
+| HARTINFO fields (nscratch=2, datasize=1) | `test_dtmcs.tcl` | ✅ |
+| DTMCS write (dmireset/dmihardreset) acceptance | `test_dtmcs.tcl` | ✅ DM responsive after |
 | IR=DMI (0x11) | All `riscv dmi_read/write` tests | ✅ Every test uses it |
+| IR=DTMCS (0x10) | All DMI tests (implicit) | ✅ OpenOCD selects DTMCS on init |
 | IR=IDCODE (0x01) | `test_jtag_tap.tcl` | ✅ Raw `irscan`/`drscan`; verifies `0x1DEAD3FF` |
-| IR=BYPASS (0x1F) | `test_jtag_tap.tcl` | ✅ 1-bit shift-register; CAPTURE_DR=0; 10 patterns |
 
 ### DMI Registers
 
@@ -808,8 +813,9 @@ The table below maps `jv32_dtm.sv` features against the test scripts that exerci
 | CMD_ACCESS_REG — aarsize=2 (32-bit, default) | All abstract command tests | ✅ |
 | CMD_ACCESS_REG — aarsize=3 (64-bit → CMDERR_NOTSUP) | `test_cmderr.tcl` | ✅ |
 | CMD_ACCESS_REG — postexec flag | `test_havereset.tcl` | ✅ |
-| CMD_ACCESS_MEM (cmdtype=2) — word read/write | `test_memory.tcl` | ✅ |
-| CMD_ACCESS_MEM — aampostincrement | `test_aampostincrement.tcl` | ✅ 8/16/32-bit |
+| CMD_ACCESS_MEM — aampostincrement 8/16/32-bit read + write | `test_aampostincrement.tcl` | ✅ |
+| CMD_ACCESS_MEM — aamvirtual=1 → CMDERR_NOTSUP | `test_cmderr.tcl` | ✅ |
+| CMD_ACCESS_MEM — byte/halfword write (aamsize=0/1) byte-enable + positioning | `test_aampostincrement.tcl` | ✅ |
 | CMD_QUICK_ACCESS (cmdtype=1) — unsupported → CMDERR_NOTSUP | `test_cmderr.tcl` | ✅ |
 
 ### System Bus Access
@@ -850,7 +856,7 @@ The table below maps `jv32_dtm.sv` features against the test scripts that exerci
 |-----------|---------|------|--------|
 | CMDERR_NONE (0) | — | All passing tests | ✅ |
 | CMDERR_BUSY (1) | Two rapid COMMAND writes | `test_cmderr.tcl` | ✅ best-effort (timing-dependent) |
-| CMDERR_NOTSUP (2) | CMD_QUICK_ACCESS; aarsize=3 on RV32 | `test_cmderr.tcl` | ✅ |
+| CMDERR_NOTSUP (2) | CMD_QUICK_ACCESS; aarsize=3 on RV32; aamvirtual=1 | `test_cmderr.tcl` | ✅ |
 | CMDERR_EXCEPTION (3) | CMD_ACCESS_MEM to unmapped address | `test_cmderr.tcl` | ✅ |
 | CMDERR_HALTRESUME (4) | COMMAND issued while hart is running | `test_cmderr.tcl` | ✅ |
 | CMDERR_BUS (5) | SBA sberror | `test_sba.tcl` (sbbusyerror path) | ✅ |
@@ -870,6 +876,4 @@ The table below maps `jv32_dtm.sv` features against the test scripts that exerci
 
 ### Coverage Gaps (remaining)
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| `aamvirtual` (bit 23) → CMDERR_NOTSUP | Low | Virtual memory not implemented in jv32; path is a single-line NOTSUP guard |
+No known coverage gaps. All implemented features are exercised by the test suite.

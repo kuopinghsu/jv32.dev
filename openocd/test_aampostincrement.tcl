@@ -15,11 +15,13 @@ puts "\[TEST\] CMD_ACCESS_MEM aampostincrement — address auto-advance after ea
 # (data1_result / data1_result_valid signals, two-stage TCK sync chain).
 #
 # Tests:
-#   1. 32-bit read (aamsize=2): 4 consecutive word reads; DATA1 advances by 4.
-#   2. 32-bit write (aamsize=2): 4 consecutive word writes; DATA1 advances by 4.
-#   3. 16-bit read (aamsize=1): 4 consecutive halfword reads; DATA1 advances by 2.
-#   4. 8-bit read (aamsize=0): 8 consecutive byte reads; DATA1 advances by 1.
-#   5. Mixed: 32-bit writes via aampostincrement, read back via SBA to verify.
+#   1. 32-bit read  (aamsize=2): 4 word reads;       DATA1 advances by 4.
+#   2. 32-bit write (aamsize=2): 4 word writes;      DATA1 advances by 4; SBA verify.
+#   3. 16-bit write (aamsize=1): 4 halfword writes;  DATA1 advances by 2; SBA verify.
+#   4. 8-bit  write (aamsize=0): 8 byte writes;      DATA1 advances by 1; SBA verify.
+#   5. 16-bit read  (aamsize=1): 4 halfword reads;   DATA1 advances by 2.
+#   6. 8-bit  read  (aamsize=0): 8 byte reads;       DATA1 advances by 1.
+#   7. No postincrement (aamsize=2): DATA1 must NOT change after reads.
 
 proc as_u32 {v} {
     if {[regexp {^0x[0-9a-fA-F]+$} $v]} { scan $v %x n; return $n }
@@ -139,7 +141,81 @@ for {set i 0} {$i < 4} {incr i} {
 }
 puts "32-bit write aampostincrement: 4 words written + verified OK"
 
-# ── 3. 16-bit read with aampostincrement ──────────────────────────────────────
+# ── 3. 16-bit write with aampostincrement ─────────────────────────────────────
+puts "\[SUBTEST\] 16-bit write aampostincrement"
+
+set CMD_16W [make_cmd 1 1 1]  ;# aamsize=1 (16-bit), postincr=1, write=1
+set HWBASE [expr {$MEM_BASE + 0x80}]
+set hw_write_vals [list 0xAA11 0xBB22 0xCC33 0xDD44]
+
+riscv dmi_write 0x05 $HWBASE  ;# DATA1 = start address
+for {set i 0} {$i < 4} {incr i} {
+    riscv dmi_write 0x04 [lindex $hw_write_vals $i]  ;# DATA0 = write value
+    riscv dmi_write 0x17 $CMD_16W
+    after 10
+    check_cmderr "16W iter $i"
+
+    set d1 [as_u32 [riscv dmi_read 0x05]]
+    set exp_d1 [expr {$HWBASE + ($i + 1) * 2}]
+
+    puts "  16W\[$i\]: wrote=[format 0x%04x [lindex $hw_write_vals $i]] DATA1=[format 0x%08x $d1] (exp=[format 0x%08x $exp_d1])"
+
+    if {$d1 != $exp_d1} {
+        error "16W\[$i\]: DATA1 (postincrement by 2) mismatch: expected=[format 0x%08x $exp_d1] got=[format 0x%08x $d1]"
+    }
+}
+
+# Verify via SBA read-back: two halfwords packed per word
+riscv set_mem_access sysbus
+set word0 [lindex [read_memory $HWBASE           32 1] 0]
+set word1 [lindex [read_memory [expr {$HWBASE+4}] 32 1] 0]
+# little-endian: [hw0] in lower half, [hw1] in upper half of first word
+set exp_w0 [expr {([lindex $hw_write_vals 1] << 16) | [lindex $hw_write_vals 0]}]
+set exp_w1 [expr {([lindex $hw_write_vals 3] << 16) | [lindex $hw_write_vals 2]}]
+puts "  16W verify: word0=[format 0x%08x $word0] (exp=[format 0x%08x $exp_w0])"
+puts "  16W verify: word1=[format 0x%08x $word1] (exp=[format 0x%08x $exp_w1])"
+if {$word0 != $exp_w0} { error "16W verify word0: expected=[format 0x%08x $exp_w0] got=[format 0x%08x $word0]" }
+if {$word1 != $exp_w1} { error "16W verify word1: expected=[format 0x%08x $exp_w1] got=[format 0x%08x $word1]" }
+puts "16-bit write aampostincrement: 4 halfwords written + verified OK"
+
+# ── 4. 8-bit write with aampostincrement ──────────────────────────────────────
+puts "\[SUBTEST\] 8-bit write aampostincrement"
+
+set CMD_8W [make_cmd 0 1 1]  ;# aamsize=0 (8-bit), postincr=1, write=1
+set BYBASE [expr {$MEM_BASE + 0xA0}]
+set byte_write_vals [list 0x11 0x22 0x33 0x44 0x55 0x66 0x77 0x88]
+
+riscv dmi_write 0x05 $BYBASE  ;# DATA1 = start address
+for {set i 0} {$i < 8} {incr i} {
+    riscv dmi_write 0x04 [lindex $byte_write_vals $i]  ;# DATA0 = write value
+    riscv dmi_write 0x17 $CMD_8W
+    after 10
+    check_cmderr "8W iter $i"
+
+    set d1 [as_u32 [riscv dmi_read 0x05]]
+    set exp_d1 [expr {$BYBASE + $i + 1}]
+
+    puts "  8W\[$i\]: wrote=[format 0x%02x [lindex $byte_write_vals $i]] DATA1=[format 0x%08x $d1] (exp=[format 0x%08x $exp_d1])"
+
+    if {$d1 != $exp_d1} {
+        error "8W\[$i\]: DATA1 (postincrement by 1) mismatch: expected=[format 0x%08x $exp_d1] got=[format 0x%08x $d1]"
+    }
+}
+
+# Verify via SBA read-back: 8 bytes packed as two 32-bit words
+riscv set_mem_access sysbus
+set word0 [lindex [read_memory $BYBASE           32 1] 0]
+set word1 [lindex [read_memory [expr {$BYBASE+4}] 32 1] 0]
+# little-endian: byte0 in bits[7:0], byte1 in bits[15:8], etc.
+set exp_w0 [expr {([lindex $byte_write_vals 3] << 24) | ([lindex $byte_write_vals 2] << 16) | ([lindex $byte_write_vals 1] << 8) | [lindex $byte_write_vals 0]}]
+set exp_w1 [expr {([lindex $byte_write_vals 7] << 24) | ([lindex $byte_write_vals 6] << 16) | ([lindex $byte_write_vals 5] << 8) | [lindex $byte_write_vals 4]}]
+puts "  8W verify: word0=[format 0x%08x $word0] (exp=[format 0x%08x $exp_w0])"
+puts "  8W verify: word1=[format 0x%08x $word1] (exp=[format 0x%08x $exp_w1])"
+if {$word0 != $exp_w0} { error "8W verify word0: expected=[format 0x%08x $exp_w0] got=[format 0x%08x $word0]" }
+if {$word1 != $exp_w1} { error "8W verify word1: expected=[format 0x%08x $exp_w1] got=[format 0x%08x $word1]" }
+puts "8-bit write aampostincrement: 8 bytes written + verified OK"
+
+# ── 6. 16-bit read with aampostincrement ──────────────────────────────────────
 puts "\[SUBTEST\] 16-bit read aampostincrement"
 
 # Write known halfword pattern at HBASE via SBA byte writes.
@@ -176,7 +252,7 @@ for {set i 0} {$i < 4} {incr i} {
 }
 puts "16-bit read aampostincrement: 4 halfwords with DATA1+2 advance OK"
 
-# ── 4. 8-bit read with aampostincrement ───────────────────────────────────────
+# ── 7. 8-bit read with aampostincrement ───────────────────────────────────────
 puts "\[SUBTEST\] 8-bit read aampostincrement"
 
 # Write known byte pattern at BBASE.
@@ -211,7 +287,7 @@ for {set i 0} {$i < 8} {incr i} {
 }
 puts "8-bit read aampostincrement: 8 bytes with DATA1+1 advance OK"
 
-# ── 5. No postincrement (control): DATA1 must NOT change ──────────────────────
+# ── 8. No postincrement (control): DATA1 must NOT change ──────────────────────
 puts "\[SUBTEST\] No aampostincrement: DATA1 must not change"
 
 # CMD_ACCESS_MEM without postincrement

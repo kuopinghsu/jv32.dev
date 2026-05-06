@@ -371,7 +371,7 @@ make arch-test-run
 
 ### Debug Interface Tests (`make openocd-test`)
 
-Runs 22 Tcl test scripts against both 4-wire JTAG (`build/jv32vpi_jtag`) and 2-wire cJTAG/OScan1 (`build/jv32vpi_cjtag`) transports. Tests cover halt/resume, single-step, breakpoints, watchpoints, abstract register access, program buffer, SBA, reset/havereset, DCSR, DTMCS/DMI, and cJTAG-specific protocol sequences.
+Runs 28 Tcl test scripts against both 4-wire JTAG (`build/jv32vpi_jtag`) and 2-wire cJTAG/OScan1 (`build/jv32vpi_cjtag`) transports, plus 6 GDB integration tests. Tests cover halt/resume, single-step, breakpoints, watchpoints, abstract register/memory access, program buffer, SBA (including `sbautoincrement` and byte/halfword access), abstract command errors, reset/havereset, DCSR, DTMCS/DMI, triggers, and cJTAG-specific protocol sequences.
 
 > Full test descriptions, VPI setup, and individual-test make targets: [openocd/README.md](openocd/README.md)
 
@@ -433,7 +433,7 @@ Gate counts from hierarchical Yosys synthesis on Nangate 45 nm (NAND2\_X1 = 0.79
 
 ## Coverage
 
-Verilator line + branch + expression + toggle coverage over all `sw/` tests and 7 JTAG debug scenarios (`make coverage`).  Testbench wrappers and `axi_magic` are excluded.
+Verilator line + branch + expression + toggle coverage over all `sw/` tests and 28 JTAG debug scenarios (`make coverage`).  Testbench wrappers and `axi_magic` are excluded.
 
 **Overall (2026-04-29):** lines **89.8%** · branches **70.2%** · expressions **80.9%** · toggles **71.4%**
 
