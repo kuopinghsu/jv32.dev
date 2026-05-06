@@ -1245,6 +1245,13 @@ module jv32_dtm #(
         endcase
     end
 
+    // Memory access command fields (cmdtype == 2) — declared here (before always_comb that uses them)
+    logic [31:0] mem_addr;
+    wire         mem_write_cmd = command_reg_sys[16];
+    wire         mem_aarpostincrement = command_reg_sys[19];  // Auto-increment address after access
+    logic        mem_aarpostincrement_r;                      // Postincrement flag for current operation
+    logic [ 2:0] mem_aamsize_r;                               // aamsize[2:0] for current operation
+
     // Abstract memory byte enable and data positioning (combinational, mirrors SBA logic)
     always_comb begin
         mem_wstrb            = 4'b1111;
@@ -1297,13 +1304,6 @@ module jv32_dtm #(
     assign cmd_transfer = command_reg_sys[17];     // Perform transfer
     assign cmd_write    = command_reg_sys[16];     // 1=write, 0=read
     assign cmd_regno    = command_reg_sys[15:0];   // Register number (GPR: 0x1000-0x101f, CSR DPC: 0x7b1)
-
-    // Memory access command fields (cmdtype == 2)
-    logic [31:0] mem_addr;
-    wire         mem_write_cmd = command_reg_sys[16];
-    wire         mem_aarpostincrement = command_reg_sys[19];  // Auto-increment address after access
-    logic        mem_aarpostincrement_r;                      // Postincrement flag for current operation
-    logic [ 2:0] mem_aamsize_r;                               // aamsize[2:0] for current operation
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
