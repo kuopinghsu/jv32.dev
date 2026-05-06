@@ -387,6 +387,10 @@ module jv32_top #(
     logic [          31:0] iram_wdata;
     logic [          31:0] iram_rdata;
 
+    // Slave port control signals (declared early for debug trace)
+    logic                  slave_iram_is_wr;
+    logic                  slave_iram_grant;
+
     sram_1rw #(
         .DEPTH(IRAM_DEPTH),
         .WIDTH(32)
@@ -472,9 +476,7 @@ module jv32_top #(
 
     logic        slave_wants_iram;
     logic        slave_wants_dram;
-    logic        slave_iram_is_wr;
     logic        slave_dram_is_wr;
-    logic        slave_iram_grant;
     logic        slave_dram_grant;
 
     assign slave_wants_iram = (iram_slv_state == SLV_RD_WAIT) | (iram_slv_state == SLV_WR_WAIT);

@@ -30,7 +30,9 @@
 #   programbuf  step  debug_errors  breakpoint  watchpoint
 #   misa  dcsr  triggers  abstract_regs  csr_fields
 #   sba  havereset  abstractauto  debug_ext_alias
-#   cjtag  (cJTAG-specific activation test, cjtag-* only)
+#   cmderr  aampostincrement  dscratch  sbreadondata  haltsum  dmactive
+#   jtag_tap  (JTAG-only: BYPASS/IDCODE raw scan — not in cJTAG list)
+#   cjtag    (cJTAG-specific activation test — cjtag-* only)
 #
 # Available GDB test names:
 #   load  step  breakpoint  memory  regs  debug
@@ -79,11 +81,13 @@ GDB_PORT ?= 3333
 # JTAG: common functionality; no cJTAG-specific activation test
 JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
-			   sba havereset abstractauto debug_ext_alias
-# cJTAG: cJTAG activation check first, then the same common tests
+			   sba havereset abstractauto debug_ext_alias \
+			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive jtag_tap
+# cJTAG: cJTAG activation check first, then the same common tests (jtag_tap excluded — JTAG only)
 CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
-			   sba havereset abstractauto debug_ext_alias
+			   sba havereset abstractauto debug_ext_alias \
+			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive
 
 # ── GDB test names (file stem of openocd/test_gdb_<name>.gdb) ────────────────
 # Each test is run with the JTAG VPI simulator + OpenOCD GDB server.

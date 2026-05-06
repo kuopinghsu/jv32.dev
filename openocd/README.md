@@ -107,9 +107,9 @@ make -C openocd gdb-memory
 
 ## Test Suite
 
-The 22 JTAG tests and 23 cJTAG tests (one extra cJTAG activation check) are listed below in
-execution order.  The 6 GDB tests are described separately in the [GDB Test Suite](#gdb-test-suite)
-section.
+The 28 JTAG tests and 28 cJTAG tests (one extra cJTAG activation check, `test_jtag_tap.tcl` JTAG-only)
+are listed below in execution order.  The 6 GDB tests are described separately in the
+[GDB Test Suite](#gdb-test-suite) section.
 
 | File | What it tests |
 |---|---|
@@ -134,6 +134,13 @@ section.
 | `test_havereset.tcl` | impebreak=1; non-existent hart; havereset sticky; ackhavereset; hartreset; CMD_QUICK_ACCESS rejected; postexec-only |
 | `test_abstractauto.tcl` | ABSTRACTAUTO default=0; round-trip; autoexec_data[0] re-executes on DATA0 read; no cmderr accumulation |
 | `test_debug_ext_alias.tcl` | Out-of-TCM alias routing: IRAM alias↔canonical and DRAM alias↔canonical via sysbus |
+| `test_cmderr.tcl` | All cmderr codes: HALTRESUME(4), EXCEPTION(3), NOTSUP(2), BUSY(1); W1C clear; auto-clear on new COMMAND |
+| `test_aampostincrement.tcl` | CMD_ACCESS_MEM aampostincrement: 8/16/32-bit reads/writes; DATA1 auto-advances by access size |
+| `test_dscratch.tcl` | dscratch0 (0x7b2) / dscratch1 (0x7b3): write/read round-trip, independence, raw DMI path |
+| `test_sbreadondata.tcl` | sbreadondata: SBCS bit round-trip; functional re-read on SBDATA0 capture; disabled-mode verification |
+| `test_haltsum.tcl` | HALTSUM0 (DMI 0x40): bit0=1 when halted, bit0=0 when running; consistent with dmstatus |
+| `test_dmactive.tcl` | dmcontrol.dmactive=0 DM reset; re-activate to dmactive=1; halt/resume functional after re-activation |
+| `test_jtag_tap.tcl` | JTAG TAP instructions: IDCODE (IR=0x01) raw scan; BYPASS (IR=0x1F) 1-bit shift register *(JTAG only)* |
 | `test_cjtag.tcl` | cJTAG OScan1 activation: halt/resume/re-halt over 2-wire transport *(cJTAG suite only)* |
 
 ### `test_dtmcs.tcl` — DMI/TAP preflight
@@ -399,10 +406,15 @@ Checks:
    value is visible via a progbuf memory read.
 3. **SBA read (sbreadonaddr)** — write `SBADDRESS0` to trigger an auto-read; read back via
    `SBDATA0`.
-4. **sbautoincrement + sbreadondata streaming** — set `autoincrement` and `sbreadondata`; read
-   four consecutive words as a burst.
-5. **sbbusyerror W1C** — artificially provoke and then clear the sticky error bit.
-6. **SBCS writable bits round-trip** — verify the writable control bits retain written values.
+4. **SBA byte access (sbaccess=0)** — write and read all four byte alignments; assemble a full
+   word via progbuf and verify.
+5. **SBA halfword access (sbaccess=1)** — write and read both halfword alignments; verify.
+6. **sbautoincrement** — enable `sbautoincrement`; read four consecutive words; verify
+   `sbaddress0` advances by 4 after each read and the read values match expected data.
+7. **sbbusyerror W1C** — artificially provoke and then clear the sticky error bit.
+8. **SBCS writable bits round-trip** — verify the writable control bits retain written values.
+
+Functional `sbreadondata` is covered by the dedicated `test_sbreadondata.tcl` test.
 
 ---
 
@@ -613,6 +625,124 @@ Exercises a realistic multi-step debug workflow end-to-end:
 
 ---
 
+### `test_cmderr.tcl` — abstract command error paths
+
+Tests all `abstractcs.cmderr` error codes produced by the DTM, plus the W1C clear mechanism:
+
+1. **CMDERR_HALTRESUME (=4)** — resume the hart, then immediately issue `COMMAND`; verify
+   `cmderr=4` is set, then re-halt and clear.
+2. **CMDERR_EXCEPTION (=3)** — issue `CMD_ACCESS_MEM` read and write to an unmapped address
+   (`0xDEAD0000`); verify `cmderr=3` in each case.
+3. **CMDERR_NOTSUP (=2)** — issue `CMD_QUICK_ACCESS` (cmdtype=1); verify `cmderr=2`.
+   Also test `aarsize=3` (64-bit, unsupported on RV32); verify `cmderr=2`.
+4. **CMDERR_BUSY (=1)** — best-effort: send two `COMMAND` writes with no delay between them.
+   A `cmderr=1` result is verified and cleared if triggered; `cmderr=0` (command completed fast)
+   is also accepted (timing-dependent in simulation).
+5. **cmderr W1C** — deliberately set `cmderr`, then write-1-to-clear via `ABSTRACTCS`;
+   verify the field is cleared.
+6. **cmderr auto-clear on new COMMAND** — verify that writing a new `COMMAND` clears `cmderr`
+   automatically (jv32 implementation behaviour), even without an explicit W1C.
+
+---
+
+### `test_aampostincrement.tcl` — CMD_ACCESS_MEM address auto-advance
+
+Tests the `aampostincrement` feature of `CMD_ACCESS_MEM` (COMMAND bit 19).  When set, the
+address in DATA1 is automatically incremented by the access size after each completed operation
+(1/2/4 bytes for aamsize=0/1/2).  The incremented address is written back via the
+`data1_result` CDC-safe path in the DTM.
+
+OpenOCD background polling is disabled during the test (`poll off` / `poll on`) to prevent
+OpenOCD's internal DPC reads from contaminating DATA0 between iterations.
+
+| Subtest | aamsize | Direction | Iterations | Checks |
+|---------|---------|-----------|------------|--------|
+| 32-bit read | 2 (word) | read | 4 | DATA0 matches memory; DATA1 advances by 4 |
+| 32-bit write | 2 (word) | write | 4 | DATA1 advances by 4; SBA read-back verifies values |
+| 16-bit read | 1 (halfword) | read | 4 | DATA0 correct halfword; DATA1 advances by 2 |
+| 8-bit read | 0 (byte) | read | 8 | DATA0 correct byte; DATA1 advances by 1 |
+| No postincrement | 2 (word) | read | 4 | DATA1 must not change |
+
+---
+
+### `test_dscratch.tcl` — dscratch0 / dscratch1 CSR
+
+Tests the two debug scratch registers (CSR `0x7b2` / `0x7b3`) which are native to the DTM
+(not forwarded to the CPU):
+
+1. **dscratch0 write/read round-trip** — four boundary patterns (`0x00000000`, `0xFFFFFFFF`,
+   `0xDEADBEEF`, `0x12345678`); verify each reads back correctly.
+2. **dscratch1 write/read round-trip** — same four patterns.
+3. **Independence** — write `dscratch0` → verify `dscratch1` unchanged; write `dscratch1` →
+   verify `dscratch0` unchanged.
+4. **Raw DMI abstract register path** — use `riscv dmi_write/dmi_read` with the raw
+   `CMD_ACCESS_REG` encoding for CSR `0x7b2` / `0x7b3`; verify round-trip.
+
+---
+
+### `test_sbreadondata.tcl` — sbreadondata functional
+
+Tests the `sbreadondata` feature of the System Bus Access port.  When `SBCS.sbreadondata=1`,
+reading `SBDATA0` via CAPTURE_DR automatically triggers a new SBA read at `sbaddress0`.
+
+1. **SBCS bit round-trip** — write `sbreadondata=1`, read back `SBCS`, verify bit 15 is set;
+   restore to `0`.
+2. **sbreadondata functional** — prime a known value at a test address via SBA write; enable
+   `sbreadondata`; prime the SBA read (write `SBADDRESS0`); read `SBDATA0` twice in succession
+   (each CAPTURE_DR re-triggers the read from the same stable address); verify both reads return
+   the expected value.
+3. **sbreadondata disabled** — with `sbreadondata=0`, verify that reading `SBDATA0` does not
+   advance `sbaddress0` (i.e. no spurious read trigger is issued).
+
+---
+
+### `test_haltsum.tcl` — HALTSUM0 halt-summary register
+
+Verifies the `HALTSUM0` register (DMI `0x40`) which tracks per-hart halt status:
+
+1. **Halted state** — halt hart; read `HALTSUM0`; verify bit 0 is `1` and matches
+   `dmstatus.allhalted`; verify upper 31 bits are `0` (single-hart SoC).
+2. **Running state** — resume hart; read `HALTSUM0`; verify bit 0 is `0` and matches
+   `dmstatus.allrunning`.
+3. **Re-halt** — halt again; verify bit 0 returns to `1`.
+4. **Consistency** — poll `HALTSUM0` and `dmstatus` five times while halted; verify they
+   agree on every poll.
+
+---
+
+### `test_dmactive.tcl` — dmcontrol.dmactive DM reset
+
+Tests the Debug Module reset path via `dmcontrol.dmactive`:
+
+1. **Entry state** — verify `dmactive=1` at test start.
+2. **Write dmactive=0** — issue the DM reset write; read back and verify (implementation may
+   return `0` or auto-recover; both are accepted with a warning if non-zero).
+3. **Write dmactive=1** — re-activate the DM; verify `dmactive=1` reads back.
+4. **DM functional after re-activation** — read `dmstatus`; verify `version=2` and
+   `authenticated=1`.
+5. **Halt / read / resume cycle** — after re-activation, halt the hart, read `pc` and `a0`,
+   resume; verify the DM remains responsive.
+
+---
+
+### `test_jtag_tap.tcl` — JTAG TAP IR instructions *(JTAG mode only)*
+
+Tests the JTAG TAP instruction register directly via raw `irscan` / `drscan` commands:
+
+1. **IDCODE (IR=0x01)** — select IDCODE instruction; scan the 32-bit DR; verify
+   `0x1DEAD3FF`; verify bit 0 is `1` (IEEE 1149.1 conformant); verify stable on a second scan.
+2. **BYPASS (IR=0x1F)** — select BYPASS instruction; verify the 1-bit shift register:
+   - CAPTURE_DR initialises the bypass register to `0`.
+   - Ten 4-bit DR scans with known inputs; each output must equal the previous input
+     shifted right by 1 (the 1-bit bypass introduces a 1-cycle delay).
+   - Single-bit scans verify `0` is captured on entry.
+3. **Restore** — select DMI IR (`0x11`) so subsequent OpenOCD operations work normally.
+
+This test is excluded from the cJTAG suite because raw `irscan`/`drscan` commands are
+not available over the 2-wire OScan1 transport.
+
+---
+
 ## Log Files
 
 All test output is written to `build/openocd_logs/`:
@@ -635,3 +765,111 @@ build/openocd_logs/
 
 On failure the log shows the OpenOCD / GDB error output and the assertion message from the failing
 test. Pass/fail summary is printed to stdout at the end of each transport or GDB suite run.
+
+---
+
+## DTM Feature Coverage
+
+The table below maps `jv32_dtm.sv` features against the test scripts that exercise them.
+
+### JTAG TAP Instructions
+
+| Feature | Test | Status |
+|---------|------|--------|
+| IR=DTMCS (0x10) | All DMI tests (implicit) | ✅ OpenOCD selects DTMCS on init |
+| IR=DMI (0x11) | All `riscv dmi_read/write` tests | ✅ Every test uses it |
+| IR=IDCODE (0x01) | `test_jtag_tap.tcl` | ✅ Raw `irscan`/`drscan`; verifies `0x1DEAD3FF` |
+| IR=BYPASS (0x1F) | `test_jtag_tap.tcl` | ✅ 1-bit shift-register; CAPTURE_DR=0; 10 patterns |
+
+### DMI Registers
+
+| Register | Address | Test | Status |
+|----------|---------|------|--------|
+| DATA0 | 0x04 | `test_registers.tcl`, `test_abstract_regs.tcl` | ✅ |
+| DATA1 | 0x05 | `test_aampostincrement.tcl` (aampostincrement path) | ✅ |
+| DMCONTROL | 0x10 | `test_halt_resume.tcl`, `test_reset.tcl`, `test_dm_status.tcl`, `test_dmactive.tcl` | ✅ |
+| DMSTATUS | 0x11 | `test_dm_status.tcl`, `test_havereset.tcl` | ✅ |
+| ABSTRACTCS | 0x16 | `test_havereset.tcl`, `test_abstractauto.tcl`, `test_cmderr.tcl` | ✅ |
+| COMMAND | 0x17 | All abstract command tests | ✅ |
+| ABSTRACTAUTO | 0x18 | `test_abstractauto.tcl` | ✅ |
+| PROGBUF0/1 | 0x20/0x21 | `test_programbuf.tcl`, `test_memory.tcl` | ✅ |
+| HALTSUM0 | 0x40 | `test_haltsum.tcl` | ✅ |
+| SBCS | 0x38 | `test_sba.tcl`, `test_sbreadondata.tcl` | ✅ |
+| SBADDRESS0 | 0x39 | `test_sba.tcl`, `test_aampostincrement.tcl` (SBA verify) | ✅ |
+| SBDATA0 | 0x3C | `test_sba.tcl`, `test_sbreadondata.tcl` | ✅ |
+
+### Abstract Commands
+
+| Feature | Test | Status |
+|---------|------|--------|
+| CMD_ACCESS_REG (cmdtype=0) — all 32 GPRs | `test_abstract_regs.tcl` | ✅ |
+| CMD_ACCESS_REG — key CSRs (mstatus, mepc, dpc, dcsr, …) | `test_registers.tcl`, `test_csr_fields.tcl`, `test_dcsr.tcl` | ✅ |
+| CMD_ACCESS_REG — dscratch0/1 (CSR 0x7b2/0x7b3) | `test_dscratch.tcl` | ✅ |
+| CMD_ACCESS_REG — aarsize=2 (32-bit, default) | All abstract command tests | ✅ |
+| CMD_ACCESS_REG — aarsize=3 (64-bit → CMDERR_NOTSUP) | `test_cmderr.tcl` | ✅ |
+| CMD_ACCESS_REG — postexec flag | `test_havereset.tcl` | ✅ |
+| CMD_ACCESS_MEM (cmdtype=2) — word read/write | `test_memory.tcl` | ✅ |
+| CMD_ACCESS_MEM — aampostincrement | `test_aampostincrement.tcl` | ✅ 8/16/32-bit |
+| CMD_QUICK_ACCESS (cmdtype=1) — unsupported → CMDERR_NOTSUP | `test_cmderr.tcl` | ✅ |
+
+### System Bus Access
+
+| Feature | Test | Status |
+|---------|------|--------|
+| sbreadonaddr trigger | `test_sba.tcl` | ✅ |
+| sbreadondata trigger | `test_sbreadondata.tcl` | ✅ |
+| sbautoincrement | `test_sba.tcl` | ✅ |
+| sbaccess=0 (byte), sbaccess=1 (halfword), sbaccess=2 (word) | `test_sba.tcl` | ✅ |
+| sberror W1C | `test_sba.tcl` | ✅ |
+| sbbusyerror W1C | `test_sba.tcl` | ✅ |
+| SBCS writable-bits round-trip | `test_sba.tcl`, `test_sbreadondata.tcl` | ✅ |
+
+### Hart Control
+
+| Feature | Test | Status |
+|---------|------|--------|
+| haltreq / resumereq | `test_halt_resume.tcl` | ✅ |
+| ndmreset | `test_reset.tcl` | ✅ |
+| hartreset | `test_havereset.tcl` | ✅ |
+| ackhavereset | `test_havereset.tcl` | ✅ |
+| dmactive=0 DM reset | `test_dmactive.tcl` | ✅ |
+
+### Triggers, Breakpoints, and Watchpoints
+
+| Feature | Test | Status |
+|---------|------|--------|
+| Hardware execute-match breakpoint | `test_breakpoint.tcl`, `test_triggers.tcl` | ✅ |
+| Software (`ebreak`) breakpoint | `test_breakpoint.tcl` | ✅ |
+| Write watchpoint via trigger CSRs | `test_watchpoint.tcl` | ✅ |
+| tselect isolation | `test_triggers.tcl` | ✅ |
+| tinfo type-2 bit | `test_triggers.tcl` | ✅ |
+
+### Error Handling (`abstractcs.cmderr`)
+
+| Error Code | Trigger | Test | Status |
+|-----------|---------|------|--------|
+| CMDERR_NONE (0) | — | All passing tests | ✅ |
+| CMDERR_BUSY (1) | Two rapid COMMAND writes | `test_cmderr.tcl` | ✅ best-effort (timing-dependent) |
+| CMDERR_NOTSUP (2) | CMD_QUICK_ACCESS; aarsize=3 on RV32 | `test_cmderr.tcl` | ✅ |
+| CMDERR_EXCEPTION (3) | CMD_ACCESS_MEM to unmapped address | `test_cmderr.tcl` | ✅ |
+| CMDERR_HALTRESUME (4) | COMMAND issued while hart is running | `test_cmderr.tcl` | ✅ |
+| CMDERR_BUS (5) | SBA sberror | `test_sba.tcl` (sbbusyerror path) | ✅ |
+| cmderr W1C | Write 0x38 to ABSTRACTCS[10:8] | `test_cmderr.tcl` | ✅ |
+| cmderr auto-clear | New COMMAND write (jv32 behaviour) | `test_cmderr.tcl` | ✅ |
+
+### GDB Integration
+
+| Test | What it covers |
+|------|---------------|
+| `test_gdb_load.gdb` | ELF load, section mapping, verify via memory read |
+| `test_gdb_step.gdb` | GDB `stepi`; PC advances one instruction per step |
+| `test_gdb_breakpoint.gdb` | GDB `break`; `continue`; stop at breakpoint |
+| `test_gdb_memory.gdb` | GDB `x/` and `set` memory read/write |
+| `test_gdb_regs.gdb` | GDB `info registers`; GPR and CSR values |
+| `test_gdb_debug.gdb` | GDB remote target attach; halt/resume via continue |
+
+### Coverage Gaps (remaining)
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| `aamvirtual` (bit 23) → CMDERR_NOTSUP | Low | Virtual memory not implemented in jv32; path is a single-line NOTSUP guard |

@@ -335,16 +335,69 @@ module jv32_soc #(
     logic           [ 3:0] dbg_wstrb_r;
 
     function automatic logic in_iram(input logic [31:0] addr);
-        return (addr >= IRAM_BASE) && (addr < IRAM_BASE + 32'(IRAM_SIZE));
+        // Canonical TCM address: 0x8000_0000 - 0x8000_0000 + IRAM_SIZE
+        // Out-of-TCM alias:      0x6000_0000 - 0x6000_0000 + IRAM_SIZE
+        logic in_canonical = (addr >= IRAM_BASE) && (addr < IRAM_BASE + 32'(IRAM_SIZE));
+        logic in_alias = (addr >= 32'h6000_0000) && (addr < 32'h6000_0000 + 32'(IRAM_SIZE));
+        return in_canonical || in_alias;
     endfunction
 
     function automatic logic in_dram(input logic [31:0] addr);
-        return (addr >= DRAM_BASE) && (addr < DRAM_BASE + 32'(DRAM_SIZE));
+        // Canonical TCM address: 0x9000_0000 - 0x9000_0000 + DRAM_SIZE
+        // Out-of-TCM alias:      0x7000_0000 - 0x7000_0000 + DRAM_SIZE
+        logic in_canonical = (addr >= DRAM_BASE) && (addr < DRAM_BASE + 32'(DRAM_SIZE));
+        logic in_alias = (addr >= 32'h7000_0000) && (addr < 32'h7000_0000 + 32'(DRAM_SIZE));
+        return in_canonical || in_alias;
+    endfunction
+
+    function automatic logic [31:0] map_to_canonical(input logic [31:0] addr);
+        // Map alias addresses to canonical TCM addresses
+        // IRAM: 0x6xxxxxxx → 0x8xxxxxxx
+        // DRAM: 0x7xxxxxxx → 0x9xxxxxxx
+        if ((addr >= 32'h6000_0000) && (addr < 32'h6000_0000 + 32'(IRAM_SIZE)))
+            return {4'h8, addr[27:0]};  // 0x6 → 0x8
+        else if ((addr >= 32'h7000_0000) && (addr < 32'h7000_0000 + 32'(DRAM_SIZE)))
+            return {4'h9, addr[27:0]};  // 0x7 → 0x9
+        else return addr;  // Already canonical or external address
     endfunction
 
     function automatic logic in_tcm(input logic [31:0] addr);
         return in_iram(addr) || in_dram(addr);
     endfunction
+
+    // Map core's AXI master addresses: alias → canonical for TCM routing (declarations early for debug traces)
+    logic [31:0] core_mbus_araddr_mapped;
+    logic [31:0] core_mbus_awaddr_mapped;
+    logic        core_araddr_is_tcm_alias;  // Read address is alias and maps to TCM
+    logic        core_awaddr_is_tcm_alias;  // Write address is alias and maps to TCM
+    logic core_alias_rd_is_iram, core_alias_wr_is_iram;
+    logic core_alias_rd_active, core_alias_wr_active;
+    logic core_alias_rd_addr_done;          // AR handshake complete (prevent infinite arvalid to TCM)
+    logic core_alias_wr_aw_done;            // AW handshake complete (prevent infinite awvalid to TCM)
+    logic core_alias_wr_w_done;             // W  handshake complete (prevent infinite wvalid  to TCM)
+    logic core_alias_wr_is_iram_r;          // Latched at AW handshake: IRAM vs DRAM for W channel routing
+
+    // Response-pending: keep forwarding core rready/bready to TCM until response consumed
+    logic core_alias_iram_rd_pend;  // IRAM read accepted by TCM, R response not yet consumed
+    logic core_alias_dram_rd_pend;  // DRAM read accepted by TCM, R response not yet consumed
+    logic core_alias_iram_wr_pend;  // IRAM write data accepted, B response not yet consumed
+    logic core_alias_dram_wr_pend;  // DRAM write data accepted, B response not yet consumed
+
+    assign core_mbus_araddr_mapped  = map_to_canonical(core_mbus_araddr);
+    assign core_mbus_awaddr_mapped  = map_to_canonical(core_mbus_awaddr);
+    assign core_araddr_is_tcm_alias = (core_mbus_araddr != core_mbus_araddr_mapped) && in_tcm(core_mbus_araddr);
+    assign core_awaddr_is_tcm_alias = (core_mbus_awaddr != core_mbus_awaddr_mapped) && in_tcm(core_mbus_awaddr);
+    assign core_alias_rd_is_iram    = in_iram(core_mbus_araddr);
+    assign core_alias_wr_is_iram    = core_alias_wr_aw_done ? core_alias_wr_is_iram_r : in_iram(core_mbus_awaddr);
+
+    // AW active: send awaddr to TCM once (until AW handshake fires)
+    // W  active: send wdata  to TCM once (until W  handshake fires, independent of AW phase)
+    logic core_alias_aw_active, core_alias_w_active;
+    assign core_alias_aw_active = core_awaddr_is_tcm_alias && core_mbus_awvalid && !core_alias_wr_aw_done;
+    assign core_alias_w_active  = (core_awaddr_is_tcm_alias || core_alias_wr_aw_done) &&
+                                   core_mbus_wvalid && !core_alias_wr_w_done;
+    assign core_alias_rd_active = core_araddr_is_tcm_alias && core_mbus_arvalid && !core_alias_rd_addr_done;
+    assign core_alias_wr_active = core_alias_aw_active || core_alias_w_active;
 
     // Reset synchronizer: async assert, synchronous de-assert.
     // Both the external rst_n and the debug ndmreset can assert the reset
@@ -461,65 +514,214 @@ module jv32_soc #(
         end
     endgenerate
 
-    // Pass external IRAM/DRAM TCM AXI masters through unless JTAG DM
-    // is actively performing an in-TCM debug memory access on that bank.
-    assign iram_tcm_araddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_araddr;
-    assign iram_tcm_arvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_iram_tcm_arvalid;
-    assign iram_tcm_rready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_iram_tcm_rready;
-    assign iram_tcm_awaddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r : s_iram_tcm_awaddr;
-    assign iram_tcm_awvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_iram_tcm_awvalid;
-    assign iram_tcm_wdata_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wdata_r : s_iram_tcm_wdata;
-    assign iram_tcm_wstrb_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wstrb_r : s_iram_tcm_wstrb;
-    assign iram_tcm_wvalid_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_iram_tcm_wvalid;
-    assign iram_tcm_bready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_iram_tcm_bready;
+    // Track core alias address/data phase completion to prevent repeated valid signals to TCM
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            core_alias_rd_addr_done <= 1'b0;
+            core_alias_wr_aw_done   <= 1'b0;
+            core_alias_wr_w_done    <= 1'b0;
+            core_alias_wr_is_iram_r <= 1'b0;
+            core_alias_iram_rd_pend <= 1'b0;
+            core_alias_dram_rd_pend <= 1'b0;
+            core_alias_iram_wr_pend <= 1'b0;
+            core_alias_dram_wr_pend <= 1'b0;
+        end
+        else begin
+            // Read AR phase: set done when arvalid && arready, clear when arvalid deasserts
+            if (core_araddr_is_tcm_alias && core_mbus_arvalid && core_mbus_arready) begin
+                core_alias_rd_addr_done <= 1'b1;
+            end
+            else if (!core_mbus_arvalid) begin
+                core_alias_rd_addr_done <= 1'b0;
+            end
 
-    assign dram_tcm_araddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_araddr;
-    assign dram_tcm_arvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) : s_dram_tcm_arvalid;
-    assign dram_tcm_rready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) : s_dram_tcm_rready;
-    assign dram_tcm_awaddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r : s_dram_tcm_awaddr;
-    assign dram_tcm_awvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) : s_dram_tcm_awvalid;
-    assign dram_tcm_wdata_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wdata_r : s_dram_tcm_wdata;
-    assign dram_tcm_wstrb_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wstrb_r : s_dram_tcm_wstrb;
-    assign dram_tcm_wvalid_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) : s_dram_tcm_wvalid;
-    assign dram_tcm_bready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) : s_dram_tcm_bready;
+            // Write AW phase: latch IRAM/DRAM routing at handshake, set done to stop re-sending awvalid
+            if (core_awaddr_is_tcm_alias && core_mbus_awvalid && core_mbus_awready) begin
+                core_alias_wr_aw_done   <= 1'b1;
+                core_alias_wr_is_iram_r <= in_iram(core_mbus_awaddr);
+            end
+            else if (!core_mbus_awvalid && !core_mbus_wvalid) begin
+                core_alias_wr_aw_done <= 1'b0;  // Clear when both AW and W deassert
+            end
 
-    assign s_iram_tcm_arready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_arready_int;
-    assign s_iram_tcm_rdata = (dbg_tcm_select && dbg_tcm_is_iram) ? 32'h0 : iram_tcm_rdata_int;
-    assign s_iram_tcm_rresp = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_rresp_int;
-    assign s_iram_tcm_rvalid = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_rvalid_int;
-    assign s_iram_tcm_awready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_awready_int;
-    assign s_iram_tcm_wready = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_wready_int;
-    assign s_iram_tcm_bresp = (dbg_tcm_select && dbg_tcm_is_iram) ? 2'b00 : iram_tcm_bresp_int;
-    assign s_iram_tcm_bvalid = (dbg_tcm_select && dbg_tcm_is_iram) ? 1'b0 : iram_tcm_bvalid_int;
+            // Write W phase: set done when wvalid && wready, clear when wvalid deasserts
+            if (core_awaddr_is_tcm_alias && core_mbus_wvalid && core_mbus_wready) begin
+                core_alias_wr_w_done <= 1'b1;
+            end
+            else if (!core_mbus_wvalid) begin
+                core_alias_wr_w_done <= 1'b0;
+            end
 
-    assign s_dram_tcm_arready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_arready_int;
-    assign s_dram_tcm_rdata = (dbg_tcm_select && !dbg_tcm_is_iram) ? 32'h0 : dram_tcm_rdata_int;
-    assign s_dram_tcm_rresp = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_rresp_int;
-    assign s_dram_tcm_rvalid = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_rvalid_int;
-    assign s_dram_tcm_awready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_awready_int;
-    assign s_dram_tcm_wready = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_wready_int;
-    assign s_dram_tcm_bresp = (dbg_tcm_select && !dbg_tcm_is_iram) ? 2'b00 : dram_tcm_bresp_int;
-    assign s_dram_tcm_bvalid = (dbg_tcm_select && !dbg_tcm_is_iram) ? 1'b0 : dram_tcm_bvalid_int;
+            // IRAM read response pending: set at AR handshake, clear at R handshake
+            if (core_alias_rd_active && core_alias_rd_is_iram && iram_tcm_arvalid_mux && iram_tcm_arready_int) begin
+                core_alias_iram_rd_pend <= 1'b1;
+            end
+            else if (core_alias_iram_rd_pend && iram_tcm_rvalid_int && core_mbus_rready) begin
+                core_alias_iram_rd_pend <= 1'b0;
+            end
+
+            // DRAM read response pending: set at AR handshake, clear at R handshake
+            if (core_alias_rd_active && !core_alias_rd_is_iram && dram_tcm_arvalid_mux && dram_tcm_arready_int) begin
+                core_alias_dram_rd_pend <= 1'b1;
+            end
+            else if (core_alias_dram_rd_pend && dram_tcm_rvalid_int && core_mbus_rready) begin
+                core_alias_dram_rd_pend <= 1'b0;
+            end
+
+            // IRAM write response pending: set at W handshake, clear at B handshake
+            if (core_alias_w_active && core_alias_wr_is_iram && iram_tcm_wvalid_mux && iram_tcm_wready_int) begin
+                core_alias_iram_wr_pend <= 1'b1;
+            end
+            else if (core_alias_iram_wr_pend && iram_tcm_bvalid_int && core_mbus_bready) begin
+                core_alias_iram_wr_pend <= 1'b0;
+            end
+
+            // DRAM write response pending: set at W handshake, clear at B handshake
+            if (core_alias_w_active && !core_alias_wr_is_iram && dram_tcm_wvalid_mux && dram_tcm_wready_int) begin
+                core_alias_dram_wr_pend <= 1'b1;
+            end
+            else if (core_alias_dram_wr_pend && dram_tcm_bvalid_int && core_mbus_bready) begin
+                core_alias_dram_wr_pend <= 1'b0;
+            end
+        end
+    end
+
+    // Pass external IRAM/DRAM TCM AXI masters through unless JTAG DM or core alias access
+    // is actively performing an in-TCM access on that bank.
+    // Priority: Debug > Core alias > External
+    assign iram_tcm_araddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r :
+                                  (core_alias_rd_active && core_alias_rd_is_iram) ? core_mbus_araddr_mapped :
+                                  s_iram_tcm_araddr;
+    assign iram_tcm_arvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) :
+                                    (core_alias_rd_active && core_alias_rd_is_iram) ? 1'b1 :
+                                    s_iram_tcm_arvalid;
+    assign iram_tcm_rready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) :
+                                    ((core_alias_rd_active && core_alias_rd_is_iram) || core_alias_iram_rd_pend) ? core_mbus_rready :
+                                    s_iram_tcm_rready;
+    assign iram_tcm_awaddr_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_addr_r :
+                                  (core_alias_aw_active && core_alias_wr_is_iram) ? core_mbus_awaddr_mapped :
+                                  s_iram_tcm_awaddr;
+    assign iram_tcm_awvalid_mux  = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) :
+                                    (core_alias_aw_active && core_alias_wr_is_iram) ? core_mbus_awvalid :
+                                    s_iram_tcm_awvalid;
+    assign iram_tcm_wdata_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wdata_r :
+                                 (core_alias_w_active && core_alias_wr_is_iram) ? core_mbus_wdata :
+                                 s_iram_tcm_wdata;
+    assign iram_tcm_wstrb_mux = (dbg_tcm_select && dbg_tcm_is_iram) ? dbg_wstrb_r :
+                                 (core_alias_w_active && core_alias_wr_is_iram) ? core_mbus_wstrb :
+                                 s_iram_tcm_wstrb;
+    assign iram_tcm_wvalid_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) :
+                                    (core_alias_w_active && core_alias_wr_is_iram) ? core_mbus_wvalid :
+                                    s_iram_tcm_wvalid;
+    assign iram_tcm_bready_mux   = (dbg_tcm_select && dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) :
+                                    ((core_alias_wr_active && core_alias_wr_is_iram) || core_alias_iram_wr_pend) ? core_mbus_bready :
+                                    s_iram_tcm_bready;
+
+    assign dram_tcm_araddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r :
+                                  (core_alias_rd_active && !core_alias_rd_is_iram) ? core_mbus_araddr_mapped :
+                                  s_dram_tcm_araddr;
+    assign dram_tcm_arvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_ADDR) :
+                                    (core_alias_rd_active && !core_alias_rd_is_iram) ? 1'b1 :
+                                    s_dram_tcm_arvalid;
+    assign dram_tcm_rready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_RD_RESP) :
+                                    ((core_alias_rd_active && !core_alias_rd_is_iram) || core_alias_dram_rd_pend) ? core_mbus_rready :
+                                    s_dram_tcm_rready;
+    assign dram_tcm_awaddr_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_addr_r :
+                                  (core_alias_aw_active && !core_alias_wr_is_iram) ? core_mbus_awaddr_mapped :
+                                  s_dram_tcm_awaddr;
+    assign dram_tcm_awvalid_mux  = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_aw_done) :
+                                    (core_alias_aw_active && !core_alias_wr_is_iram) ? core_mbus_awvalid :
+                                    s_dram_tcm_awvalid;
+    assign dram_tcm_wdata_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wdata_r :
+                                 (core_alias_w_active && !core_alias_wr_is_iram) ? core_mbus_wdata :
+                                 s_dram_tcm_wdata;
+    assign dram_tcm_wstrb_mux = (dbg_tcm_select && !dbg_tcm_is_iram) ? dbg_wstrb_r :
+                                 (core_alias_w_active && !core_alias_wr_is_iram) ? core_mbus_wstrb :
+                                 s_dram_tcm_wstrb;
+    assign dram_tcm_wvalid_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? ((dbg_tcm_state == DBG_TCM_WR_REQ) && !dbg_w_done) :
+                                    (core_alias_w_active && !core_alias_wr_is_iram) ? core_mbus_wvalid :
+                                    s_dram_tcm_wvalid;
+    assign dram_tcm_bready_mux   = (dbg_tcm_select && !dbg_tcm_is_iram) ? (dbg_tcm_state == DBG_TCM_WR_RESP) :
+                                    ((core_alias_wr_active && !core_alias_wr_is_iram) || core_alias_dram_wr_pend) ? core_mbus_bready :
+                                    s_dram_tcm_bready;
+
+    // Block external TCM slave access when debug or core alias access is active
+    logic iram_blocked, dram_blocked;
+    assign iram_blocked = (dbg_tcm_select && dbg_tcm_is_iram) || (core_alias_rd_active && core_alias_rd_is_iram) || (core_alias_wr_active && core_alias_wr_is_iram);
+    assign dram_blocked = (dbg_tcm_select && !dbg_tcm_is_iram) || (core_alias_rd_active && !core_alias_rd_is_iram) || (core_alias_wr_active && !core_alias_wr_is_iram);
+
+    assign s_iram_tcm_arready = iram_blocked ? 1'b0 : iram_tcm_arready_int;
+    assign s_iram_tcm_rdata = iram_blocked ? 32'h0 : iram_tcm_rdata_int;
+    assign s_iram_tcm_rresp = iram_blocked ? 2'b00 : iram_tcm_rresp_int;
+    assign s_iram_tcm_rvalid = iram_blocked ? 1'b0 : iram_tcm_rvalid_int;
+    assign s_iram_tcm_awready = iram_blocked ? 1'b0 : iram_tcm_awready_int;
+    assign s_iram_tcm_wready = iram_blocked ? 1'b0 : iram_tcm_wready_int;
+    assign s_iram_tcm_bresp = iram_blocked ? 2'b00 : iram_tcm_bresp_int;
+    assign s_iram_tcm_bvalid = iram_blocked ? 1'b0 : iram_tcm_bvalid_int;
+
+    assign s_dram_tcm_arready = dram_blocked ? 1'b0 : dram_tcm_arready_int;
+    assign s_dram_tcm_rdata = dram_blocked ? 32'h0 : dram_tcm_rdata_int;
+    assign s_dram_tcm_rresp = dram_blocked ? 2'b00 : dram_tcm_rresp_int;
+    assign s_dram_tcm_rvalid = dram_blocked ? 1'b0 : dram_tcm_rvalid_int;
+    assign s_dram_tcm_awready = dram_blocked ? 1'b0 : dram_tcm_awready_int;
+    assign s_dram_tcm_wready = dram_blocked ? 1'b0 : dram_tcm_wready_int;
+    assign s_dram_tcm_bresp = dram_blocked ? 2'b00 : dram_tcm_bresp_int;
+    assign s_dram_tcm_bvalid = dram_blocked ? 1'b0 : dram_tcm_bvalid_int;
 
     // Mux xbar master between core and debugger (out-of-TCM accesses).
+    // Core accesses to alias TCM addresses are blocked here (routed to TCM instead).
     assign mbus_araddr = dbg_ext_select ? dbg_addr_r : core_mbus_araddr;
-    assign mbus_arvalid = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_ADDR) : core_mbus_arvalid;
+    assign mbus_arvalid = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_ADDR) : (core_mbus_arvalid && !core_araddr_is_tcm_alias);
     assign mbus_rready = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_RD_RESP) : core_mbus_rready;
     assign mbus_awaddr = dbg_ext_select ? dbg_addr_r : core_mbus_awaddr;
-    assign mbus_awvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_aw_done) : core_mbus_awvalid;
+    assign mbus_awvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_aw_done) : (core_mbus_awvalid && !core_awaddr_is_tcm_alias);
     assign mbus_wdata = dbg_ext_select ? dbg_wdata_r : core_mbus_wdata;
     assign mbus_wstrb = dbg_ext_select ? dbg_wstrb_r : core_mbus_wstrb;
-    assign mbus_wvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_w_done) : core_mbus_wvalid;
-    assign mbus_bready = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_WR_RESP) : core_mbus_bready;
+    assign mbus_wvalid = dbg_ext_select ? ((dbg_tcm_state == DBG_EXT_WR_REQ) && !dbg_w_done) : (core_mbus_wvalid && !core_awaddr_is_tcm_alias);
+    assign mbus_bready = dbg_ext_select ? (dbg_tcm_state == DBG_EXT_WR_RESP) : (core_mbus_bready && !core_awaddr_is_tcm_alias);
 
-    assign core_mbus_arready = dbg_ext_select ? 1'b0 : mbus_arready;
-    assign core_mbus_rdata = dbg_ext_select ? 32'h0 : mbus_rdata;
-    assign core_mbus_rresp = dbg_ext_select ? 2'b00 : mbus_rresp;
-    assign core_mbus_rvalid = dbg_ext_select ? 1'b0 : mbus_rvalid;
-    assign core_mbus_awready = dbg_ext_select ? 1'b0 : mbus_awready;
-    assign core_mbus_wready = dbg_ext_select ? 1'b0 : mbus_wready;
-    assign core_mbus_bresp = dbg_ext_select ? 2'b00 : mbus_bresp;
-    assign core_mbus_bvalid = dbg_ext_select ? 1'b0 : mbus_bvalid;
+    // Route core AXI master responses from either crossbar (normal) or TCM (alias access)
+    logic core_use_iram_resp, core_use_dram_resp;
+    assign core_use_iram_resp = core_araddr_is_tcm_alias && core_alias_rd_is_iram;
+    assign core_use_dram_resp = core_araddr_is_tcm_alias && !core_alias_rd_is_iram;
+
+    assign core_mbus_arready = dbg_ext_select ? 1'b0 :
+                               core_use_iram_resp ? iram_tcm_arready_int :
+                               core_use_dram_resp ? dram_tcm_arready_int :
+                               mbus_arready;
+    assign core_mbus_rdata = dbg_ext_select ? 32'h0 :
+                             core_use_iram_resp ? iram_tcm_rdata_int :
+                             core_use_dram_resp ? dram_tcm_rdata_int :
+                             mbus_rdata;
+    assign core_mbus_rresp = dbg_ext_select ? 2'b00 :
+                             core_use_iram_resp ? iram_tcm_rresp_int :
+                             core_use_dram_resp ? dram_tcm_rresp_int :
+                             mbus_rresp;
+    assign core_mbus_rvalid = dbg_ext_select ? 1'b0 :
+                              core_use_iram_resp ? iram_tcm_rvalid_int :
+                              core_use_dram_resp ? dram_tcm_rvalid_int :
+                              mbus_rvalid;
+
+    logic core_use_iram_wresp, core_use_dram_wresp;
+    assign core_use_iram_wresp = core_awaddr_is_tcm_alias && core_alias_wr_is_iram;
+    assign core_use_dram_wresp = core_awaddr_is_tcm_alias && !core_alias_wr_is_iram;
+
+    assign core_mbus_awready = dbg_ext_select ? 1'b0 :
+                               core_use_iram_wresp ? iram_tcm_awready_int :
+                               core_use_dram_wresp ? dram_tcm_awready_int :
+                               mbus_awready;
+    assign core_mbus_wready = dbg_ext_select ? 1'b0 :
+                              core_use_iram_wresp ? iram_tcm_wready_int :
+                              core_use_dram_wresp ? dram_tcm_wready_int :
+                              mbus_wready;
+    assign core_mbus_bresp = dbg_ext_select ? 2'b00 :
+                             core_use_iram_wresp ? iram_tcm_bresp_int :
+                             core_use_dram_wresp ? dram_tcm_bresp_int :
+                             mbus_bresp;
+    assign core_mbus_bvalid = dbg_ext_select ? 1'b0 :
+                              core_use_iram_wresp ? iram_tcm_bvalid_int :
+                              core_use_dram_wresp ? dram_tcm_bvalid_int :
+                              mbus_bvalid;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -544,7 +746,8 @@ module jv32_soc #(
                     dbg_aw_done <= 1'b0;
                     dbg_w_done  <= 1'b0;
                     if (dbg_mem_req && !dbg_mem_req_d) begin
-                        dbg_addr_r      <= dbg_mem_addr;
+                        // Map alias addresses to canonical TCM addresses
+                        dbg_addr_r      <= map_to_canonical(dbg_mem_addr);
                         dbg_wdata_r     <= dbg_mem_wdata;
                         dbg_wstrb_r     <= dbg_mem_we;
                         dbg_tcm_is_iram <= in_iram(dbg_mem_addr);
