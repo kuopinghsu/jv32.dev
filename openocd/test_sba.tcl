@@ -203,8 +203,10 @@ if {$word_via_progbuf != $expected_word} {
 puts "SBA halfword access (sbaccess=1, both alignments) OK"
 
 # ── 6. sbautoincrement: address advances by 4 after each SBA read ─────────────
-# jv32 implements sb_autoincr but NOT sbreadondata.  Reads are triggered only
-# by sbreadononaddr (write to sbaddress0).  sbautoincrement causes sbaddress0
+# jv32 implements both sb_autoincr and sbreadondata (CAPTURE_DR on SBDATA0
+# re-triggers the SBA read when sbreadondata=1).  This sub-test uses the
+# sbreadononaddr trigger path; functional sbreadondata is not exercised here
+# (see DTM_COVERAGE_ANALYSIS.md gap #6).  sbautoincrement causes sbaddress0
 # to advance automatically so the host can see the new address without
 # computing it, and re-use it for the next read trigger.
 #
