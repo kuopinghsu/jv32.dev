@@ -46,7 +46,14 @@ Check 3 — Async-reset condition mixing:
   "Multiple edge sensitive events found for this signal!" error.
   Fix: split into separate conditions, e.g.
       if (!rst_n) ... else if (flush) ...
-
+Check 4 — Multi-driven registers:
+  Detect signals that receive non-blocking assignments (<=) in more than one
+  always_ff block within the same module.  A signal assigned in two separate
+  always_ff blocks produces two independent flip-flops with the same output
+  net, causing "multiple conflicting drivers" errors in Yosys/Genus and
+  CRITICAL WARNING [Synth 8-6859] in Vivado.
+  The check reports each (signal, block-A-line, block-B-line) triple so the
+  developer can merge the duplicate drivers into a single always_ff block.
 Usage:
     python3 check_synth_style.py <file1.sv> [file2.sv ...]
     Exit 0 = clean, Exit 1 = violations found.
@@ -414,13 +421,22 @@ def _nb_lhs_iter(line: str):
                 depth -= 1
             i += 1
         elif line[i:i+2] == '<=' and depth == 0:
-            # Extract the LHS sitting immediately before this '<='
+            # Extract the LHS sitting immediately before this '<='.
+            # Capture the full dotted path (e.g. "struct.field") so that
+            # "a.valid" and "b.valid" are not mistaken for the same signal.
             lhs_text = line[:i].rstrip()
-            m = re.search(r'\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)*$', lhs_text)
+            m = re.search(
+                r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(?:\[[^\]]*\]\s*)*$',
+                lhs_text)
             if m:
                 sig = m.group(1)
-                if sig not in SV_KEYWORDS:
-                    yield sig
+                # Use only the root (base) name — first component before '.'.
+                # This ensures "struct.field" signals are keyed on the struct
+                # rather than the field name, avoiding false positives when
+                # two different structs have identically named fields.
+                root = sig.split('.')[0]
+                if root not in SV_KEYWORDS:
+                    yield root
             i += 2
         else:
             i += 1
@@ -670,13 +686,274 @@ def check_ff_async_reset_mix(path: str) -> list:
 
     return violations
 
+# =============================================================================
+# Check 4 — Multi-driven registers
+# =============================================================================
+
+def _compute_gen_excl_paths(clean_lines, raw_lines):
+    """
+    Pre-compute, for each line index, the generate-exclusion path: a tuple of
+    (gen_id, branch_index) pairs representing the enclosing generate if/else
+    nesting at that line.
+
+    Two lines whose paths diverge at any nesting level (same gen_id but
+    different branch_index) are in mutually exclusive generate branches and
+    are never simultaneously elaborated by the synthesis tool.
+
+    Also returns a boolean array ``is_sim_only`` flagging lines inside
+    ```ifndef SYNTHESIS``` regions (simulation-only code that synthesis tools
+    never see).
+    """
+    n = len(clean_lines)
+    paths = [() for _ in range(n)]
+
+    # ── Pre-compute `\`ifndef SYNTHESIS` regions ─────────────────────────────
+    is_sim_only = [False] * n
+    in_ifndef = False
+    for idx, raw in enumerate(raw_lines):
+        s = raw.strip()
+        if re.match(r'`ifndef\s+SYNTHESIS\b', s):
+            in_ifndef = True
+        elif in_ifndef and re.match(r'`else\b', s):
+            in_ifndef = False   # `else of `ifndef SYNTHESIS = synthesis-active
+        elif in_ifndef and re.match(r'`endif\b', s):
+            in_ifndef = False
+        if in_ifndef:
+            is_sim_only[idx] = True
+
+    # ── Generate if/else path tracker ────────────────────────────────────────
+    # gen_path:         list of [gen_id, branch_index]
+    # gen_entry_depths: outer_depth at which each generate branch body began
+    # gen_pending:      True after 'generate', waiting for the 'if (...) begin'
+    # gen_counter:      increments at each 'generate' encountered
+    # gen_awaiting_else: True after the end of a generate-if body; waiting to
+    #                   see whether the next non-empty line is 'else begin'
+    # gen_opening_else:  True on lines where 'else' was just processed; the
+    #                   next 'begin' opens the else body
+    gen_path         = []
+    gen_entry_depths = []
+    gen_pending      = False
+    gen_counter      = 0
+    outer_depth      = 0
+    gen_awaiting_else = False
+    gen_opening_else  = False
+
+    i = 0
+    while i < n:
+        cl = clean_lines[i]
+
+        # Record current path BEFORE any updates on this line
+        paths[i] = tuple(tuple(p) for p in gen_path)
+
+        if re.search(r'\b(endmodule|endpackage)\b', cl):
+            i += 1
+            break
+
+        # ── Skip always_ff blocks (don't count their begin/end in outer depth) ──
+        if re.search(r'\balways_ff\b', cl):
+            k = i
+            while k < n and 'begin' not in clean_lines[k]:
+                k += 1
+            if k < n:
+                ff_depth = 0
+                while k < n:
+                    for ev_type, _ in _events_in_order(clean_lines[k]):
+                        ff_depth += 1 if ev_type == 'begin' else -1
+                    paths[k] = tuple(tuple(p) for p in gen_path)
+                    if ff_depth <= 0:
+                        break
+                    k += 1
+                i = k + 1
+            else:
+                i += 1
+            continue
+
+        # ── Handle endgenerate ────────────────────────────────────────────────
+        if re.search(r'\bendgenerate\b', cl):
+            if gen_awaiting_else or gen_opening_else:
+                if gen_path:
+                    gen_path.pop()
+                    gen_entry_depths.pop()
+                gen_awaiting_else = False
+                gen_opening_else  = False
+            elif gen_path:
+                gen_path.pop()
+                gen_entry_depths.pop()
+            gen_pending = False
+            i += 1
+            continue
+
+        # ── Resolve 'else' when waiting for it ───────────────────────────────
+        if gen_awaiting_else:
+            if re.search(r'\belse\b', cl):
+                # Switch to the else branch; the entry depth will be set
+                # when the matching 'begin' is processed below.
+                old_id = gen_path[-1][0]
+                gen_path[-1]         = [old_id, 1]
+                gen_entry_depths[-1] = None   # will be set at begin
+                gen_awaiting_else    = False
+                gen_opening_else     = True
+            elif cl.strip():
+                # Non-empty line with no 'else' → no else branch; pop
+                gen_path.pop()
+                gen_entry_depths.pop()
+                gen_awaiting_else = False
+
+        # ── Detect 'generate' keyword ─────────────────────────────────────────
+        if re.search(r'\bgenerate\b', cl) and not re.search(r'\bendgenerate\b', cl):
+            gen_pending = True
+            gen_counter += 1
+
+        # ── Process begin/end depth events ───────────────────────────────────
+        for ev_type, pos in _events_in_order(cl):
+            if ev_type == 'begin':
+                outer_depth += 1
+                if gen_opening_else:
+                    # This begin opens the else body
+                    gen_entry_depths[-1] = outer_depth
+                    gen_opening_else     = False
+                elif gen_awaiting_else and re.search(r'\belse\b', cl[:pos]):
+                    # 'end else begin' on one line: switch branch inline
+                    old_id = gen_path[-1][0]
+                    gen_path[-1]         = [old_id, 1]
+                    gen_entry_depths[-1] = outer_depth
+                    gen_awaiting_else    = False
+                elif gen_pending:
+                    gen_path.append([gen_counter, 0])
+                    gen_entry_depths.append(outer_depth)
+                    gen_pending = False
+            else:  # 'end'
+                if (gen_entry_depths
+                        and gen_entry_depths[-1] is not None
+                        and outer_depth == gen_entry_depths[-1]):
+                    gen_awaiting_else = True
+                outer_depth -= 1
+
+        i += 1
+
+    return paths, is_sim_only
+
+def check_ff_multi_driven(path: str) -> list:
+    """
+    Check 4: Detect signals assigned (via <=) in more than one always_ff
+    block within the same module.
+
+    A signal driven in two separate always_ff blocks produces two independent
+    flip-flops sharing the same output net — "multiple conflicting drivers" in
+    Yosys/Genus and CRITICAL WARNING [Synth 8-6859] in Vivado.
+
+    False-positive guards:
+      - Struct field access: ``a.field <= x`` uses ``a`` (the root name), so
+        ``struct_a.valid`` and ``struct_b.valid`` are keyed as ``struct_a``
+        and ``struct_b`` — not the same signal.
+      - Generate if/else: always_ff blocks in mutually exclusive generate
+        branches (TRACE_EN=1 vs TRACE_EN=0) are never simultaneously
+        elaborated and are not flagged.
+      - ifndef SYNTHESIS blocks: simulation-only always_ff
+        blocks are skipped entirely.
+
+    Returns a list of
+        ('multi-driven', path, first_ff_line, second_ff_line, signal_name)
+    tuples.
+    """
+    try:
+        with open(path) as f:
+            raw_lines = f.readlines()
+    except OSError as e:
+        print(f'ERROR: cannot open {path}: {e}', file=sys.stderr)
+        return []
+
+    clean_lines = [strip_comments_and_strings(l) for l in raw_lines]
+    n = len(clean_lines)
+    violations = []
+
+    gen_paths, is_sim_only = _compute_gen_excl_paths(clean_lines, raw_lines)
+
+    # ── Walk the file looking for module boundaries ──────────────────────────
+    i = 0
+    while i < n:
+        if not re.match(r'\b(module|package)\b', clean_lines[i].strip()):
+            i += 1
+            continue
+
+        # Skip the module header (up to the first ';')
+        while i < n and ';' not in clean_lines[i]:
+            i += 1
+        i += 1  # first line of module body
+
+        # sig_to_blocks: signal → list of (ff_line_1based, gen_excl_path) pairs
+        sig_to_blocks: dict[str, list] = {}
+
+        # ── Scan module body for always_ff blocks ────────────────────────────
+        while i < n:
+            cl = clean_lines[i]
+            if re.search(r'\b(endmodule|endpackage)\b', cl):
+                i += 1
+                break
+
+            if not re.search(r'\balways_ff\b', cl):
+                i += 1
+                continue
+
+            ff_line    = i + 1  # 1-based
+            ff_gen_path = gen_paths[i]
+            ff_sim_only = is_sim_only[i]
+
+            # Advance to first 'begin' (may be on a later line)
+            k = i
+            while k < n and 'begin' not in clean_lines[k]:
+                k += 1
+            if k >= n:
+                i += 1
+                continue
+
+            # Collect the always_ff block using begin/end depth tracking
+            block_signals: set[str] = set()
+            depth = 0
+            while k < n:
+                cl_k = clean_lines[k]
+                if not ff_sim_only:
+                    for sig in _nb_lhs_iter(cl_k):
+                        block_signals.add(sig)
+                for ev_type, _ in _events_in_order(cl_k):
+                    depth += 1 if ev_type == 'begin' else -1
+                if depth <= 0:
+                    break
+                k += 1
+
+            # Register signals → this block (skip simulation-only blocks)
+            if not ff_sim_only:
+                for sig in block_signals:
+                    sig_to_blocks.setdefault(sig, []).append(
+                        (ff_line, ff_gen_path))
+
+            i = k + 1
+
+        # ── Report signals with more than one compatible driver ───────────────
+        for sig, blocks in sig_to_blocks.items():
+            if len(blocks) < 2:
+                continue
+            first_line, first_path = blocks[0]
+            for extra_line, extra_path in blocks[1:]:
+                # Mutually exclusive if they diverge at any generate level
+                exclusive = any(
+                    a[0] == b[0] and a[1] != b[1]
+                    for a, b in zip(first_path, extra_path)
+                )
+                if not exclusive:
+                    violations.append(
+                        ('multi-driven', path, first_line, extra_line, sig))
+
+    return violations
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(
         description='Synthesis coding-style checks for SystemVerilog.\n'
                     '  Check 1: signal declaration order\n'
                     '  Check 2: partial reset in always_ff blocks\n'
-                    '  Check 3: async-reset condition mixing')
+                    '  Check 3: async-reset condition mixing\n'
+                    '  Check 4: multi-driven registers (signal in multiple always_ff blocks)')
     ap.add_argument('files', nargs='+', help='SystemVerilog source files to check')
     ap.add_argument('--quiet', '-q', action='store_true',
                     help='Only print violations, not per-file OK messages')
@@ -686,6 +963,8 @@ def main():
                     help='Skip partial-reset check (Check 2)')
     ap.add_argument('--no-async-mix', action='store_true',
                     help='Skip async-reset condition mixing check (Check 3)')
+    ap.add_argument('--no-multi-driven', action='store_true',
+                    help='Skip multi-driven register check (Check 4)')
     args = ap.parse_args()
 
     total_violations = 0
@@ -702,6 +981,9 @@ def main():
         if not args.no_async_mix:
             file_viols += check_ff_async_reset_mix(path)
 
+        if not args.no_multi_driven:
+            file_viols += check_ff_multi_driven(path)
+
         if file_viols:
             for v in sorted(file_viols, key=lambda x: x[2]):
                 if v[0] == 'decl':
@@ -712,11 +994,16 @@ def main():
                     _, f, ff_ln, name = v
                     print(f'{f}:{ff_ln}: [partial-reset] \'{name}\' assigned in '
                           f'always_ff but missing from reset branch')
-                else:  # 'async-mix'
+                elif v[0] == 'async-mix':
                     _, f, if_ln, cond = v
                     print(f'{f}:{if_ln}: [async-reset-mix] async reset condition '
                           f'mixed with other signals: \'if ({cond})\' — split '
                           f'into separate if/else-if conditions')
+                else:  # 'multi-driven'
+                    _, f, first_ln, extra_ln, sig = v
+                    print(f'{f}:{extra_ln}: [multi-driven] \'{sig}\' assigned in '
+                          f'always_ff at line {extra_ln} but already driven by '
+                          f'always_ff at line {first_ln} — merge into one block')
             total_violations += len(file_viols)
         elif not args.quiet:
             print(f'OK: {os.path.basename(path)}')

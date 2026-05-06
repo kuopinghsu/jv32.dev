@@ -675,31 +675,34 @@ module jv32_dtm #(
                 default:   ;
             endcase
         end
-        else if (update_dr_i && ir_i == IR_DMI && dmi_shift[1:0] == 2'b10) begin
-            case (dmi_shift[40:34])
-                DMI_DATA0: if (!busy_tck && autoexec_data[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_DATA1: if (!busy_tck && autoexec_data[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_COMMAND:
-                if (!busy_tck && !cmd_busy_tck_pending && dmactive) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_PROGBUF0: if (!busy_tck && autoexec_pbuf[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_PROGBUF1: if (!busy_tck && autoexec_pbuf[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_SBCS: if (dmi_shift[24]) sb_busyerr_nx = 1'b0;
-                // DMI_SBADDRESS0: read-on-addr trigger is now delayed (see always_ff block)
-                // to ensure address stabilizes before toggle fires
-                DMI_SBDATA0: if (sb_err_tck == 3'b0 && sba_busy_tck) sb_busyerr_nx = 1'b1;
-                default: ;
-            endcase
+        else if (update_dr_i && ir_i == IR_DMI) begin
+            // Delayed SBA read trigger: fire toggle one cycle AFTER sbaddress0_written_tck.
+            // Moved from always_ff to here so sba_rd_toggle_tck has exactly one sequential driver.
+            if (sbaddress0_stable_ready && sb_err_tck == 3'b0 && !sba_busy_tck && sbcs_sync_delay == 3'b0 && sb_readonaddr)
+                sba_rd_toggle_tck_nx = ~sba_rd_toggle_tck;
+            if (dmi_shift[1:0] == 2'b10) begin
+                case (dmi_shift[40:34])
+                    DMI_DATA0: if (!busy_tck && autoexec_data[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                    DMI_DATA1: if (!busy_tck && autoexec_data[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                    DMI_COMMAND:
+                    if (!busy_tck && !cmd_busy_tck_pending && dmactive) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                    DMI_PROGBUF0: if (!busy_tck && autoexec_pbuf[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                    DMI_PROGBUF1: if (!busy_tck && autoexec_pbuf[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
+                    DMI_SBCS: if (dmi_shift[24]) sb_busyerr_nx = 1'b0;
+                    // DMI_SBADDRESS0: read-on-addr trigger is now handled above (sbaddress0_stable_ready)
+                    DMI_SBDATA0: if (sb_err_tck == 3'b0 && sba_busy_tck) sb_busyerr_nx = 1'b1;
+                    default: ;
+                endcase
+            end
         end
     end
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
-            halted_tck_chain    <= 3'b0;
-            resumeack_tck_chain <= 3'b0;
-            cmd_wr_toggle_tck   <= 1'b0;
-            sb_busyerr          <= 1'b0;
-            sba_rd_toggle_tck   <= 1'b0;
-            sba_rd_pending_tck  <= 1'b0;
+            cmd_wr_toggle_tck  <= 1'b0;
+            sb_busyerr         <= 1'b0;
+            sba_rd_toggle_tck  <= 1'b0;
+            sba_rd_pending_tck <= 1'b0;
         end
         else begin
             cmd_wr_toggle_tck <= cmd_wr_toggle_tck_nx;
@@ -966,8 +969,8 @@ module jv32_dtm #(
                     // Per RISC-V Debug Spec §3.6.2: an SBA access is triggered when SBADDRESS0 is
                     // written IFF sbreadononaddr=1.  sbautoincrement=1 only means "increment address
                     // after each access" — it must NOT trigger a new read on address write.
+                    // sba_rd_toggle_tck is driven via sba_rd_toggle_tck_nx in the always_comb above.
                     if (sb_readonaddr) begin
-                        sba_rd_toggle_tck       <= ~sba_rd_toggle_tck;
                         sbaddress0_stable_ready <= 1'b0;  // Clear only when toggle fires
                         `DEBUG2(`DBG_GRP_DTM, ("Fire delayed SBA read toggle for addr=0x%h", sbaddress0_stable));
                     end
@@ -1130,13 +1133,11 @@ module jv32_dtm #(
             sbdata0_result_valid_sync[0]    <= 1'b0;
             sbdata0_result_valid_sync[1]    <= 1'b0;
             sbdata0_result_valid_sync_r     <= 1'b0;
-            sbdata0_clr_toggle_tck          <= 1'b0;
             sbaddress0_result_sync[0]       <= 32'b0;
             sbaddress0_result_sync[1]       <= 32'b0;
             sbaddress0_result_valid_sync[0] <= 1'b0;
             sbaddress0_result_valid_sync[1] <= 1'b0;
             sbaddress0_result_valid_sync_r  <= 1'b0;
-            sbaddress0_written_tck          <= 1'b0;
         end
         else begin
             cmderr_sync[0]                  <= cmderr_sys;

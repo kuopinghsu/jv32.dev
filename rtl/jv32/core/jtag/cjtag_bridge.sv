@@ -205,19 +205,12 @@ module cjtag_bridge (
     // =========================================================================
     always_ff @(posedge clk_i or negedge ntrst_i) begin
         if (!ntrst_i) begin
-            state             <= ST_OFFLINE;
-            return_state      <= ST_OFFLINE;
-            activation_shift  <= 11'd0;
-            activation_count  <= 4'd0;
-            bit_pos           <= 2'd0;
-            tmsc_sampled      <= 1'b0;
-            tmsc_toggle_count <= 5'd0;
-            tck_int           <= 1'b0;
-            tms_int           <= 1'b1;
-            tdi_int           <= 1'b0;
-            tmsc_oen_int      <= 1'b1;
-            tck_rise_req      <= 1'b0;
-            tck_fall_req      <= 1'b0;
+            state            <= ST_OFFLINE;
+            return_state     <= ST_OFFLINE;
+            activation_shift <= 11'd0;
+            activation_count <= 4'd0;
+            bit_pos          <= 2'd0;
+            tmsc_sampled     <= 1'b0;
         end
         else begin
             case (state)
