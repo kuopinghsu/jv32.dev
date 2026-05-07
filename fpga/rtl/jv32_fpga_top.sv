@@ -41,7 +41,7 @@
 // ============================================================================
 
 module jv32_fpga_top #(
-    parameter bit USE_CJTAG = 1'b0  // 0 = 4-wire JTAG, 1 = 2-wire cJTAG
+    parameter bit USE_CJTAG = 1'b1  // 0 = 4-wire JTAG, 1 = 2-wire cJTAG (default; matches fpga/Makefile)
 ) (
     input  logic clk_50m,
 
