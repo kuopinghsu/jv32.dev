@@ -11,9 +11,9 @@
 //
 //   JTAG / cJTAG (LVCMOS33, shared physical connector)
 //   jtag_tck_i    D11   TCK  (JTAG) / TCKC (cJTAG) – always input
-//   jtag_tmsc_io  C12   TMS  (JTAG) / TMSC (cJTAG) – bidir IOBUF
-//   jtag_tdi_i    J12   TDI  (JTAG only; tie to GND in cJTAG)
-//   jtag_tdo_o    E12   TDO  (JTAG only; driven 0   in cJTAG)
+//   jtag_tmsc_io  E12   TMS  (JTAG) / TMSC (cJTAG) – bidir IOBUF
+//   jtag_tdi_i    C12   TDI  (JTAG only; tie to GND in cJTAG)
+//   jtag_tdo_o    J12   TDO  (JTAG only; driven 0   in cJTAG)
 //
 //   UART (LVCMOS33)
 //   uart_tx_o     J14   TX
@@ -47,9 +47,9 @@ module jv32_fpga_top #(
 
     // JTAG / cJTAG – shared physical connector
     input  logic jtag_tck_i,    // TCK  (JTAG) / TCKC (cJTAG)  – D11
-    inout  wire  jtag_tmsc_io,  // TMS  (JTAG) / TMSC (cJTAG)  – C12 bidir
-    input  logic jtag_tdi_i,    // TDI  (JTAG only)             – J12
-    output logic jtag_tdo_o,    // TDO  (JTAG only)             – E12
+    inout  wire  jtag_tmsc_io,  // TMS  (JTAG) / TMSC (cJTAG)  – E12 bidir
+    input  logic jtag_tdi_i,    // TDI  (JTAG only)             – C12
+    output logic jtag_tdo_o,    // TDO  (JTAG only)             – J12
 
     // UART
     output logic uart_tx_o,
