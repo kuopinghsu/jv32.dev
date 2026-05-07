@@ -409,18 +409,23 @@ module jv32_dtm #(
     // ========================================================================
     // Status signals derived from CPU state
     // ========================================================================
-    assign any_halted      = halted_tck;   // TCK domain: for dmstatus reads
-    assign all_halted      = halted_tck;
-    assign any_running     = !halted_tck;
-    assign all_running     = !halted_tck;
-    assign any_resumeack   = resumeack_tck;
-    assign all_resumeack   = resumeack_tck;
-    assign any_havereset   = havereset_r;  // sticky, cleared by ackhavereset
-    assign all_havereset   = havereset_r;
-
     // nonexistent: hart 0 exists; any nonzero hartsello selects a non-existent hart
     assign any_noexist     = (hartsello != 10'b0);
     assign all_noexist     = (hartsello != 10'b0);
+
+    // Per Debug Spec 0.13.2: when non-existent hart is selected:
+    // - anyhalted=0 (no actual hart is halted)
+    // - allhalted=1 (all selected harts [non-existent] are "halted or don't exist")
+    // - anyrunning=0 (no actual hart is running)
+    // - allrunning=0 (non-existent hart is not running)
+    assign any_halted      = any_noexist ? 1'b0 : halted_tck;
+    assign all_halted      = all_noexist ? 1'b1 : halted_tck;
+    assign any_running     = any_noexist ? 1'b0 : !halted_tck;
+    assign all_running     = any_noexist ? 1'b0 : !halted_tck;
+    assign any_resumeack   = any_noexist ? 1'b0 : resumeack_tck;
+    assign all_resumeack   = any_noexist ? 1'b0 : resumeack_tck;
+    assign any_havereset   = havereset_r;  // sticky, cleared by ackhavereset
+    assign all_havereset   = havereset_r;
 
     // ndmreset / hartreset output wires
     assign dbg_ndmreset_o  = ndmreset;
@@ -543,8 +548,10 @@ module jv32_dtm #(
         end
     end
 
-    assign dbg_halt_req_o   = (cmd_busy ? 1'b0 : halt_req_sync_chain[1]) | exec_halt_req;
-    assign dbg_resume_req_o = (cmd_busy ? 1'b0 : resume_req_sync_chain[1]) || exec_resume_req;
+    // Per Debug Spec 0.13.2 section 3.14.2: halt/resume requests should have no
+    // effect when all selected harts are non-existent
+    assign dbg_halt_req_o   = (cmd_busy || any_noexist) ? 1'b0 : (halt_req_sync_chain[1] | exec_halt_req);
+    assign dbg_resume_req_o = (cmd_busy || any_noexist) ? 1'b0 : (resume_req_sync_chain[1] || exec_resume_req);
 
     // ========================================================================
     // Shift Registers
