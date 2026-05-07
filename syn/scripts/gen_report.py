@@ -823,7 +823,6 @@ def main():
     ap.add_argument("--rv32e-en",    default="?")
     ap.add_argument("--rv32m-en",    default="?")
     ap.add_argument("--jtag-en",     default="?")
-    ap.add_argument("--trace-en",    default="?")
     ap.add_argument("--amo-en",      default="?")
     ap.add_argument("--fast-mul",    default="?")
     ap.add_argument("--fast-div",    default="?")
@@ -891,7 +890,6 @@ def main():
 | `RV32E_EN` | {args.rv32e_en} |
 | `RV32M_EN` | {args.rv32m_en} |
 | `JTAG_EN` | {args.jtag_en} |
-| `TRACE_EN` | {args.trace_en} |
 | `AMO_EN` | {args.amo_en} |
 | `FAST_MUL` | {args.fast_mul} |
 | `FAST_DIV` | {args.fast_div} |

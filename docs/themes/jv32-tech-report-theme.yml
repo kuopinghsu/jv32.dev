@@ -80,8 +80,11 @@ abstract:
 # ── Title page ────────────────────────────────────────────────────────────────
 title_page:
   text_align: left
+  logo:
+    top: 62%
+    align: left
   title:
-    top: 38%
+    top: 20%
     font_size: 30
     font_family: Noto Sans
     font_color: 0B2D5C

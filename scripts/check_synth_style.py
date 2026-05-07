@@ -847,9 +847,9 @@ def check_ff_multi_driven(path: str) -> list:
         ``struct_a.valid`` and ``struct_b.valid`` are keyed as ``struct_a``
         and ``struct_b`` — not the same signal.
       - Generate if/else: always_ff blocks in mutually exclusive generate
-        branches (TRACE_EN=1 vs TRACE_EN=0) are never simultaneously
+        branches are never simultaneously
         elaborated and are not flagged.
-      - ifndef SYNTHESIS blocks: simulation-only always_ff
+      - `ifndef SYNTHESIS blocks: simulation-only always_ff
         blocks are skipped entirely.
 
     Returns a list of

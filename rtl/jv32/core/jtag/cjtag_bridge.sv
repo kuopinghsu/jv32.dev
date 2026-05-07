@@ -331,7 +331,7 @@ module cjtag_bridge (
                             // Validate activation packet:
                             // - OAC must be 4'b1100 (select JTAG TAP)
                             // - EC must be 4'b1000 (enable OScan1)
-                            // - CP should be OAC⊕EC = 4'b0100 per IEEE 1149.7
+                            // - CP should be OAC^EC = 4'b0100 per IEEE 1149.7
                             //
                             // CP CHECK COMPATIBILITY:
                             // OpenOCD ftdi.c sends CP=0x0 (bug), but real ARM hardware accepts it.
@@ -479,7 +479,7 @@ module cjtag_bridge (
                     //                             tdo_i = pre-shift TDO (from last TCK negedge)
                     //   TCKC negedge + 1 clk:     TCK raised; TAP posedge shifts register
                     //   TCKC posedge (bit_pos=2): DTS samples TMSC = pre-shift TDO (rising edge sample);
-                    //                             tmsc_oen→1; TCK fall scheduled
+                    //                             tmsc_oen->1; TCK fall scheduled
                     //   TCKC posedge + 1 clk:     TCK falls; TAP negedge updates tdo_o (post-shift)
 
                     // On TCKC posedge - sample TMSC, update JTAG inputs, present TDO

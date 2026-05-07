@@ -366,7 +366,7 @@ module jv32_dtm #(
 
     logic exec_fault_halting;                          // CMD_EXEC: waiting for halt after fault
     logic read_after_exec;                             // CMD_EXEC runs before register read (read+postexec)
-    logic exec_phase_done;                             // exec phase done; CMD_WAIT → CMD_DONE, not CMD_EXEC
+    logic exec_phase_done;                             // exec phase done; CMD_WAIT -> CMD_DONE, not CMD_EXEC
     localparam [31:0] DEBUG_ROM_BASE = 32'h0F80_0000;  // Progbuf intercept address
     logic cmd_transfer;                                // Perform transfer
 
@@ -977,9 +977,9 @@ module jv32_dtm #(
                 // 2-stage CDC chains from TCK to CLK domain before the toggle edge is detected
                 // Use sbaddress0_stable_ready to ensure sbaddress0_stable was stable for a full cycle
                 if (sbaddress0_stable_ready && sb_err_tck == 3'b0 && !sba_busy_tck && sbcs_sync_delay == 3'b0) begin
-                    // Per RISC-V Debug Spec §3.6.2: an SBA access is triggered when SBADDRESS0 is
+                    // Per RISC-V Debug Spec Sec. 3.6.2: an SBA access is triggered when SBADDRESS0 is
                     // written IFF sbreadononaddr=1.  sbautoincrement=1 only means "increment address
-                    // after each access" — it must NOT trigger a new read on address write.
+                    // after each access" -- it must NOT trigger a new read on address write.
                     // sba_rd_toggle_tck is driven via sba_rd_toggle_tck_nx in the always_comb above.
                     if (sb_readonaddr) begin
                         sbaddress0_stable_ready <= 1'b0;  // Clear only when toggle fires
@@ -1076,7 +1076,7 @@ module jv32_dtm #(
                         DMI_SBCS: begin
                             // SBCS register bits (RISC-V Debug Spec 0.13): [22]sbbusyerror [21]sbbusy [20]sbreadononaddr
                             // [19:17]sbaccess [16]sbautoincrement [15]sbreadondata [14:12]sberror
-                            // DMI format: [33:2]=data, so SBCS bit N → dmi_shift[N+2]
+                            // DMI format: [33:2]=data, so SBCS bit N -> dmi_shift[N+2]
                             sb_readonaddr           <= dmi_shift[22];     // SBCS[20] - sbreadononaddr
                             sb_access               <= dmi_shift[21:19];  // SBCS[19:17] - sbaccess
                             sb_autoincr             <= dmi_shift[18];     // SBCS[16] - sbautoincrement
@@ -1257,7 +1257,7 @@ module jv32_dtm #(
         endcase
     end
 
-    // Memory access command fields (cmdtype == 2) — declared here (before always_comb that uses them)
+    // Memory access command fields (cmdtype == 2) -- declared here (before always_comb that uses them)
     logic [31:0] mem_addr;
     wire         mem_write_cmd = command_reg_sys[16];
     wire         mem_aarpostincrement = command_reg_sys[19];  // Auto-increment address after access
@@ -1473,7 +1473,7 @@ module jv32_dtm #(
                 sba_wr_pending_clk <= 1'b1;
             end
 
-            // SBA result clear toggle syncs (TCK→CLK to clear result_valid flags)
+            // SBA result clear toggle syncs (TCK->CLK to clear result_valid flags)
             sbdata0_clr_toggle_sync    <= {sbdata0_clr_toggle_sync[0], sbdata0_clr_toggle_tck};
             sbaddress0_clr_toggle_sync <= {sbaddress0_clr_toggle_sync[0], sbaddress0_clr_toggle_tck};
             data1_clr_toggle_sync      <= {data1_clr_toggle_sync[0], data1_clr_toggle_tck};
@@ -1727,9 +1727,9 @@ module jv32_dtm #(
                             else begin
                                 cmd_busy               <= 1'b1;
 
-                                // Always load address from data1_sys — updated by OpenOCD via DMI for
+                                // Always load address from data1_sys -- updated by OpenOCD via DMI for
                                 // each command.  The spec requires postincrement to write back to arg1
-                                // (data1); we do that via data1_result/data1_result_valid → TCK domain
+                                // (data1); we do that via data1_result/data1_result_valid -> TCK domain
                                 // sync, so data1 is correct when the next cmd_wr_toggle fires.
                                 mem_addr               <= data1_sys;
                                 mem_aarpostincrement_r <= mem_aarpostincrement;
@@ -2143,7 +2143,7 @@ module jv32_dtm #(
                         mem_req_pending         <= 1'b1;
                         sba_wait_cnt            <= 4'b0;
 
-                        // Clear result_valid at operation start to ensure clean 0→1 edge when complete
+                        // Clear result_valid at operation start to ensure clean 0->1 edge when complete
                         sbaddress0_result_valid <= 1'b0;
                     end
                     else if (dbg_mem_ready_i) begin

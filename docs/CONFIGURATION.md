@@ -22,7 +22,6 @@ flags below with the following fixed values:
 | `RV32M_EN` | `0` | M-extension disabled; MUL/DIV trap as illegal instruction |
 | `AMO_EN` | `0` | A-extension disabled; all AMO instructions trap as illegal |
 | `JTAG_EN` | `0` | JTAG debug transport removed from synthesis |
-| `TRACE_EN` | `0` | Trace output registers removed (outputs tied to 0) |
 | `BP_EN` | `0` | Branch predictor disabled; always-not-taken prediction |
 | `FAST_SHIFT` | `0` | 1-bit-per-cycle serial barrel shifter (area-minimal) |
 
@@ -42,7 +41,6 @@ When `RV32EC=0` (the default), each flag can be set independently:
 | `AMO_EN` | `1` | `1` = include A-extension (atomic ops); `0` = illegal trap on AMO |
 | `RV32B_EN` | `1` | `1` = include B-extension (Zba/Zbb/Zbs); `0` = bit-manipulation instructions trap as illegal |
 | `JTAG_EN` | `1` | `1` = include JTAG debug interface; `0` = remove from synthesis |
-| `TRACE_EN` | `1` | `1` = trace output registers present; `0` = outputs tied to 0 |
 
 ---
 

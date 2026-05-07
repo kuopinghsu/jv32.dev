@@ -95,7 +95,6 @@ ifeq ($(RV32EC),1)
   RV32E_EN   := 1
   RV32M_EN   := 0
   JTAG_EN    := 0
-  TRACE_EN   := 0
   FAST_SHIFT := 0
   BP_EN      := 0
   AMO_EN     := 0
@@ -104,7 +103,6 @@ else
   RV32E_EN   ?= 0
   RV32M_EN   ?= 1
   JTAG_EN    ?= 1
-  TRACE_EN   ?= 1
   AMO_EN     ?= 1
   IBUF_EN    ?= 1
 endif
@@ -292,8 +290,8 @@ synth: check $(BUILD_DIR)
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
 	    exit 1; \
 	fi
-	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - TRACE_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(TRACE_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) $(IBUF_EN); \
+	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) $(IBUF_EN); \
 	  printf 'VERILOG_DEFINES:\n  - SYNTHESIS\n  - NO_ASSERTION\n  - GENERIC_SRAM\n'; \
 	  } > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
@@ -414,7 +412,6 @@ synth: check $(BUILD_DIR)
 	    --rv32e-en   $(RV32E_EN)   \
 	    --rv32m-en   $(RV32M_EN)   \
 	    --jtag-en    $(JTAG_EN)    \
-	    --trace-en   $(TRACE_EN)   \
 	    --amo-en     $(AMO_EN)     \
 	    --fast-mul   $(FAST_MUL)   \
 	    --fast-div   $(FAST_DIV)   \
@@ -427,14 +424,21 @@ synth: check $(BUILD_DIR)
 	    $(if $(NANGATE_LIB),--nangate-lib $(NANGATE_LIB),) \
 	    $(if $(wildcard $(GATE_COUNT_STAT)),--gate-count-json $(GATE_COUNT_STAT),)
 	@echo " Summary : $(SYN_DIR)/REPORT.md"
-	@echo " Generating layout diagram..."
+	@echo " Generating layout diagrams..."
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_diag.py \
 	    $(OPENLANE_RUN_DIR) \
 	    $(BUILD_DIR)/LAYOUT.png \
 	    --lef-dir $(SYN_DIR)/lib/openram \
 	    --title "$(DESIGN) — Layout Floorplan ($(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB IRAM / $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB DRAM)" \
 	    || echo " WARNING: layout diagram generation failed (matplotlib required)"
+	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_gds.py \
+	    $(OPENLANE_RUN_DIR) \
+	    $(BUILD_DIR)/LAYOUT_gds.png \
+	    --layers 35,36,38,39 \
+	    --title "$(DESIGN) — Post-P&R GDS Layout (FreePDK45 Nangate 45 nm)" \
+	    || echo " WARNING: GDS layout generation failed (gdstk + Pillow required)"
 	@echo " Layout  : $(BUILD_DIR)/LAYOUT.png"
+	@echo " Layout  : $(BUILD_DIR)/LAYOUT_gds.png"
 	@echo "========================================"
 
 synth-resume: RESUME=1
@@ -480,7 +484,6 @@ gate-count: check $(BUILD_DIR)
 	    export RV32E_EN="$(RV32E_EN)"; \
 	    export RV32M_EN="$(RV32M_EN)"; \
 	    export JTAG_EN="$(JTAG_EN)"; \
-	    export TRACE_EN="$(TRACE_EN)"; \
 	    export AMO_EN="$(AMO_EN)"; \
 	    export FAST_MUL="$(FAST_MUL)"; \
 	    export MUL_MC="$(MUL_MC)"; \

@@ -1,16 +1,16 @@
 * Cycle 0      Port All    0.00 ns:      : Idle cycle (no positive clock edge)
-* Cycle 1      Port 0      0.00 ns:      : W data 1 address 00000000000
+* Cycle 1      Port 0      0.00 ns:      : W data 1 address 00000000001
 * Cycle 2      Port 0      0.00 ns:      : W data 0 address 11111111111 to write value
 * Cycle 3      Port 0      0.00 ns:      : Clock only on port 0
-* Cycle 4      Port 0      0.00 ns:      : R data 1 address 00000000000 to set dout caps
+* Cycle 4      Port 0      0.00 ns:      : R data 1 address 00000000001 to set dout caps
 * Cycle 5      Port 0      0.00 ns:      : R data 0 address 11111111111 to check W0 worked
 * Cycle 6      Port 0      0.00 ns:      : Clock only on port 0
 * Cycle 7      Port All    0.00 ns:      : Idle cycle (if read takes >1 cycle)
 * Cycle 8      Port 0      0.00 ns:      : W data 1 address 11111111111 to write value
 * Cycle 9      Port 0      0.00 ns:      : Clock only on port 0
-* Cycle 10     Port 0      0.00 ns:      : W data 0 address 00000000000 to clear din caps
+* Cycle 10     Port 0      0.00 ns:      : W data 0 address 00000000001 to clear din caps
 * Cycle 11     Port 0      0.00 ns:      : Clock only on port 0
-* Cycle 12     Port 0      0.00 ns:      : R data 0 address 00000000000 to clear dout caps
+* Cycle 12     Port 0      0.00 ns:      : R data 0 address 00000000001 to clear dout caps
 * Cycle 13     Port 0      0.00 ns:      : R data 1 address 11111111111 to check W1 worked
 * Cycle 14     Port All    0.00 ns:      : Idle cycle (if read takes >1 cycle))
 * Read ports 0
@@ -30,27 +30,27 @@
 
 .meas tran disabled_read0_power0 avg par('(-1*v(vdd)*I(vvdd))') from=0n to=0n
 
-.meas tran v_bl_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.bl_0_31) AT=0.0n 
+.meas tran v_bl_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.bl_0_63) AT=0.0n
 
-.meas tran v_br_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.br_0_31) AT=0.0n 
+.meas tran v_br_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.br_0_63) AT=0.0n
 
-.meas tran v_bl_read_one0 FIND v(xsram_1rw_2048x32.xbank0.bl_0_31) AT=0.0n 
+.meas tran v_bl_read_one0 FIND v(xsram_1rw_2048x32.xbank0.bl_0_63) AT=0.0n
 
-.meas tran v_br_read_one0 FIND v(xsram_1rw_2048x32.xbank0.br_0_31) AT=0.0n 
+.meas tran v_br_read_one0 FIND v(xsram_1rw_2048x32.xbank0.br_0_63) AT=0.0n
 
-.meas tran v_delay_lh0 FIND v(dout0_31) AT=0.0n 
+.meas tran v_delay_lh0 FIND v(dout0_31) AT=0.0n
 
-.meas tran v_delay_hl0 FIND v(dout0_31) AT=0.0n 
+.meas tran v_delay_hl0 FIND v(dout0_31) AT=0.0n
 
 .meas tran delay_sen0 TRIG v(clk0) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.s_en0) VAL=2.5 RISE=1 TD=0.0n
 
-.meas tran v_q_a11111111111_b31_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q) AT=0.0n 
+.meas tran v_q_a11111111111_b31_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q) AT=0.0n
 
-.meas tran v_q_a11111111111_b31_read_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q) AT=0.0n 
+.meas tran v_q_a11111111111_b31_read_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q) AT=0.0n
 
-.meas tran v_qbar_a11111111111_b31_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q_bar) AT=0.0n 
+.meas tran v_qbar_a11111111111_b31_read_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q_bar) AT=0.0n
 
-.meas tran v_qbar_a11111111111_b31_read_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q_bar) AT=0.0n 
+.meas tran v_qbar_a11111111111_b31_read_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q_bar) AT=0.0n
 
 .meas tran delay_clk0_to_xsram_1rw_2048x32.xcontrol0.xclkbuf.zb1_int_sen_id0 TRIG v(clk0) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.xcontrol0.xclkbuf.zb1_int) VAL=2.5 RISE=1 TD=0.0n
 
@@ -126,13 +126,15 @@
 
 .meas tran delay_xsram_1rw_2048x32.xcontrol0.xbuf_wl_en.zb1_int_to_xsram_1rw_2048x32.wl_en0_bl_id36 TRIG v(xsram_1rw_2048x32.xcontrol0.xbuf_wl_en.zb1_int) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.wl_en0) VAL=2.5 RISE=1 TD=0.0n
 
-.meas tran delay_xsram_1rw_2048x32.wl_en0_to_xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and2047.zb_int_bl_id37 TRIG v(xsram_1rw_2048x32.wl_en0) VAL=2.5 RISE=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and2047.zb_int) VAL=2.5 FALL=1 TD=0.0n
+.meas tran delay_xsram_1rw_2048x32.wl_en0_to_xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and1023.zb_int_bl_id37 TRIG v(xsram_1rw_2048x32.wl_en0) VAL=2.5 RISE=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and1023.zb_int) VAL=2.5 FALL=1 TD=0.0n
 
-.meas tran delay_xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and2047.zb_int_to_xsram_1rw_2048x32.xbank0.wl_0_2047_bl_id38 TRIG v(xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and2047.zb_int) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.wl_0_2047) VAL=2.5 RISE=1 TD=0.0n
+.meas tran delay_xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and1023.zb_int_to_xsram_1rw_2048x32.xbank0.wl_0_1023_bl_id38 TRIG v(xsram_1rw_2048x32.xbank0.xport_address0.xwordline_driver.xwl_driver_and1023.zb_int) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.wl_0_1023) VAL=2.5 RISE=1 TD=0.0n
 
-.meas tran delay_xsram_1rw_2048x32.xbank0.wl_0_2047_to_xsram_1rw_2048x32.xbank0.bl_0_31_bl_id39 TRIG v(xsram_1rw_2048x32.xbank0.wl_0_2047) VAL=2.5 RISE=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.bl_0_31) VAL=2.5 FALL=1 TD=0.0n
+.meas tran delay_xsram_1rw_2048x32.xbank0.wl_0_1023_to_xsram_1rw_2048x32.xbank0.bl_0_63_bl_id39 TRIG v(xsram_1rw_2048x32.xbank0.wl_0_1023) VAL=2.5 RISE=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.bl_0_63) VAL=2.5 FALL=1 TD=0.0n
 
-.meas tran delay_xsram_1rw_2048x32.xbank0.bl_0_31_to_dout0_31_bl_id40 TRIG v(xsram_1rw_2048x32.xbank0.bl_0_31) VAL=2.5 FALL=1 TD=0.0n TARG v(dout0_31) VAL=2.5 FALL=1 TD=0.0n
+.meas tran delay_xsram_1rw_2048x32.xbank0.bl_0_63_to_xsram_1rw_2048x32.xbank0.xport_data0.bl_out_31_bl_id40 TRIG v(xsram_1rw_2048x32.xbank0.bl_0_63) VAL=2.5 FALL=1 TD=0.0n TARG v(xsram_1rw_2048x32.xbank0.xport_data0.bl_out_31) VAL=2.5 FALL=1 TD=0.0n
+
+.meas tran delay_xsram_1rw_2048x32.xbank0.xport_data0.bl_out_31_to_dout0_31_bl_id41 TRIG v(xsram_1rw_2048x32.xbank0.xport_data0.bl_out_31) VAL=2.5 FALL=1 TD=0.0n TARG v(dout0_31) VAL=2.5 FALL=1 TD=0.0n
 
 * Write ports 0
 .meas tran write1_power0 avg par('(-1*v(vdd)*I(vvdd))') from=0n to=0n
@@ -143,11 +145,11 @@
 
 .meas tran disabled_write0_power0 avg par('(-1*v(vdd)*I(vvdd))') from=0n to=0n
 
-.meas tran v_q_a11111111111_b31_write_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q) AT=0.0n 
+.meas tran v_q_a11111111111_b31_write_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q) AT=0.0n
 
-.meas tran v_q_a11111111111_b31_write_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q) AT=0.0n 
+.meas tran v_q_a11111111111_b31_write_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q) AT=0.0n
 
-.meas tran v_qbar_a11111111111_b31_write_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q_bar) AT=0.0n 
+.meas tran v_qbar_a11111111111_b31_write_zero0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q_bar) AT=0.0n
 
-.meas tran v_qbar_a11111111111_b31_write_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r2047_c31.Q_bar) AT=0.0n 
+.meas tran v_qbar_a11111111111_b31_write_one0 FIND v(xsram_1rw_2048x32.xbank0.xbitcell_array.xreplica_bitcell_array.xbitcell_array.xbit_r1023_c63.Q_bar) AT=0.0n
 

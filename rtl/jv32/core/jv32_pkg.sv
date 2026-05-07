@@ -71,7 +71,6 @@ package jv32_pkg;
     localparam bit          RV32E_EN       = 0;              // 1=RV32E (16 GPRs), 0=RV32I (32 GPRs)
     localparam bit          RV32M_EN       = 1;              // 1=M-extension (mul/div), 0=illegal
     localparam bit          JTAG_EN        = 1;              // 1=JTAG debug port present, 0=no JTAG
-    localparam bit          TRACE_EN       = 1;              // 1=trace outputs active, 0=tied to 0 in synthesis
     localparam bit          RV32B_EN       = 1;              // 1=Zba/Zbb/Zbs bit-manip extensions, 0=illegal
     localparam int unsigned IRAM_SIZE      = 262144;         // bytes (256 KB)
     localparam int unsigned DRAM_SIZE      = 262144;         // bytes (256 KB)
@@ -120,11 +119,11 @@ package jv32_pkg;
         ALU_DIVU,    // 15
         ALU_REM,     // 16
         ALU_REMU,    // 17
-        // Zba — address generation
+        // Zba -- address generation
         ALU_SH1ADD,  // 18  rd = (rs1 << 1) + rs2
         ALU_SH2ADD,  // 19  rd = (rs1 << 2) + rs2
         ALU_SH3ADD,  // 20  rd = (rs1 << 3) + rs2
-        // Zbb — basic bit manipulation
+        // Zbb -- basic bit manipulation
         ALU_CLZ,    // 21  count leading zeros
         ALU_CTZ,    // 22  count trailing zeros
         ALU_CPOP,   // 23  popcount
@@ -142,7 +141,7 @@ package jv32_pkg;
         ALU_ROR,    // 35  rotate right (also used for RORI with imm operand)
         ALU_ORCB,   // 36  or-combine bytes
         ALU_REV8,   // 37  byte-reverse
-        // Zbs — single-bit operations
+        // Zbs -- single-bit operations
         ALU_BCLR,  // 38  bit clear  (also used for BCLRI)
         ALU_BEXT,  // 39  bit extract (also used for BEXTI)
         ALU_BINV,  // 40  bit invert  (also used for BINVI)

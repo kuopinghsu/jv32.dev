@@ -7,7 +7,7 @@ import os
 num_words       = 2048
 word_size       = 32
 write_size      = 8   # byte write enables: wmask0[3:0]
-words_per_row   = 1  # 2048 rows, 11-bit decoder
+words_per_row   = 4  # 512 rows, 9-bit decoder; ~318×717 µm (half height vs wpr=2)
 
 # ── Technology ───────────────────────────────────────────────────────────────
 tech_name       = "freepdk45"

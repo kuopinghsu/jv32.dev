@@ -312,7 +312,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--idle-clks")     && i+1 < argc)
             g_idle_clks     = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--no-trace-en"))
-            g_trace_en      = false;  // simulate FPGA: trace_en=0 (TRACE_EN=1 still compiled in)
+            g_trace_en      = false;  // simulate FPGA: drive trace_en=0
         else if (argv[i][0] == '+')
             ; // +verilator+... runtime args handled by ctx->commandArgs() below
         else if (!elf_path)

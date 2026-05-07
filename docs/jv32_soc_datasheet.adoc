@@ -12,8 +12,7 @@
 :table-caption: Table
 :figure-caption: Figure
 :appendix-caption: Appendix
-
-image::jv32-logo.svg[JV32 Logo,align=center,width=240]
+:title-logo-image: image:jv32-logo.svg[JV32 Logo,pdfwidth=6cm,align=center]
 
 [abstract]
 --
@@ -1662,10 +1661,6 @@ suppress the Vivado LUTAR-1 methodology warning
 |`1`
 |`1`=BTFNT static branch predictor enabled (backward branches predicted taken, forward branches predicted not-taken; 0-cycle penalty on correct prediction, 1-cycle on misprediction); `0`=all branches predicted not-taken (1-cycle penalty on every taken branch)
 
-|`TRACE_EN`
-|`1`
-|`1`=trace output ports (`trace_valid`, `trace_pc`, etc.) carry live values; `0`=all trace outputs tied to 0
-
 |`IRAM_SIZE`
 |`131072`
 |IRAM size in bytes (power-of-2; also sets TCM address decode mask)
@@ -2277,7 +2272,7 @@ Active only when `JTAG_EN=1`. Pin roles differ between `USE_CJTAG=0` (4-wire JTA
 
 === Trace Interface
 
-Active only when `TRACE_EN=1`. All outputs change on the rising edge of `clk` and are qualified by `trace_valid`. Connect to an off-chip trace capture port or to the testbench trace logger. Tie inputs/outputs unconnected (`/* synthesis keep */`) when trace is not needed.
+Present in simulation only (excluded from synthesis via `` `ifndef SYNTHESIS ``). All outputs change on the rising edge of `clk` and are qualified by `trace_valid`. Connect to the testbench trace logger.
 
 [cols="1,1,1,3"]
 .Trace Output Pins
@@ -2287,7 +2282,7 @@ Active only when `TRACE_EN=1`. All outputs change on the rising edge of `clk` an
 |`trace_en`
 |Input
 |1
-|Run-time trace enable gate; when low, `trace_valid` stays deasserted even with `TRACE_EN=1`
+|Run-time trace enable gate; when low, `trace_valid` stays deasserted
 
 |`trace_valid`
 |Output
@@ -2412,7 +2407,7 @@ One-cycle pulse outputs that count branch-predictor events.  Active only with `B
 
 === Heartbeat Output
 
-`heartbeat_o` is a glitch-free single-bit output derived directly from bit 24 of the `minstret` counter inside `jv32_csr`.  It requires no external logic, no clock-domain crossing, and is always present regardless of `TRACE_EN` or `BP_EN`.
+`heartbeat_o` is a glitch-free single-bit output derived directly from bit 24 of the `minstret` counter inside `jv32_csr`.  It requires no external logic, no clock-domain crossing, and is always present regardless of `BP_EN`.
 
 [cols="1,1,1,3"]
 .Heartbeat Pin

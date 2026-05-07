@@ -54,7 +54,6 @@ module jv32_soc #(
     parameter bit                 RV32E_EN        = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
     parameter bit                 RV32M_EN        = 1'b1,        // 1=M-extension; 0=MUL/DIV illegal
     parameter bit                 JTAG_EN         = 1'b1,        // 1=JTAG debug port; 0=no JTAG
-    parameter bit                 TRACE_EN        = 1'b1,        // 1=trace outputs active; 0=tied to 0
     parameter bit                 USE_CJTAG       = 1'b0,        // 0=4-wire JTAG, 1=2-wire cJTAG
     parameter bit          [31:0] JTAG_IDCODE     = 32'h1DEAD3FF,
     parameter int                 N_TRIGGERS      = 2,           // hardware breakpoints (0..4)
@@ -151,7 +150,8 @@ module jv32_soc #(
     input  logic [ 1:0] ext_axi_bresp,
     input  logic        ext_axi_bvalid,
 
-    // Trace
+    // Trace (simulation only -- excluded from synthesis)
+`ifndef SYNTHESIS
     input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
@@ -177,6 +177,7 @@ module jv32_soc #(
     output logic perf_bp_jal,
     output logic perf_bp_jal_miss,
     output logic perf_bp_jalr,
+`endif
 
     // Heartbeat: toggles every 2^24 retired instructions (= minstret[24]).
     // One full toggle period = 2 * 2^24 * CPI clock cycles.
@@ -352,12 +353,12 @@ module jv32_soc #(
 
     function automatic logic [31:0] map_to_canonical(input logic [31:0] addr);
         // Map alias addresses to canonical TCM addresses
-        // IRAM: 0x6xxxxxxx → 0x8xxxxxxx
-        // DRAM: 0x7xxxxxxx → 0x9xxxxxxx
+        // IRAM: 0x6xxxxxxx -> 0x8xxxxxxx
+        // DRAM: 0x7xxxxxxx -> 0x9xxxxxxx
         if ((addr >= 32'h6000_0000) && (addr < 32'h6000_0000 + 32'(IRAM_SIZE)))
-            return {4'h8, addr[27:0]};  // 0x6 → 0x8
+            return {4'h8, addr[27:0]};  // 0x6 -> 0x8
         else if ((addr >= 32'h7000_0000) && (addr < 32'h7000_0000 + 32'(DRAM_SIZE)))
-            return {4'h9, addr[27:0]};  // 0x7 → 0x9
+            return {4'h9, addr[27:0]};  // 0x7 -> 0x9
         else return addr;  // Already canonical or external address
     endfunction
 
@@ -365,7 +366,7 @@ module jv32_soc #(
         return in_iram(addr) || in_dram(addr);
     endfunction
 
-    // Map core's AXI master addresses: alias → canonical for TCM routing (declarations early for debug traces)
+    // Map core's AXI master addresses: alias -> canonical for TCM routing (declarations early for debug traces)
     logic [31:0] core_mbus_araddr_mapped;
     logic [31:0] core_mbus_awaddr_mapped;
     logic        core_araddr_is_tcm_alias;  // Read address is alias and maps to TCM
@@ -825,7 +826,6 @@ module jv32_soc #(
     jv32_top #(
         .RV32E_EN  (RV32E_EN),
         .RV32M_EN  (RV32M_EN),
-        .TRACE_EN  (TRACE_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
@@ -934,6 +934,7 @@ module jv32_soc #(
         .dbg_tdata2_i      (dbg_tdata2),
 
         // Trace
+`ifndef SYNTHESIS
         .trace_en            (trace_en),
         .trace_valid         (trace_valid),
         .trace_reg_we        (trace_reg_we),
@@ -957,6 +958,7 @@ module jv32_soc #(
         .perf_bp_jal         (perf_bp_jal),
         .perf_bp_jal_miss    (perf_bp_jal_miss),
         .perf_bp_jalr        (perf_bp_jalr),
+`endif
         .heartbeat_o         (heartbeat_o),
         .mtime_i             (clic_mtime)
     );

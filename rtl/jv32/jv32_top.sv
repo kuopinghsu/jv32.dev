@@ -69,7 +69,6 @@
 module jv32_top #(
     parameter bit                 RV32E_EN   = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
     parameter bit                 RV32M_EN   = 1'b1,        // 1=M-extension; 0=illegal for MUL/DIV
-    parameter bit                 TRACE_EN   = 1'b1,        // 1=trace outputs active; 0=tied to 0
     parameter bit                 FAST_MUL   = 1'b1,
     parameter bit                 MUL_MC     = 1'b1,
     parameter bit                 FAST_DIV   = 1'b0,
@@ -193,9 +192,8 @@ module jv32_top #(
     input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata1_i,
     input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata2_i,
 
-    // =========================================================================
-    // Trace
-    // =========================================================================
+    // Trace (simulation only -- excluded from synthesis)
+`ifndef SYNTHESIS
     input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
@@ -221,6 +219,7 @@ module jv32_top #(
     output logic perf_bp_jal,
     output logic perf_bp_jal_miss,
     output logic perf_bp_jalr,
+`endif
 
     // Heartbeat: toggles every 2^24 retired instructions (= minstret[24])
     output logic heartbeat_o,
@@ -284,7 +283,6 @@ module jv32_top #(
     jv32_core #(
         .RV32E_EN  (RV32E_EN),
         .RV32M_EN  (RV32M_EN),
-        .TRACE_EN  (TRACE_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),
@@ -345,6 +343,7 @@ module jv32_top #(
         .dmem_resp_valid     (dmem_resp_valid),
         .dmem_resp_data      (dmem_resp_data),
         .dmem_resp_fault     (dmem_resp_fault),
+`ifndef SYNTHESIS
         .trace_en            (trace_en),
         .trace_valid         (trace_valid),
         .trace_reg_we        (trace_reg_we),
@@ -368,6 +367,7 @@ module jv32_top #(
         .perf_bp_jal         (perf_bp_jal),
         .perf_bp_jal_miss    (perf_bp_jal_miss),
         .perf_bp_jalr        (perf_bp_jalr),
+`endif
         .d_preload_active    (d_preload_active),
         .heartbeat_o         (heartbeat_o),
         .mtime_i             (mtime_i)
@@ -701,7 +701,7 @@ module jv32_top #(
             // core_d_dram_re/we with the same old address, causing the SRAM to
             // capture the old address again and return stale data to the next load.
             // Exception: d_preload_active means the core intentionally overrode the
-            // address with a new preload — capture it despite the response-cycle gate.
+            // address with a new preload -- capture it despite the response-cycle gate.
             dram_used_by_core_d_d <= d_preload_active | ((core_d_dram_re | core_d_dram_we) & ~dram_used_by_core_d_d);
 
             // FENCE.I: gate the stale SRAM I-fetch response that arrives the cycle

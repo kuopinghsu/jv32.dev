@@ -133,9 +133,6 @@ endif
 ifdef JTAG_EN
   VERILATOR_FLAGS += -pvalue+JTAG_EN=$(JTAG_EN)
 endif
-ifdef TRACE_EN
-  VERILATOR_FLAGS += -pvalue+TRACE_EN=$(TRACE_EN)
-endif
 ifdef AMO_EN
   VERILATOR_FLAGS += -pvalue+AMO_EN=$(AMO_EN)
 endif
@@ -251,7 +248,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) TRACE_EN=$(TRACE_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -1649,7 +1646,6 @@ help:
 	@echo "  RV32E_EN=0|1         0=RV32I 32 GPRs, 1=RV32E 16 GPRs"
 	@echo "  RV32M_EN=0|1         M-extension (MUL/DIV) enable"
 	@echo "  JTAG_EN=0|1          JTAG debug interface enable"
-	@echo "  TRACE_EN=0|1         Trace output registers enable"
 	@echo "  AMO_EN=0|1           A-extension (atomic ops) enable"
 	@echo "  FAST_MUL=0|1         Serial/combinatorial multiplier"
 	@echo "  MUL_MC=0|1           1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)"

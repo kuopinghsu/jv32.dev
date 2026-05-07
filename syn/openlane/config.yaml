@@ -120,18 +120,18 @@ USE_SYNLIG: true
 # ── Floorplan ─────────────────────────────────────────────────────────────────
 # Absolute die sizing.
 #
-# Each sram_1rw_2048x32 macro is 192.825 µm wide × 2830.945 µm tall (from LEF).
-# Macro placement (macro_placement.cfg):
-#   DRAM banks: x=20/230, y=20
-#   IRAM banks: x=440/650, y=20
+# Each sram_1rw_2048x32 macro is ~318.22 um wide x ~717.09 um tall (estimated;
+# words_per_row=4, half height / double width vs old wpr=2 which was 159.11 x 1434.18 um).
+# Re-run OpenRAM to confirm actual LEF SIZE after changing words_per_row to 4.
+# Macro placement (macro_placement.cfg) -- 1x4 single row:
+#   DRAM bank[0/1]: x=20/348,  y=20  (10 um column gap)
+#   IRAM bank[0/1]: x=676/1004, y=20  (10 um column gap)
 #
-# Top edge is y = 20 + 2830.945 = 2850.945 µm.
-# Use die height 3000 µm to keep ~149 µm top clearance.
-# Rightmost edge is x = 650 + 192.825 = 842.825 µm.
-# Use die width 1500 µm to keep ~647 µm room for standard-cell logic.
+# SRAM row top: 20 + 717 = ~737 um -> standard-cell strip above: y=747 to 1990 (~1243 um tall)
+# SRAM row right edge: 1004 + 318 = ~1322 um -> die width 1400 um (78 um clearance).
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1500, 3000]
-CORE_AREA: [10, 10, 1490, 2990]
+DIE_AREA: [0, 0, 1400, 2000]
+CORE_AREA: [10, 10, 1390, 1990]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.

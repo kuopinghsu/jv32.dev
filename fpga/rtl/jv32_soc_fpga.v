@@ -17,7 +17,7 @@
 //   ext_irq_i          = 16'h0  (no external IRQ sources on this FPGA target)
 //   TCM AXI slaves     = idle   (no external master; valid=0 / ready=1)
 //   ext_axi master     = stall  (no external slave;  ready=0 / valid=0)
-//   trace_en           = 0      (trace outputs disabled on FPGA)
+//   trace ports        = absent (excluded from synthesis via `ifndef SYNTHESIS)
 //
 // Parameters:
 //   USE_CJTAG  0 (default) = 4-wire JTAG
@@ -101,15 +101,6 @@ module jv32_soc_fpga #(
         .ext_axi_wstrb    (), .ext_axi_wvalid   (), .ext_axi_bready   (),
         .ext_axi_arready  (1'b0), .ext_axi_rdata  (32'h0), .ext_axi_rresp  (2'b00), .ext_axi_rvalid  (1'b0),
         .ext_axi_awready  (1'b0), .ext_axi_wready (1'b0),  .ext_axi_bresp  (2'b00), .ext_axi_bvalid  (1'b0),
-
-        // ── Trace (disabled on FPGA) ──────────────────────────────────────
-        .trace_en             (1'b0),
-        .trace_valid          (), .trace_reg_we         (), .trace_pc            (),
-        .trace_rd             (), .trace_rd_data        (), .trace_instr         (),
-        .trace_mem_we         (), .trace_mem_re         (), .trace_mem_addr      (),
-        .trace_mem_data       (), .trace_irq_taken      (), .trace_irq_cause     (),
-        .trace_irq_epc        (),
-        .trace_irq_store_we   (), .trace_irq_store_addr (), .trace_irq_store_data(),
 
         // ── Heartbeat ─────────────────────────────────────────────────────
         .heartbeat_o          (heartbeat_o)

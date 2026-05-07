@@ -185,24 +185,24 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 > Source: `build/gate_count.rpt` (hierarchical Yosys synthesis, Nangate 45 nm OCL).
 > Reference cell: NAND2\_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
 >
-> Configuration: `RV32EC=1  RV32E_EN=1  RV32M_EN=0  JTAG_EN=0  TRACE_EN=0  AMO_EN=0`
+> Configuration: `RV32EC=1  RV32E_EN=1  RV32M_EN=0  JTAG_EN=0  AMO_EN=0`
 > `FAST_MUL=0  FAST_DIV=0  FAST_SHIFT=0  BP_EN=0`
 
 ### Area Hierarchy (Gate Count)
 
 | Module | NAND2-eq | Area (µm²) |
 |---|---:|---:|
-| **jv32_soc** | **39,888** | **31,830.36** |
-| ↳ jv32_top | 30,138 | 24,050.39 |
-| &nbsp;&nbsp;↳ jv32_core | 26,425 | 21,086.88 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 5,835 | 4,656.60 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 4,995 | 3,986.01 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,054 | 1,639.36 |
+| **jv32_soc** | **40,778** | **32,541.11** |
+| ↳ jv32_top | 30,105 | 24,023.52 |
+| &nbsp;&nbsp;↳ jv32_core | 26,391 | 21,060.02 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 5,757 | 4,594.35 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,051 | 4,030.43 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,083 | 1,662.50 |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 1,533 | 1,223.07 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 436 | 347.66 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 435 | 346.86 |
 | &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
-| ↳ axi_clic | 5,446 | 4,346.17 |
-| ↳ axi_uart | 3,721 | 2,969.09 |
+| ↳ axi_clic | 5,473 | 4,367.72 |
+| ↳ axi_uart | 3,725 | 2,972.82 |
 | ↳ axi_xbar | 568 | 453.00 |
 
 ### Clock Gating Summary
@@ -212,7 +212,7 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| **jv32_soc** | **2,776** | **2,390** | **86.1%** |
+| **jv32_soc** | **2,784** | **2,398** | **86.1%** |
 | ↳ jv32_top | 1,958 | 1,644 | 84.0% |
 | &nbsp;&nbsp;↳ jv32_core | 1,609 | 1,372 | 85.3% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 480 | 480 | 100.0% |
@@ -232,27 +232,27 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 > Source: `build/gate_count.rpt` (hierarchical Yosys synthesis, Nangate 45 nm OCL).
 > Reference cell: NAND2\_X1 = 0.7980 µm².  SRAM macros treated as black-boxes (area excluded).
 >
-> Configuration: `RV32EC=0  RV32E_EN=0  RV32M_EN=1  JTAG_EN=1  TRACE_EN=1  AMO_EN=1`
+> Configuration: `RV32EC=0  RV32E_EN=0  RV32M_EN=1  JTAG_EN=1  AMO_EN=1`
 > `FAST_MUL=1  FAST_DIV=0  FAST_SHIFT=1  BP_EN=1`
 
 ### Area Hierarchy (Gate Count)
 
 | Module | NAND2-eq | Area (µm²) |
 |---|---:|---:|
-| **jv32_soc** | **84,933** | **67,776.27** |
-| ↳ jv32_top | 57,561 | 45,933.68 |
-| &nbsp;&nbsp;↳ jv32_core | 53,835 | 42,960.06 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 17,463 | 13,935.74 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 12,188 | 9,726.02 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,057 | 4,035.75 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,069 | 1,651.06 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 436 | 347.66 |
+| **jv32_soc** | **86,338** | **68,897.72** |
+| ↳ jv32_top | 57,566 | 45,937.67 |
+| &nbsp;&nbsp;↳ jv32_core | 53,840 | 42,964.05 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 17,491 | 13,957.82 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_regfile | 12,190 | 9,727.35 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_csr | 5,059 | 4,036.82 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 2,084 | 1,663.03 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 448 | 357.50 |
 | &nbsp;&nbsp;↳ sram_1rw | 84 | 66.77 |
-| ↳ jtag_top | 15,872 | 12,665.86 |
-| &nbsp;&nbsp;↳ jtag_tap | 15,872 | 12,665.86 |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 15,660 | 12,496.41 |
-| ↳ axi_clic | 5,289 | 4,220.89 |
-| ↳ axi_uart | 3,690 | 2,944.35 |
+| ↳ jtag_top | 16,350 | 13,047.30 |
+| &nbsp;&nbsp;↳ jtag_tap | 16,350 | 13,047.30 |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 16,138 | 12,877.86 |
+| ↳ axi_clic | 5,463 | 4,359.47 |
+| ↳ axi_uart | 3,740 | 2,984.79 |
 | ↳ axi_xbar | 568 | 453.00 |
 
 ### Clock Gating Summary
@@ -262,7 +262,7 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 
 | Module | Total FFs | Gated FFs | Gated% |
 |---|---:|---:|---:|
-| **jv32_soc** | **5,986** | **4,914** | **82.1%** |
+| **jv32_soc** | **5,985** | **4,906** | **82.0%** |
 | ↳ jv32_top | 3,286 | 2,999 | 91.3% |
 | &nbsp;&nbsp;↳ jv32_core | 2,937 | 2,727 | 92.8% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_alu | 403 | 402 | 99.8% |
@@ -271,14 +271,14 @@ make synth FAST_MUL=1 FAST_SHIFT=1
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_rvc | 51 | 51 | 100.0% |
 | &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_decoder | 0 | 0 | 0.0% |
 | &nbsp;&nbsp;↳ sram_1rw | 1 | 0 | 0.0% |
-| ↳ jtag_top | 1,772 | 1,061 | 59.9% |
-| &nbsp;&nbsp;↳ jtag_tap | 1,772 | 1,061 | 59.9% |
-| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 1,756 | 1,050 | 59.8% |
+| ↳ jtag_top | 1,763 | 1,045 | 59.3% |
+| &nbsp;&nbsp;↳ jtag_tap | 1,763 | 1,045 | 59.3% |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ jv32_dtm | 1,747 | 1,034 | 59.2% |
 | ↳ axi_clic | 361 | 297 | 82.3% |
 | ↳ axi_uart | 386 | 382 | 99.0% |
 | ↳ axi_xbar | 69 | 67 | 97.1% |
 
-The overall 82.1% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
+The overall 82.0% gating rate is close to the theoretical maximum given the architecturally ungatable registers below.
 
 #### Why `jv32_csr` is lower (~62%)
 
@@ -291,19 +291,34 @@ if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;  // 
 
 All other CSR registers (`mepc`, `mtvec`, `mstatus`, `mie`, etc.) are gated under `exception || irq_pending || mret || csr_we`.  This is **architecturally correct** — a continuously-incrementing cycle counter is inherently always-active.
 
-#### Why `jv32_dtm` is lower (~60%)
+#### Why `jv32_dtm` is lower (~59%)
 
-The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`).  CDC multi-stage synchronizer chains **must sample on every clock edge** to guarantee metastability resolution; gating their clock would defeat their purpose.  The ~703 ungated bits are entirely synchronizer pipeline stages:
+The DTM bridges two asynchronous clock domains (system `clk` ↔ JTAG `tck_i`).  CDC multi-stage synchronizer chains **must sample on every clock edge** to guarantee metastability resolution; gating their clock would defeat their purpose.  The ~713 ungated bits are entirely synchronizer pipeline stages:
 
 | Synchronizer | Dir | Bits | Purpose |
 |---|---|---:|---|
 | `halt_req_sync_chain[3]`, `resume_req_sync_chain[3]` | TCK→CLK | 6 | JTAG halt/resume requests |
 | `halted_tck_chain[3]`, `resumeack_tck_chain[3]` | CLK→TCK | 6 | core status back to JTAG |
-| `sba_busy_tck_chain[3]`, `busy_tck_chain[3]` | CLK→TCK | 6 | SBA / cmd-busy back to JTAG |
-| `sb_err_tck_chain[3×3]` | CLK→TCK | 9 | SBA error bits |
-| `data0_result_sync[3]` (×32 b) | CLK→TCK | 96 | Abstract-command read-back |
-| `sbdata0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA read-data result |
-| `sbaddress0_result_sync[3]` (×32 b) | CLK→TCK | 96 | SBA address result |
-| Various `_valid_sync[3]` + `_r` | CLK→TCK | ~12 | handshake valid bits |
+| `sba_busy_tck_chain[2]`, `busy_tck_chain[3]` | CLK→TCK | 5 | SBA / cmd-busy back to JTAG |
+| `sb_err_tck_chain[3×3]` | CLK→TCK | 9 | SBA error bits (3-bit × 3 stages) |
+| `cmd_wr_toggle_sync[2]`, `sba_wr_toggle_sync[2]`, `sba_rd_toggle_sync[2]` | TCK→CLK | 6 | command / SBA-write / SBA-read toggle handshakes |
+| `cmderr_clr_tog_sync[2]`, `sb_err_clr_tog_sync[2]` | TCK→CLK | 4 | abstract-error / SBA-error clear toggles |
+| `sbdata0_clr_toggle_sync[2]`, `sbaddress0_clr_toggle_sync[2]`, `data1_clr_toggle_sync[2]` | TCK→CLK | 6 | result-valid clear toggles |
+| `command_reg_tck_sync[2]` (×32 b) | TCK→CLK | 64 | command register payload |
+| `data0_tck_sync[2]`, `data1_tck_sync[2]` (×32 b each) | TCK→CLK | 128 | abstract-command data payloads |
+| `sb_access_tck_sync[2]` (×3 b), `sb_autoincr_tck_sync[2]` (×1 b) | TCK→CLK | 8 | SBA control bits |
+| `sbaddress0_stable_sync[2]` (×32 b) | TCK→CLK | 64 | SBA address payload |
+| `cmderr_sync[2]` (×3 b) | CLK→TCK | 6 | abstract-command error code |
+| `data0_result_sync[2]`, `data1_result_sync[2]` (×32 b each) | CLK→TCK | 128 | abstract-command read-back data |
+| `sbdata0_result_sync[2]`, `sbaddress0_result_sync[2]` (×32 b each) | CLK→TCK | 128 | SBA read-data and address results |
+| `data0_result_valid_sync[2]`, `data1_result_valid_sync[2]`, `sbdata0_result_valid_sync[2]`, `sbaddress0_result_valid_sync[2]` | CLK→TCK | 8 | handshake valid bits |
 
-These ~327 bits toggle continuously during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.
+These ~576 synchronizer bits must toggle freely during debug accesses.  This is **architecturally correct** — CDC synchronizers require free-running clocks.
+
+## GDS Layout
+
+KLayout view of the completed place-and-route GDS (`build/openlane_run/*/final/gds/jv32_soc.gds`), Nangate 45 nm FreePDK45.
+
+![jv32 SoC GDS layout — KLayout view](layout.png)
+
+The four white rectangles on the left are the hardened SRAM macros (`sram_1rw_2048x32`, 4× for the TCM and data cache).  The dense salmon-coloured region on the right is the placed standard-cell logic (jv32_core + JTAG/DTM + AXI peripherals); the blue horizontal stripes are metal power/ground rails.  Scale bar: 400 µm.

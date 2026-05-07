@@ -268,20 +268,19 @@ make synth
 ## Pipeline Visualization
 
 Pass `KANATA=1` to any `rtl-*` or `sim` target to generate a
-[Konata](https://github.com/shioyadan/Konata) pipeline log (`build/jv32soc.kanata`) in
-**Kanata 0004** format (compatible with the Onikiri2-Konata viewer).
+pipeline log (`build/jv32soc.kanata`) in **Kanata 0004** format.
 
 ```bash
 make rtl-coremark KANATA=1
 # → build/jv32soc.kanata
 ```
 
-Open the `.kanata` file in the [Konata viewer](https://github.com/shioyadan/Konata) to
+Open the `.kanata` file in [KonataViewer](https://github.com/kuopinghsu/KonataViewer) to
 interactively inspect the 3-stage pipeline (`F → EX → WB`) for every retired instruction.
 
 <p align="center">
-  <img src="docs/kanata.png" alt="Konata pipeline view" width="900"><br>
-  <em>Konata pipeline view — branch misprediction (<code>msp</code>) and load-store stall (<code>stl</code>) overlays</em>
+  <img src="docs/kanata.svg" alt="KonataViewer pipeline view" width="900"><br>
+  <em>KonataViewer pipeline view — load-use stall (<code>stl</code>), branch misprediction (<code>msp</code>), and multi-cycle division (<code>divu</code>) overlays</em>
 </p>
 
 The visualizer renders three lane types per instruction:
@@ -292,13 +291,16 @@ The visualizer renders three lane types per instruction:
 | 1 (`stl`) | teal | Instruction held in stage for ≥ 2 cycles (load-use hazard, multi-cycle ALU, store buffer full) |
 | 2 (`msp`) | pink | Branch misprediction penalty — annotated on the branch instruction at EX |
 
-In the example above:
-- **Row 227** — `bltu a0,a1,0x80000024` shows a `msp` (misprediction) overlay: the branch
-  resolved incorrectly in EX, flushing the instructions already in F/EX and redirecting the
-  fetch to the correct target.
-- **Rows 236 / 241** — `sw t0,0(a1)` shows a `stl` overlay in EX: the store instruction
-  stalls for one extra cycle waiting for a preceding load result (load-use hazard) to
-  become available before the address and data can commit.
+In the example above (Zephyr RTOS workload):
+- `lw a5,2028(s0)` — `stl` in EX: memory load stalls the pipeline for one extra cycle
+  (SRAM access latency).
+- `beq a5,zero,0x800082aa` — `stl` then `msp`: the branch stalls in EX waiting for the
+  load result of `a5` (load-use hazard), then resolves as taken to `0x800082aa`; the core
+  predicted not-taken so two in-flight instructions are squashed and the fetch is redirected.
+- `bne a7,zero,0x800080f6` — `msp`: a second branch misprediction (predicted not-taken,
+  actually taken to `0x800080f6`), again flushing the pipeline.
+- `divu s8,s7,s6` — long `stl`: multi-cycle integer division occupies EX for many cycles
+  while downstream instructions wait.
 
 ## Core Configuration
 
@@ -406,15 +408,15 @@ See [fpga/README.md](fpga/README.md) for pin assignments, clock architecture, bl
 
 ## Synthesis & P&R Results
 
-**PDK:** FreePDK45 / Nangate 45 nm — **Flow:** OpenLane2 (Classic) — **Date:** 2026-04-30
-Config: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `TRACE_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz, 16 KB IRAM + 16 KB DRAM.
+**PDK:** FreePDK45 / Nangate 45 nm — **Flow:** OpenLane2 (Classic) — **Date:** 2026-05-06
+Config: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz, 16 KB IRAM + 16 KB DRAM.
 
 | Metric | Value |
 |---|---|
-| Standard cell area | 71,066 µm² |
-| Logic (pre-P&R) | 84,933 NAND2-eq · post-P&R flat: **89,055 NAND2-eq** |
+| Standard cell area | 72,063 µm² |
+| Logic (pre-P&R) | 86,338 NAND2-eq · post-P&R flat: **90,304 NAND2-eq** |
 | Timing | Setup ✅ MET · Hold ✅ MET (80 MHz, tt_025C_1v10) |
-| Total power | **24.42 mW** (seq 4.91 + comb 8.88 + clk 1.40 + SRAM 9.22) |
+| Total power | **17.19 mW** (seq 3.41 + comb 3.15 + clk 1.41 + SRAM 9.22) |
 | DRC | **0 errors** ✅ |
 
 > Full floorplan, timing, power, DRC, and P&R detail: [syn/REPORT.md](syn/REPORT.md)
@@ -426,8 +428,8 @@ Gate counts from hierarchical Yosys synthesis on Nangate 45 nm (NAND2\_X1 = 0.79
 
 | Config | jv32_soc | jv32_core | jv32_top |
 |---|---:|---:|---:|
-| RV32EC=1 (minimum) | 39,888 NAND2-eq | 26,425 | 30,138 |
-| RV32EC=0 (full, default) | 84,933 NAND2-eq | 53,835 | 57,561 |
+| RV32EC=1 (minimum) | 40,778 NAND2-eq | 26,391 | 30,105 |
+| RV32EC=0 (full, default) | 86,338 NAND2-eq | 53,840 | 57,566 |
 
 > Per-module hierarchy, FF counts, and clock gating breakdown: [syn/README.md](syn/README.md)
 
@@ -445,7 +447,7 @@ Verilator line + branch + expression + toggle coverage over all `sw/` tests and 
 - Tool requirements: [TOOLS.md](TOOLS.md)
 - Core configuration reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - Performance features (branch predictor, store buffer, multiplier modes, …): [Performance Features](#performance-features)
-- Pipeline visualization (Konata/Kanata 0004 format): [Pipeline Visualization](#pipeline-visualization) — example: [docs/kanata.png](docs/kanata.png)
+- Pipeline visualization ([KonataViewer](https://github.com/kuopinghsu/KonataViewer), Kanata 0004 format): [Pipeline Visualization](#pipeline-visualization) — example: [docs/kanata.svg](docs/kanata.svg)
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`
 - Generated PDF: `docs/jv32_soc_datasheet.pdf`
 - Performance analysis: [docs/performance_analysis.pdf](docs/performance_analysis.pdf)

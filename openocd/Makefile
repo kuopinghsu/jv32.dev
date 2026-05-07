@@ -467,7 +467,7 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 # Regression: single-step with trace_en=0 (simulates FPGA conditions)
 #
 # Runs test_step.tcl against a VPI sim launched with --no-trace-en.
-# TRACE_EN=1 is still compiled in (same as FPGA), only the runtime
+# Trace ports are excluded from synthesis via `ifndef SYNTHESIS; only the runtime
 # trace_en signal is held low.  Verifies that the stepi fix in jv32_core.sv
 # (decoupling trace_valid_r from trace_en) keeps single-step working when
 # the trace output to the testbench is disabled.

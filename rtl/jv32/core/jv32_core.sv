@@ -20,7 +20,6 @@
 module jv32_core #(
     parameter bit                 RV32E_EN   = 1'b0,  // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
     parameter bit                 RV32M_EN   = 1'b1,  // 1=M-extension; 0=illegal for MUL/DIV
-    parameter bit                 TRACE_EN   = 1'b1,  // 1=trace outputs active; 0=tied to 0
     parameter bit                 FAST_MUL   = 1'b1,
     parameter bit                 MUL_MC     = 1'b1,
     parameter bit                 FAST_DIV   = 1'b0,
@@ -98,8 +97,8 @@ module jv32_core #(
     // redirect WITHOUT adding a bubble to every other branch/jump redirect.
     output logic fencei_iflush,
 
-    // Trace (one entry per retired instruction)
-    // trace_en=0 suppresses all trace outputs to save power.
+    // Trace (one entry per retired instruction) -- simulation only, excluded from synthesis
+`ifndef SYNTHESIS
     input  logic        trace_en,
     output logic        trace_valid,
     output logic        trace_reg_we,
@@ -122,13 +121,14 @@ module jv32_core #(
     output logic [31:0] trace_irq_store_addr,
     output logic [31:0] trace_irq_store_data,
 
-    // Branch predictor performance counters (valid only when BP_EN=1; tied to 0 otherwise)
+    // Branch predictor performance counters
     output logic perf_bp_branch,    // 1 conditional branch retired this cycle
     output logic perf_bp_taken,     // 1 branch was actually taken
     output logic perf_bp_mispred,   // 1 branch misprediction (EX redirect)
     output logic perf_bp_jal,       // 1 JAL retired this cycle
     output logic perf_bp_jal_miss,  // 1 JAL not pre-decoded (caused EX redirect)
     output logic perf_bp_jalr,      // 1 JALR retired (always causes EX redirect)
+`endif
 
     // D-preload active during WB DRAM response cycle (consecutive loads; used by jv32_top tracking)
     output logic d_preload_active,
@@ -184,7 +184,7 @@ module jv32_core #(
         // A faulting I-fetch response must not be decompressed/consumed as a
         // real instruction; the IF/EX fault slot is injected separately below.
         // With IBUF: fault responses are never pushed to the FIFO, so the FIFO
-        // head is always valid — no !imem_resp_fault gating needed on FIFO data.
+        // head is always valid -- no !imem_resp_fault gating needed on FIFO data.
         .imem_resp_valid(rvc_imem_resp_valid && (IBUF_ACTIVE || !imem_resp_fault)),
         .imem_resp_data (rvc_imem_resp_data),
         .imem_resp_pc   (rvc_imem_resp_pc),
@@ -462,7 +462,7 @@ module jv32_core #(
 
     // Pre-advance: drive the *next* fetch address combinatorially so the SRAM
     // sees the new address in the same cycle that mem_ready/flush fires.
-    // Without IBUF: same as before — rvc_mem_ready-based pre-advance against pc_if.
+    // Without IBUF: same as before -- rvc_mem_ready-based pre-advance against pc_if.
     // With IBUF: ibuf_fetch_pc_w tracks next address; advance by 4 whenever a
     // response is accepted into the FIFO (!ibuf_full), so the SRAM always
     // sees the next address in the same cycle the previous response arrives.
@@ -769,7 +769,7 @@ module jv32_core #(
     end
 
     // =====================================================================
-    // Return Address Stack (RAS) — 2-entry circular buffer
+    // Return Address Stack (RAS) -- 2-entry circular buffer
     // =====================================================================
     // Enabled when RAS_ACTIVE=1 (BP_EN=1 && RAS_EN=1 && !RV32E_EN).
     // Push on JAL/JALR with rd=link; pop on JALR with rs1=link, rd=non-link.
@@ -1075,9 +1075,9 @@ module jv32_core #(
     // dmem_was_write_d tracks dmem_req_write one cycle back so we can gate
     // all load-data uses on a clean read-only response flag.
     //
-    // dmem_resp_valid        (unchanged) — still used for: sb_fire,
+    // dmem_resp_valid        (unchanged) -- still used for: sb_fire,
     //                        strict-store dmem_stall, AMO_STORE_WAIT.
-    // dmem_resp_valid_rd     — load_use_stall, forwarding, read dmem_stall.
+    // dmem_resp_valid_rd     -- load_use_stall, forwarding, read dmem_stall.
     logic dmem_was_write_d;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) dmem_was_write_d <= 1'b0;
@@ -1125,7 +1125,7 @@ module jv32_core #(
         endcase
     end
 
-    // Dmem driver — 2-entry store queue (slot 0 = head/drain, slot 1 = tail)
+    // Dmem driver -- 2-entry store queue (slot 0 = head/drain, slot 1 = tail)
     logic [1:0]       sb_valid;
     logic [1:0][31:0] sb_addr;
     logic [1:0][31:0] sb_wdata;
@@ -1319,7 +1319,7 @@ module jv32_core #(
                 end
             end
         end
-        // D-path pre-advance: WB is empty — issue TCM load address from EX so
+        // D-path pre-advance: WB is empty -- issue TCM load address from EX so
         // the SRAM response is already valid when the instruction reaches WB.
         else if (d_preload_valid) begin
             dmem_req_valid = 1'b1;
@@ -1335,7 +1335,7 @@ module jv32_core #(
             sb_wstrb <= '{default: 4'h0};
         end
         else begin
-            // Drain: shift slot 1 → slot 0 and clear slot 1.
+            // Drain: shift slot 1 -> slot 0 and clear slot 1.
             if (sb_fire) begin
                 sb_valid[0] <= sb_valid[1];
                 sb_addr[0]  <= sb_addr[1];
@@ -1481,49 +1481,19 @@ module jv32_core #(
     assign ex_flush = redirect_ex && !ex_stall && !load_use_stall;
 
     // =====================================================================
-    // Branch predictor performance counters
+    // Branch predictor performance counters (simulation only)
     // =====================================================================
-    // When TRACE_EN=1: combinatorial pulses, one per retiring branch/JAL/JALR.
-    // When TRACE_EN=0 + simulation (!SYNTHESIS): same, so testbench can print
-    //   stats even in TRACE_EN=0 builds.
-    // When TRACE_EN=0 + synthesis: all tied to 0 — no logic generated.
-    generate
-        if (TRACE_EN) begin : gen_perf_bp
-            logic ex_valid_retire;
-            assign ex_valid_retire  = if_ex_r.valid && !ex_stall && !load_use_stall && !ex_exception;
-
-            assign perf_bp_branch   = ex_valid_retire && dec_branch;
-            assign perf_bp_taken    = ex_valid_retire && dec_branch && branch_taken;
-            assign perf_bp_mispred  = ex_valid_retire && dec_branch && (branch_taken != if_ex_r.bp_taken);
-            assign perf_bp_jal      = ex_valid_retire && dec_jal;
-            assign perf_bp_jal_miss = ex_valid_retire && dec_jal && !if_ex_r.bp_taken;
-            assign perf_bp_jalr     = ex_valid_retire && dec_jalr;
-        end
-        else begin : gen_no_perf_bp
 `ifndef SYNTHESIS
-            // Simulation only: keep logic active so testbench stats remain valid
-            // even when TRACE_EN=0.  The `ifndef SYNTHESIS guard means the synthesis
-            // tool never sees these nets — gate count is unchanged.
-            logic ex_valid_retire;
-            assign ex_valid_retire  = if_ex_r.valid && !ex_stall && !load_use_stall && !ex_exception;
+    logic ex_valid_retire_bp;
+    assign ex_valid_retire_bp = if_ex_r.valid && !ex_stall && !load_use_stall && !ex_exception;
 
-            assign perf_bp_branch   = ex_valid_retire && dec_branch;
-            assign perf_bp_taken    = ex_valid_retire && dec_branch && branch_taken;
-            assign perf_bp_mispred  = ex_valid_retire && dec_branch && (branch_taken != if_ex_r.bp_taken);
-            assign perf_bp_jal      = ex_valid_retire && dec_jal;
-            assign perf_bp_jal_miss = ex_valid_retire && dec_jal && !if_ex_r.bp_taken;
-            assign perf_bp_jalr     = ex_valid_retire && dec_jalr;
-`else
-            // Synthesis with TRACE_EN=0: tie all counters to 0 (no logic added).
-            assign perf_bp_branch   = 1'b0;
-            assign perf_bp_taken    = 1'b0;
-            assign perf_bp_mispred  = 1'b0;
-            assign perf_bp_jal      = 1'b0;
-            assign perf_bp_jal_miss = 1'b0;
-            assign perf_bp_jalr     = 1'b0;
+    assign perf_bp_branch     = ex_valid_retire_bp && dec_branch;
+    assign perf_bp_taken      = ex_valid_retire_bp && dec_branch && branch_taken;
+    assign perf_bp_mispred    = ex_valid_retire_bp && dec_branch && (branch_taken != if_ex_r.bp_taken);
+    assign perf_bp_jal        = ex_valid_retire_bp && dec_jal;
+    assign perf_bp_jal_miss   = ex_valid_retire_bp && dec_jal && !if_ex_r.bp_taken;
+    assign perf_bp_jalr       = ex_valid_retire_bp && dec_jalr;
 `endif
-        end
-    endgenerate
 
     // wb_redirect: WB stage is redirecting the PC (exception/mret/irq).
     // When this fires, the instruction currently in IF/EX must be squashed
@@ -1556,8 +1526,8 @@ module jv32_core #(
 
     // fencei_iflush: 1 on the cycle fence.i fires its pipeline redirect.
     // Used by jv32_top to gate the next SRAM I-fetch response (which was issued
-    // before the preceding store committed).  Only applies to fence.i — not to
-    // normal branches/JALR — so no performance penalty on other redirects.
+    // before the preceding store committed).  Only applies to fence.i -- not to
+    // normal branches/JALR -- so no performance penalty on other redirects.
     assign fencei_iflush = if_ex_r.valid && dec_is_fence_i && !ex_stall && !load_use_stall;
 
     // =====================================================================
@@ -1569,7 +1539,7 @@ module jv32_core #(
     //     pre-fetch requests while rvc_imem_resp_* presents the FIFO head.
     //   - imem_req_valid is gated low when ibuf_full=1, preventing SRAM/AXI
     //     overflow.  For AXI, the SM only advances to BUS_IAR on imem_req_valid,
-    //     so at most 1 in-flight request exists — the FIFO never overflows.
+    //     so at most 1 in-flight request exists -- the FIFO never overflows.
     //   - On any flush (branch, exception, debug), the FIFO is cleared and
     //     ibuf_fetch_pc_ff is reset to rvc_flush_pc the same cycle.
     //
@@ -1590,9 +1560,9 @@ module jv32_core #(
             // the incoming response directly to rvc without a register stage.
             // This eliminates the 1-cycle latency bubble that the registered FIFO
             // would otherwise add after every flush or fill-from-empty transition.
-            // Note: !rvc_flush is intentionally omitted here — all inputs are
+            // Note: !rvc_flush is intentionally omitted here -- all inputs are
             // registered (ibuf_valid[0], imem_resp_valid, imem_resp_fault), so
-            // there is no combinatorial loop through bp_redirect→rvc_flush.
+            // there is no combinatorial loop through bp_redirect->rvc_flush.
             // During a flush cycle, ibuf_fetch_pc_ff is reset by the higher-priority
             // rvc_flush branch, so any bypass in that cycle is harmless.
             logic ibuf_bypass;
@@ -1638,7 +1608,7 @@ module jv32_core #(
             assign ibuf_fault_pc_eff  = ibuf_fault_pc_r;
 
             // ibuf_fetch_pc_ff: next address to issue to SRAM/AXI.
-            // Advances whenever any response is accepted — whether stored in the
+            // Advances whenever any response is accepted -- whether stored in the
             // FIFO (ibuf_push) or passed through via bypass (ibuf_bypass+rvc_ready).
             // Both cases share the same condition: resp_valid && !fault && !full.
             always_ff @(posedge clk or negedge rst_n) begin
@@ -1851,14 +1821,14 @@ module jv32_core #(
 
     // =====================================================================
     // Trace output registers
-    // All trace outputs are registered.  trace_en gates the clock enable so
-    // that when trace_en=0 the flops never toggle, saving dynamic power.
-    // When TRACE_EN=0 at compile time, all trace output flops are removed from
-    // synthesis; only trace_valid_r is kept (used for instret and debug single-step).
+    // trace_retire and trace_valid_r are always generated: needed for instret
+    // counting and debug single-step even in synthesis.
+    // All other trace logic is simulation-only (excluded from synthesis).
     // =====================================================================
     logic trace_retire;  // one-cycle retire pulse (combinational, not output)
     assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
 
+`ifndef SYNTHESIS
     logic [31:0] trace_mem_data_c;
 
     // For AMO: use amo_store_val (the value actually written to memory).
@@ -1871,200 +1841,104 @@ module jv32_core #(
         ex_wb_r.mem_op == MEM_HALF ? {16'h0, ex_wb_r.store_data[15:0]} :
                                      ex_wb_r.store_data;
 
-    generate
-        if (TRACE_EN) begin : gen_trace_outputs
-            // Control signals: updated every cycle (cleared when trace_en=0).
-            // Split from the data block so that each always_ff has a uniform
-            // reset + else structure, which prevents Yosys proc_arst from
-            // leaving residual edge-sensitive sync entries for trace_pc etc.
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_valid_r <= 1'b0;
-                    trace_reg_we  <= 1'b0;
-                    trace_mem_we  <= 1'b0;
-                    trace_mem_re  <= 1'b0;
-                end
-                else begin
-                    // trace_valid_r always tracks trace_retire regardless of trace_en:
-                    // it is used for debug single-step halt (dbg_step_pending_r check) and
-                    // instret counting (instret_inc).  Gating by trace_en would suppress
-                    // both, breaking stepi on FPGA where trace_en=0.
-                    trace_valid_r <= trace_retire;
-                    trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
-                    // AMO instructions are logged as memory writes (matching jv32sim which
-                    // emits trace_is_store=true for all AMO/LR/SC). The write data is
-                    // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
-                    // for LR (jv32sim writes the loaded value back and logs it as a store).
-                    trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
-                    trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
-                end
-            end
-
-            // Data registers: clock-enabled by trace_en (CE=0 when trace_en=0 saves power).
-            // Two-branch (reset / else-if CE) pattern is unambiguous to Yosys proc_arst.
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_pc       <= 32'h0;
-                    trace_rd       <= 5'h0;
-                    trace_rd_data  <= 32'h0;
-                    trace_instr    <= 32'h0;
-                    trace_mem_addr <= 32'h0;
-                    trace_mem_data <= 32'h0;
-                end
-                else if (trace_en) begin
-                    trace_pc       <= ex_wb_r.pc;
-                    trace_rd       <= ex_wb_r.rd_addr;
-                    trace_rd_data  <= rf_wdata;
-                    trace_instr    <= ex_wb_r.orig_instr;
-                    trace_mem_addr <= ex_wb_r.mem_addr;
-                    trace_mem_data <= trace_mem_data_c;
-                end
-            end
-
-            // Gate the trace_valid output by trace_en so external consumers only see
-            // retire events when tracing is active.  trace_valid_r itself is always
-            // updated (see above) so debug single-step and instret work with trace_en=0.
-            assign trace_valid = trace_valid_r && trace_en;
-
-            // IRQ-taken trace: fires for one cycle (registered) when the core accepts
-            // an interrupt and squashes the instruction currently in WB.
-            // Control signals: cleared when trace_en=0 (uniform reset/else pattern
-            // avoids Yosys proc_arst residual edge-sensitivity issue).
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_irq_taken    <= 1'b0;
-                    trace_irq_store_we <= 1'b0;
-                end
-                else begin
-                    // Gate on !ex_stall: the CSR only commits the interrupt when
-                    // wb_retire=1 (wb_valid=1 in jv32_csr).  If ex_stall=1 (e.g.
-                    // sb_valid draining while a DRAM load is in WB), irq_cancel is
-                    // asserted one cycle early before the interrupt is accepted.
-                    // Without this gate a spurious extra hint fires, causing the
-                    // software sim to replay two interrupts for one RTL event.
-                    trace_irq_taken <= trace_en ? (irq_cancel && !ex_stall) : 1'b0;
-                    // squashed-store: the interrupt fires in the 2nd WB cycle of a
-                    // store (dmem_resp_valid=1 means the DRAM write already committed)
-                    trace_irq_store_we <= trace_en ? (irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid) : 1'b0;
-                end
-            end
-            // IRQ data signals: clock-enabled by trace_en (CE=0 saves power).
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_irq_cause      <= 32'h0;
-                    trace_irq_epc        <= 32'h0;
-                    trace_irq_store_addr <= 32'h0;
-                    trace_irq_store_data <= 32'h0;
-                end
-                else if (trace_en) begin
-                    trace_irq_cause      <= csr_irq_cause;
-                    trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
-                    trace_irq_store_addr <= ex_wb_r.mem_addr;
-                    trace_irq_store_data <= trace_mem_data_c;
-                end
-            end
-
+    // Control signals: updated every cycle (cleared when trace_en=0).
+    // Split from the data block so that each always_ff has a uniform
+    // reset + else structure, which prevents Yosys proc_arst from
+    // leaving residual edge-sensitive sync entries for trace_pc etc.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            trace_valid_r <= 1'b0;
+            trace_reg_we  <= 1'b0;
+            trace_mem_we  <= 1'b0;
+            trace_mem_re  <= 1'b0;
         end
-        else begin : gen_no_trace
+        else begin
+            // trace_valid_r always tracks trace_retire regardless of trace_en:
+            // it is used for debug single-step halt (dbg_step_pending_r check) and
+            // instret counting (instret_inc).  Gating by trace_en would suppress
+            // both, breaking stepi on FPGA where trace_en=0.
+            trace_valid_r <= trace_retire;
+            trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
+            // AMO instructions are logged as memory writes (matching jv32sim which
+            // emits trace_is_store=true for all AMO/LR/SC). The write data is
+            // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
+            // for LR (jv32sim writes the loaded value back and logs it as a store).
+            trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
+            trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
+        end
+    end
 
-`ifndef SYNTHESIS
-            // TRACE_EN=0 but not synthesis: still generate full trace flops so
-            // simulation (Verilator) can produce trace logs for compare targets.
-            // The `ifndef SYNTHESIS guard means these flops are never seen by
-            // the synthesis tool — gate count is unchanged.
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_valid_r <= 1'b0;
-                    trace_reg_we  <= 1'b0;
-                    trace_mem_we  <= 1'b0;
-                    trace_mem_re  <= 1'b0;
-                end
-                else begin
-                    // trace_valid_r must not be gated by trace_en (same reason as
-                    // gen_trace_outputs: needed for debug single-step and instret).
-                    trace_valid_r <= trace_retire;
-                    trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
-                    trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
-                    trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
-                end
-            end
+    // Data registers: clock-enabled by trace_en (CE=0 when trace_en=0 saves power).
+    // Two-branch (reset / else-if CE) pattern is unambiguous to Yosys proc_arst.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            trace_pc       <= 32'h0;
+            trace_rd       <= 5'h0;
+            trace_rd_data  <= 32'h0;
+            trace_instr    <= 32'h0;
+            trace_mem_addr <= 32'h0;
+            trace_mem_data <= 32'h0;
+        end
+        else if (trace_en) begin
+            trace_pc       <= ex_wb_r.pc;
+            trace_rd       <= ex_wb_r.rd_addr;
+            trace_rd_data  <= rf_wdata;
+            trace_instr    <= ex_wb_r.orig_instr;
+            trace_mem_addr <= ex_wb_r.mem_addr;
+            trace_mem_data <= trace_mem_data_c;
+        end
+    end
 
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_pc       <= 32'h0;
-                    trace_rd       <= 5'h0;
-                    trace_rd_data  <= 32'h0;
-                    trace_instr    <= 32'h0;
-                    trace_mem_addr <= 32'h0;
-                    trace_mem_data <= 32'h0;
-                end
-                else if (trace_en) begin
-                    trace_pc       <= ex_wb_r.pc;
-                    trace_rd       <= ex_wb_r.rd_addr;
-                    trace_rd_data  <= rf_wdata;
-                    trace_instr    <= ex_wb_r.orig_instr;
-                    trace_mem_addr <= ex_wb_r.mem_addr;
-                    trace_mem_data <= trace_mem_data_c;
-                end
-            end
+    // Gate the trace_valid output by trace_en so external consumers only see
+    // retire events when tracing is active.  trace_valid_r itself is always
+    // updated (see above) so debug single-step and instret work with trace_en=0.
+    assign trace_valid = trace_valid_r && trace_en;
 
-            assign trace_valid = trace_valid_r && trace_en;
+    // IRQ-taken trace: fires for one cycle (registered) when the core accepts
+    // an interrupt and squashes the instruction currently in WB.
+    // Control signals: cleared when trace_en=0 (uniform reset/else pattern
+    // avoids Yosys proc_arst residual edge-sensitivity issue).
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            trace_irq_taken    <= 1'b0;
+            trace_irq_store_we <= 1'b0;
+        end
+        else begin
+            // Gate on !ex_stall: the CSR only commits the interrupt when
+            // wb_retire=1 (wb_valid=1 in jv32_csr).  If ex_stall=1 (e.g.
+            // sb_valid draining while a DRAM load is in WB), irq_cancel is
+            // asserted one cycle early before the interrupt is accepted.
+            // Without this gate a spurious extra hint fires, causing the
+            // software sim to replay two interrupts for one RTL event.
+            trace_irq_taken    <= trace_en ? (irq_cancel && !ex_stall) : 1'b0;
+            // squashed-store: the interrupt fires in the 2nd WB cycle of a
+            // store (dmem_resp_valid=1 means the DRAM write already committed)
+            trace_irq_store_we <= trace_en ? (irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid) : 1'b0;
+        end
+    end
+    // IRQ data signals: clock-enabled by trace_en (CE=0 saves power).
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            trace_irq_cause      <= 32'h0;
+            trace_irq_epc        <= 32'h0;
+            trace_irq_store_addr <= 32'h0;
+            trace_irq_store_data <= 32'h0;
+        end
+        else if (trace_en) begin
+            trace_irq_cause      <= csr_irq_cause;
+            trace_irq_epc        <= ex_wb_r.pc;  // mepc = interrupted PC (return address)
+            trace_irq_store_addr <= ex_wb_r.mem_addr;
+            trace_irq_store_data <= trace_mem_data_c;
+        end
+    end
 
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_irq_taken    <= 1'b0;
-                    trace_irq_store_we <= 1'b0;
-                end
-                else begin
-                    trace_irq_taken <= trace_en ? (irq_cancel && !ex_stall) : 1'b0;
-                    trace_irq_store_we <= trace_en ? (irq_cancel && !ex_stall && ex_wb_r.mem_write && dmem_resp_valid) : 1'b0;
-                end
-            end
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    trace_irq_cause      <= 32'h0;
-                    trace_irq_epc        <= 32'h0;
-                    trace_irq_store_addr <= 32'h0;
-                    trace_irq_store_data <= 32'h0;
-                end
-                else if (trace_en) begin
-                    trace_irq_cause      <= csr_irq_cause;
-                    trace_irq_epc        <= ex_wb_r.pc;
-                    trace_irq_store_addr <= ex_wb_r.mem_addr;
-                    trace_irq_store_data <= trace_mem_data_c;
-                end
-            end
 `else
-            // TRACE_EN=0 in synthesis: keep trace_valid_r for instret/debug-step,
-            // tie all trace data outputs to 0 (no extra gate count).
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) trace_valid_r <= 1'b0;
-                else trace_valid_r <= trace_retire;
-            end
-
-            assign trace_valid          = 1'b0;
-            assign trace_reg_we         = 1'b0;
-            assign trace_pc             = 32'd0;
-            assign trace_rd             = 5'd0;
-            assign trace_rd_data        = 32'd0;
-            assign trace_instr          = 32'd0;
-            assign trace_mem_we         = 1'b0;
-            assign trace_mem_re         = 1'b0;
-            assign trace_mem_addr       = 32'd0;
-            assign trace_mem_data       = 32'd0;
-            assign trace_irq_taken      = 1'b0;
-            assign trace_irq_cause      = 32'd0;
-            assign trace_irq_epc        = 32'd0;
-            assign trace_irq_store_we   = 1'b0;
-            assign trace_irq_store_addr = 32'd0;
-            assign trace_irq_store_data = 32'd0;
-
-            logic _unused_trace_no;
-            assign _unused_trace_no = &{1'b0, trace_en, trace_mem_data_c};
+    // Synthesis: keep only trace_valid_r for instret counting and debug single-step.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) trace_valid_r <= 1'b0;
+        else trace_valid_r <= trace_retire;
+    end
 `endif
-
-        end
-    endgenerate
 
     // Suppress unused warnings for WFI/fence (treated as NOPs here)
     logic _unused;
