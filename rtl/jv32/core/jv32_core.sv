@@ -213,6 +213,7 @@ module jv32_core #(
     logic                  dbg_resumeack_r;
     logic                  dbg_step_pending_r;
     logic                  dbg_step_served_r;  // Prevents re-resume after single-step halt
+    logic                  dbg_step_fire_r;    // Sticky: step-halt pending but stalled; survives dmem_stall
     logic                  dbg_enter_debug;
     logic                  trigger_match;
     logic                  trigger_halt_r;     // trigger module caused current halt (dcsr.cause=2)
@@ -1026,10 +1027,17 @@ module jv32_core #(
             dbg_resumeack_r    <= 1'b0;
             dbg_step_pending_r <= 1'b0;
             dbg_step_served_r  <= 1'b0;
+            dbg_step_fire_r    <= 1'b0;
             trigger_halt_r     <= 1'b0;
             trigger_hit_r      <= '0;
         end
         else begin
+            // Latch the step-fire condition as a sticky flag so it survives dmem_stall
+            // cycles: the single-cycle trace_valid_r pulse may coincide with a stall
+            // caused by the next instruction already entering WB.  Without this latch
+            // the halt window is permanently missed and OpenOCD reports a failed stepi.
+            if (dbg_step_pending_r && trace_valid_r) dbg_step_fire_r <= 1'b1;
+
             // Clear step_served and resumeack when resumereq de-asserts (OpenOCD cleared it)
             if (!resume_req_i) begin
                 dbg_step_served_r <= 1'b0;
@@ -1040,20 +1048,22 @@ module jv32_core #(
                 dbg_halted_r       <= 1'b0;
                 dbg_resumeack_r    <= 1'b1;  // sticky: stays 1 until resumereq deasserts
                 dbg_step_pending_r <= dbg_singlestep_i;
+                dbg_step_fire_r    <= 1'b0;  // clear sticky flag on each resume
                 trigger_halt_r     <= 1'b0;  // clear trigger cause on resume
                 trigger_hit_r      <= '0;    // clear per-trigger hit bits on resume
             end
             else if ((dbg_enter_debug || trigger_match
                       || (halt_req_i && !dbg_halted_r)
-                      || (dbg_step_pending_r && trace_valid_r))
+                      || (dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r)))
                       && !dmem_stall) begin
                 dbg_halted_r       <= 1'b1;
                 trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
                 trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
                 // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
+                dbg_step_fire_r    <= 1'b0;  // clear sticky flag on halt entry
                 // After a single-step halt, block re-resume until resumereq deasserts
-                if (dbg_step_pending_r && trace_valid_r) dbg_step_served_r <= 1'b1;
+                if (dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r)) dbg_step_served_r <= 1'b1;
             end
         end
     end
