@@ -1885,7 +1885,11 @@ module jv32_core #(
                     trace_mem_re  <= 1'b0;
                 end
                 else begin
-                    trace_valid_r <= trace_en ? trace_retire : 1'b0;
+                    // trace_valid_r always tracks trace_retire regardless of trace_en:
+                    // it is used for debug single-step halt (dbg_step_pending_r check) and
+                    // instret counting (instret_inc).  Gating by trace_en would suppress
+                    // both, breaking stepi on FPGA where trace_en=0.
+                    trace_valid_r <= trace_retire;
                     trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
                     // AMO instructions are logged as memory writes (matching jv32sim which
                     // emits trace_is_store=true for all AMO/LR/SC). The write data is
@@ -1917,7 +1921,10 @@ module jv32_core #(
                 end
             end
 
-            assign trace_valid = trace_valid_r;
+            // Gate the trace_valid output by trace_en so external consumers only see
+            // retire events when tracing is active.  trace_valid_r itself is always
+            // updated (see above) so debug single-step and instret work with trace_en=0.
+            assign trace_valid = trace_valid_r && trace_en;
 
             // IRQ-taken trace: fires for one cycle (registered) when the core accepts
             // an interrupt and squashes the instruction currently in WB.
@@ -1973,7 +1980,9 @@ module jv32_core #(
                     trace_mem_re  <= 1'b0;
                 end
                 else begin
-                    trace_valid_r <= trace_en ? trace_retire : 1'b0;
+                    // trace_valid_r must not be gated by trace_en (same reason as
+                    // gen_trace_outputs: needed for debug single-step and instret).
+                    trace_valid_r <= trace_retire;
                     trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
                     trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
                     trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
@@ -1999,7 +2008,7 @@ module jv32_core #(
                 end
             end
 
-            assign trace_valid = trace_valid_r;
+            assign trace_valid = trace_valid_r && trace_en;
 
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin

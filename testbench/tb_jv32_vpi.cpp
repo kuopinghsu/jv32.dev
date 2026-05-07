@@ -107,6 +107,7 @@ static uint64_t g_max_cycles     = 50000000ULL; // 50 M cycles ≈ 500 ms @ 100 
 static int      g_tck_half_clks  = 10;          // sys clocks per TCK/TCKC half-period
 static int      g_idle_clks      = 1000;        // sys clocks advanced per idle poll
 static int      g_boot_clks      = 2000;        // sys clocks before accepting connection
+static bool     g_trace_en       = true;         // mirrors trace_en input; false = simulate FPGA (no-trace) mode
 
 static void sig_handler(int) { g_abort = true; }
 
@@ -310,6 +311,8 @@ int main(int argc, char **argv) {
             g_tck_half_clks = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--idle-clks")     && i+1 < argc)
             g_idle_clks     = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--no-trace-en"))
+            g_trace_en      = false;  // simulate FPGA: trace_en=0 (TRACE_EN=1 still compiled in)
         else if (argv[i][0] == '+')
             ; // +verilator+... runtime args handled by ctx->commandArgs() below
         else if (!elf_path)
@@ -323,7 +326,8 @@ int main(int argc, char **argv) {
     if (!elf_path) {
         fprintf(stderr,
             "Usage: %s <elf> [--port N] [--trace <f.fst>] [--max-cycles N]\n"
-            "              [--boot-clocks N] [--tck-half-clks N] [--idle-clks N]\n",
+            "              [--boot-clocks N] [--tck-half-clks N] [--idle-clks N]\n"
+            "              [--no-trace-en]   simulate FPGA: drive trace_en=0\n",
             argv[0]);
         return 1;
     }
@@ -375,7 +379,7 @@ int main(int argc, char **argv) {
     g_dut->rst_n           = 0;
     g_dut->clk             = 0;
     g_dut->uart_rx_i       = 1;  // UART idle high
-    g_dut->trace_en        = 1;  // enable trace / single-step retire detection
+    g_dut->trace_en        = g_trace_en ? 1 : 0;  // 0 simulates FPGA (--no-trace-en)
     g_dut->jtag_ntrst_i    = 0;  // hold TAP in reset
     g_dut->jtag_pin0_tck_i = 0;
     g_dut->jtag_pin1_tms_i = 1;  // TMS=1 forces TAP reset state

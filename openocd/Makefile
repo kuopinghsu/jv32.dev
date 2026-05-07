@@ -104,17 +104,17 @@ LOG_DIR := $(BUILD_DIR)/openocd_logs
 # ─────────────────────────────────────────────────────────────────────────────
 # Phony targets
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% FORCE
+.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% jtag-no-trace-step FORCE
 
 FORCE:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default
 # ─────────────────────────────────────────────────────────────────────────────
-all: test-jtag test-cjtag
+all: test-jtag test-cjtag jtag-no-trace-step
 
 # Run all three test suites (OpenOCD TCL over JTAG, over cJTAG, and GDB)
-all-with-gdb: test-jtag test-cjtag test-gdb
+all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build prerequisites
@@ -464,6 +464,45 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Regression: single-step with trace_en=0 (simulates FPGA conditions)
+#
+# Runs test_step.tcl against a VPI sim launched with --no-trace-en.
+# TRACE_EN=1 is still compiled in (same as FPGA), only the runtime
+# trace_en signal is held low.  Verifies that the stepi fix in jv32_core.sv
+# (decoupling trace_valid_r from trace_en) keeps single-step working when
+# the trace output to the testbench is disabled.
+# ─────────────────────────────────────────────────────────────────────────────
+jtag-no-trace-step: $(VPI_JTAG) $(BOOT_ELF)
+	@mkdir -p $(LOG_DIR)
+	@t=step; LOG="$(LOG_DIR)/jtag_no_trace_$$t"; \
+	echo "--- [jtag / trace_en=0] test_$$t ---"; \
+	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) --no-trace-en \
+	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/jtag_no_trace_$$t.fst") \
+	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/jtag_no_trace_$$t.vcd") \
+	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	for _i in $$(seq 1 50); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    sleep 0.1; \
+	done; \
+	( cd "$(OPENOCD_DIR)" && \
+	  $(OPENOCD) -d0 \
+	      -c "gdb_port disabled" \
+	      -f jv32.cfg \
+	      -c "jtag_vpi set_port $(VPI_PORT)" \
+	      -c init \
+	      -c "source test_$$t.tcl" \
+	      -c shutdown \
+	) >"$$LOG.ocd.log" 2>&1; \
+	OCD_RC=$$?; \
+	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	cat "$$LOG.ocd.log"; \
+	if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
+	    echo ""; echo "[PASS] jtag(trace_en=0): test_$$t"; exit 0; \
+	else \
+	    echo ""; echo "[FAIL] jtag(trace_en=0): test_$$t (openocd exit=$$OCD_RC)"; exit 1; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Clean
 # ─────────────────────────────────────────────────────────────────────────────
 clean:
@@ -483,6 +522,7 @@ help:
 	@echo "  build-cjtag   — build VPI sim with USE_CJTAG=1"
 	@echo "  jtag-<name>   — single JTAG test  (e.g. jtag-halt_resume)"
 	@echo "  cjtag-<name>  — single cJTAG test (e.g. cjtag-cjtag)"
+	@echo "  jtag-no-trace-step — run test_step with trace_en=0 (FPGA regression)"
 	@echo "  test-gdb      — run all GDB tests (JTAG VPI + OpenOCD GDB server)"
 	@echo "  gdb-<name>    — single GDB test   (e.g. gdb-step)"
 	@echo "  all-with-gdb  — test-jtag + test-cjtag + test-gdb"
