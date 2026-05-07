@@ -414,12 +414,13 @@ module jv32_dtm #(
     assign all_noexist     = (hartsello != 10'b0);
 
     // Per Debug Spec 0.13.2: when non-existent hart is selected:
-    // - anyhalted=0 (no actual hart is halted)
-    // - allhalted=1 (all selected harts [non-existent] are "halted or don't exist")
+    // - anyhalted=0  (no actual hart is halted)
+    // - allhalted=0  (non-existent hart is neither halted nor running;
+    //                 must be consistent with anyhalted=0 to avoid confusing OpenOCD)
     // - anyrunning=0 (no actual hart is running)
     // - allrunning=0 (non-existent hart is not running)
     assign any_halted      = any_noexist ? 1'b0 : halted_tck;
-    assign all_halted      = all_noexist ? 1'b1 : halted_tck;
+    assign all_halted      = all_noexist ? 1'b0 : halted_tck;
     assign any_running     = any_noexist ? 1'b0 : !halted_tck;
     assign all_running     = any_noexist ? 1'b0 : !halted_tck;
     assign any_resumeack   = any_noexist ? 1'b0 : resumeack_tck;
@@ -548,10 +549,13 @@ module jv32_dtm #(
         end
     end
 
-    // Per Debug Spec 0.13.2 section 3.14.2: halt/resume requests should have no
-    // effect when all selected harts are non-existent
-    assign dbg_halt_req_o   = (cmd_busy || any_noexist) ? 1'b0 : (halt_req_sync_chain[1] | exec_halt_req);
-    assign dbg_resume_req_o = (cmd_busy || any_noexist) ? 1'b0 : (resume_req_sync_chain[1] || exec_resume_req);
+    // Per Debug Spec 0.13.2 section 3.14.2: haltreq/resumereq from dmcontrol have
+    // no effect when all selected harts are non-existent.
+    // exec_halt_req / exec_resume_req are *internal* FSM signals that fire while
+    // cmd_busy=1 (during abstract command / progbuf execution); they must bypass
+    // both the cmd_busy gate and the any_noexist gate so progbuf execution works.
+    assign dbg_halt_req_o   = (cmd_busy || any_noexist ? 1'b0 : halt_req_sync_chain[1]) | exec_halt_req;
+    assign dbg_resume_req_o = (cmd_busy || any_noexist ? 1'b0 : resume_req_sync_chain[1]) | exec_resume_req;
 
     // ========================================================================
     // Shift Registers
@@ -1552,8 +1556,9 @@ module jv32_dtm #(
                 // because that halt comes from the debug ROM ebreak.
                 if (!exec_waiting_halt) dpc_reg <= dbg_pc_i;
 
-                if (dcsr_reg[2]) dcsr_cause_r <= 3'd4;  // step (prio 4) > haltreq (prio 3)
-                else if (trigger_halt_i) dcsr_cause_r <= 3'd2;
+                // Spec Table 4.1 priority (highest first): trigger(2) > step(4) > haltreq(3)
+                if (trigger_halt_i) dcsr_cause_r <= 3'd2;
+                else if (dcsr_reg[2]) dcsr_cause_r <= 3'd4;
                 else dcsr_cause_r <= 3'd3;
             end
 
@@ -2172,7 +2177,7 @@ module jv32_dtm #(
                         sba_wait_cnt <= sba_wait_cnt + 1;
 
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err          <= 3'd2;  // error=2: timeout
+                            sb_err          <= 3'd1;  // error=1: timeout (Debug Spec 0.13.2 Table 3.7)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
 
@@ -2223,7 +2228,7 @@ module jv32_dtm #(
                         sba_wait_cnt <= sba_wait_cnt + 1;
 
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err          <= 3'd2;  // error=2: timeout
+                            sb_err          <= 3'd1;  // error=1: timeout (Debug Spec 0.13.2 Table 3.7)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
 
