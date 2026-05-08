@@ -13,7 +13,9 @@
 //   jtag_tck_i    D11   TCK  (JTAG) / TCKC (cJTAG) – always input
 //   jtag_tmsc_io  E12   TMS  (JTAG) / TMSC (cJTAG) – bidir IOBUF
 //   jtag_tdi_i    C12   TDI  (JTAG only; tie to GND in cJTAG)
-//   jtag_tdo_o    J12   TDO  (JTAG only; driven 0   in cJTAG)
+//   jtag_tdo_o    J12   TDO  (both modes; in cJTAG soc_tdo_o is routed here
+//                             so a standard 4-wire JTAG probe can read TDO
+//                             on ADBUS2/J12 without TMSC read-back)
 //
 //   UART (LVCMOS33)
 //   uart_tx_o     J14   TX
@@ -112,7 +114,9 @@ module jv32_fpga_top #(
         // cJTAG: SoC drives TMSC and controls output-enable
         assign tmsc_out   = soc_tms_o;
         assign tmsc_oe_n  = soc_tms_oe;
-        assign jtag_tdo_o = soc_tdo_o;  // Route TAP TDO to J12 (ADBUS2) for OScan1 TDO read-back
+        assign jtag_tdo_o = soc_tdo_o;  // FPGA emulation only: expose TAP TDO on J12 so a standard
+                                          // 4-wire probe (ADBUS2←J12) works without TMSC read-back.
+                                          // A real cJTAG chip does not have this pin.
     end else begin : g_jtag_io
         // JTAG: TMS is always an input – permanently tristate the IOBUF
         assign tmsc_out   = 1'b0;

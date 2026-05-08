@@ -121,8 +121,8 @@ system clock which is on an **HP (High Performance) bank**, 1.8 V LVCMOS18.
 | `clk_50m` | E18 | HP / LVCMOS18 | I | 50 MHz system clock |
 | `jtag_tck_i` | D11 | HR / LVCMOS33 | I | TCK (4-wire) / TCKC (cJTAG) |
 | `jtag_tmsc_io` | E12 | HR / LVCMOS33 | I/O | TMS (4-wire) / TMSC (cJTAG, bidir) |
-| `jtag_tdi_i` | C12 | HR / LVCMOS33 | I | TDI — 4-wire JTAG only; unused (tied to GND) in cJTAG |
-| `jtag_tdo_o` | J12 | HR / LVCMOS33 | O | TDO — 4-wire JTAG only; driven `0` in cJTAG |
+| `jtag_tdi_i` | C12 | HR / LVCMOS33 | I | TDI — 4-wire JTAG only; tie to GND in cJTAG |
+| `jtag_tdo_o` | J12 | HR / LVCMOS33 | O | TDO — driven by TAP in both modes; not connected in cJTAG (TDO is read back via TMSC/E12) |
 | `uart_tx_o` | G12 | HR / LVCMOS33 | O | UART TX |
 | `uart_rx_i` | J14 | HR / LVCMOS33 | I | UART RX |
 | `heartbeat_o` | H9 | HR / LVCMOS33 | O | LED6 — toggles every 2²⁴ retired instructions |
@@ -134,9 +134,9 @@ system clock which is on an **HP (High Performance) bank**, 1.8 V LVCMOS18.
 
 `USE_CJTAG` selects the debug interface. The default is **`USE_CJTAG=1`** (2-wire cJTAG).
 
-| `USE_CJTAG` | Interface | Wires used | `jtag_tmsc_io` (C12) | `jtag_tdi_i` (J12) | `jtag_tdo_o` (E12) |
+| `USE_CJTAG` | Interface | Wires used | `jtag_tmsc_io` (E12) | `jtag_tdi_i` (C12) | `jtag_tdo_o` (J12) |
 |:---:|---|:---:|---|---|---|
-| **1 (default)** | 2-wire cJTAG (IEEE 1149.7 OScan1) | TCKC + TMSC | **bidir** — IOBUF driven by SoC | tied to GND on PCB | driven `0` by FPGA |
+| **1 (default)** | 2-wire cJTAG (IEEE 1149.7 OScan1) | TCKC + TMSC | **bidir** — IOBUF driven by SoC | tie to GND on PCB | driven by TAP (not connected in cJTAG wiring) |
 | 0 | 4-wire JTAG (IEEE 1149.1) | TCK + TMS + TDI + TDO | input only — IOBUF permanently tristated | TDI data in | TDO data out |
 
 The parameter is set at synthesis time:
@@ -272,42 +272,96 @@ RTL `define` macros enabled in Vivado:
 
 ## Connecting a debug probe
 
-### USE_CJTAG=1 (default) — 2-wire cJTAG
+### Physical wiring (FPGA board)
 
-Requires a bitstream built with `USE_CJTAG=1` (the default).
+The physical connector on the FPGA board exposes all four JTAG signals on a
+standard 2×5 or 1×5 header.  **The same four-wire connection is used for both
+JTAG and cJTAG on this FPGA board** — just select the matching OpenOCD config.
 
-**Wiring (FT2232H Channel A → XCKU5P)**
+```
+ FT2232H                         XCKU5P (LVCMOS33)
+ Channel A
 
-| FT2232H pin | Signal | FPGA pin | Note |
-|---|---|---|---|
-| ADBUS0 | TCKC | D11 | cJTAG clock, unidirectional |
-| ADBUS3 | TMSC | C12 | cJTAG data, **bidirectional** |
-| GND | GND | GND | |
-| ADBUS1, ADBUS2 | — | — | Unused in cJTAG mode |
-
-```bash
-openocd -f fpga/jtag/jv32_fpga_cjtag.cfg
-openocd -f fpga/jtag/jv32_fpga_cjtag.cfg -c "init; halt"
+ ADBUS0 ──── TCK / TCKC ────────► D11  jtag_tck_i
+ ADBUS1 ──── TDI        ────────► C12  jtag_tdi_i   (unused / don't-care in cJTAG)
+ ADBUS2 ◄─── TDO        ◄──────── J12  jtag_tdo_o
+ ADBUS3 ──── TMS / TMSC ◄──────►  E12  jtag_tmsc_io (IOBUF: input-only in JTAG,
+ GND    ──── GND                   GND               bidir in cJTAG)
 ```
 
-### USE_CJTAG=0 — 4-wire JTAG
+| ADBUS | Signal | Dir | FPGA pin | Note |
+|---|---|---|---|---|
+| ADBUS0 | TCK / TCKC | → | D11 | clock |
+| ADBUS1 | TDI | → | C12 | JTAG data in; ignored in cJTAG |
+| ADBUS2 | TDO | ← | J12 | TAP TDO in both modes |
+| ADBUS3 | TMS / TMSC | ↔ | E12 | input-only in JTAG; bidir IOBUF in cJTAG |
 
-Requires a bitstream built with `USE_CJTAG=0`.
+---
 
-**Wiring (FT2232H Channel A → XCKU5P)**
-
-| FT2232H pin | Signal | FPGA pin | Note |
-|---|---|---|---|
-| ADBUS0 | TCK | D11 | |
-| ADBUS1 | TDI | J12 | |
-| ADBUS2 | TDO | E12 | |
-| ADBUS3 | TMS | C12 | |
-| GND | GND | GND | |
+### Mode 1 — 4-wire JTAG (`USE_CJTAG=0` bitstream)
 
 ```bash
 openocd -f fpga/jtag/jv32_fpga_jtag.cfg
-openocd -f fpga/jtag/jv32_fpga_jtag.cfg -c "init; halt"
 ```
+
+Standard IEEE 1149.1.  E12 IOBUF is permanently tristated (input only).
+
+---
+
+### Mode 2 — cJTAG OScan1 on FPGA (`USE_CJTAG=1` bitstream)
+
+```bash
+openocd -f fpga/jtag/jv32_fpga_cjtag.cfg
+```
+
+IEEE 1149.7 OScan1.  `cjtag_bridge.sv` drives TMSC (E12) and handles all
+activation/escape sequencing.  ADBUS3 drives TMSC; ADBUS2 reads TDO from J12.
+
+> **FPGA emulation only — no board modification needed.**
+> `jv32_fpga_top.sv` routes `soc_tdo_o` to J12 even in cJTAG mode so that a
+> standard four-wire probe can read TDO on ADBUS2/J12 directly.  This is an
+> FPGA verification convenience; a real cJTAG silicon device does **not** have
+> a separate TDO pin.
+
+---
+
+### Connecting to a real cJTAG chip (silicon)
+
+On actual silicon, TDO is not available on a separate pin — it is embedded in
+the TMSC bit stream (OScan1 phase 2).  Two options:
+
+**Option A — Native cJTAG DTS (recommended)**
+
+Use a debug tool station (DTS) with built-in IEEE 1149.7 support.  Only two
+wires are needed:
+
+```
+ DTS / cJTAG probe
+
+ TCKC ───────────────────────────  TCKC pin of target
+ TMSC ◄──────────────────────────► TMSC pin of target (bidir)
+ GND  ───────────────────────────  GND
+```
+
+**Option B — FT2232H probe board modification**
+
+FTDI MPSSE hardwires TDO capture to ADBUS2 (cannot be remapped in software).
+In OScan1 mode TDO is on the TMSC line, so ADBUS2 must be connected to TMSC.
+Bridge ADBUS2 and ADBUS3 together on the probe board, both to the TMSC pin:
+
+```
+ FT2232H (modified probe)         Target chip
+ Channel A
+
+ ADBUS0 ──── TCKC ──────────────► TCKC
+             TMSC ◄─────────────► TMSC (bidir)
+ ADBUS3 ─────┘ ↑  drive nTDI/TMS
+ ADBUS2 ───────┘    read TDO       (ADBUS2 + ADBUS3 bridged on probe board)
+ GND    ──── GND  ───────────────  GND
+```
+
+Use `fpga/jtag/jv32_fpga_cjtag.cfg` with this wiring (the OpenOCD config is
+the same; the difference is only on the probe board).
 
 ---
 
