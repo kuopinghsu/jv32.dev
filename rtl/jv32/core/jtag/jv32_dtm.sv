@@ -442,11 +442,11 @@ module jv32_dtm #(
     assign jtag_rst_n = ntrst_i & rst_n;
 
     // Synchronize CPU signals from system clock domain to TCK domain
-    (* ASYNC_REG = "TRUE" *) logic [2:0] halted_tck_chain;
-    (* ASYNC_REG = "TRUE" *) logic [2:0] resumeack_tck_chain;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] halted_tck_chain;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] resumeack_tck_chain;
 
     // CLK->TCK sync for cmd_busy (used to guard TCK-domain write checks)
-    (* ASYNC_REG = "TRUE" *) logic [2:0] busy_tck_chain;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] busy_tck_chain;
     logic busy_tck;                    // TCK-domain stable copy (lags CLK domain by sync latency)
     logic cmd_busy_tck_pending;        // Assert busy immediately when COMMAND dispatched
     logic [1:0] cmd_busy_holdoff_tck;  // Counts 3..0 after dispatch; prevents premature clear
@@ -467,13 +467,13 @@ module jv32_dtm #(
 
     always_ff @(posedge tck_i or negedge jtag_rst_n) begin
         if (!jtag_rst_n) begin
-            halted_tck_chain     <= 3'b0;
-            resumeack_tck_chain  <= 3'b0;
+            halted_tck_chain     <= 2'b0;
+            resumeack_tck_chain  <= 2'b0;
             halted_tck           <= 1'b0;
             resumeack_tck        <= 1'b0;
             sba_busy_tck_chain   <= 2'b0;
             sba_busy_tck         <= 1'b0;
-            busy_tck_chain       <= 3'b0;
+            busy_tck_chain       <= 2'b0;
             busy_tck             <= 1'b0;
             cmd_busy_tck_pending <= 1'b0;
             cmd_busy_holdoff_tck <= 2'd0;
@@ -483,10 +483,10 @@ module jv32_dtm #(
         end
         else begin
             // Double-synchronize CPU status signals
-            halted_tck_chain    <= {halted_tck_chain[1:0], dbg_halted_i};
+            halted_tck_chain    <= {halted_tck_chain[0], dbg_halted_i};
             halted_tck          <= halted_tck_chain[1];
 
-            resumeack_tck_chain <= {resumeack_tck_chain[1:0], dbg_resumeack_i};
+            resumeack_tck_chain <= {resumeack_tck_chain[0], dbg_resumeack_i};
             resumeack_tck       <= resumeack_tck_chain[1];
 
             // Sync SBA busy from clk domain back to TCK domain
@@ -494,7 +494,7 @@ module jv32_dtm #(
             sba_busy_tck        <= sba_busy_tck_chain[1];
 
             // Sync cmd_busy from CLK domain to TCK domain
-            busy_tck_chain      <= {busy_tck_chain[1:0], cmd_busy};
+            busy_tck_chain      <= {busy_tck_chain[0], cmd_busy};
             busy_tck            <= busy_tck_chain[1];
 
             // Set pending flag immediately when a COMMAND is dispatched (toggle changes).
@@ -519,9 +519,9 @@ module jv32_dtm #(
     end
 
     // Synchronize debug requests from TCK domain to system clock domain
-    (* ASYNC_REG = "TRUE" *)logic [ 2:0] halt_req_sync_chain;
-    (* ASYNC_REG = "TRUE" *)logic [ 2:0] resume_req_sync_chain;
-    logic [ 2:0] halted_clk_chain;     // same-domain pipeline (not CDC)
+    (* ASYNC_REG = "TRUE" *)logic [ 1:0] halt_req_sync_chain;
+    (* ASYNC_REG = "TRUE" *)logic [ 1:0] resume_req_sync_chain;
+    logic [ 1:0] halted_clk_chain;     // same-domain pipeline (not CDC)
     logic [ 2:0] dcsr_cause_r;         // dcsr.cause bits updated on debug mode entry
     logic        dbg_halted_prev;      // edge detector driven by sync always_ff
     logic        dbg_halted_prev_fsm;  // independent edge detector driven by FSM always_ff
@@ -530,17 +530,17 @@ module jv32_dtm #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            halt_req_sync_chain   <= 3'b0;
-            resume_req_sync_chain <= 3'b0;
-            halted_clk_chain      <= 3'b0;
+            halt_req_sync_chain   <= 2'b0;
+            resume_req_sync_chain <= 2'b0;
+            halted_clk_chain      <= 2'b0;
             halted_clk            <= 1'b0;
             dbg_halted_prev       <= 1'b0;
             trigger_halt_pulse    <= 1'b0;
         end
         else begin
-            halt_req_sync_chain   <= {halt_req_sync_chain[1:0], haltreq};
-            resume_req_sync_chain <= {resume_req_sync_chain[1:0], resumereq};
-            halted_clk_chain      <= {halted_clk_chain[1:0], dbg_halted_i};
+            halt_req_sync_chain   <= {halt_req_sync_chain[0], haltreq};
+            resume_req_sync_chain <= {resume_req_sync_chain[0], resumereq};
+            halted_clk_chain      <= {halted_clk_chain[0], dbg_halted_i};
             halted_clk            <= halted_clk_chain[1];
 
             // dcsr.cause update: detect rising edge of dbg_halted_i
@@ -2393,8 +2393,12 @@ module jv32_dtm #(
     assign _unused_ok_dtm = &{1'b0, dcsr_reg[31:28],  // xdebugver always forced to 4'd4; these bits never used
         dcsr_reg[14:13],            // ebreaks/ebreaku: not individually consumed here
         dcsr_reg[12:9],             // stepie/stopcount/stoptime/halt: forwarded but not consumed individually
+        dcsr_reg[8:6],              // reserved bits per RISC-V Debug Spec 0.13.2
         dcsr_reg[3],                // nmip: not implemented in this core
         command_reg_sys[19],        // reserved bit in AC_ACCESS_REGISTER (aamvirtual bit[23] now checked)
+        sb_autoincr_clk,            // CLK-domain copy reserved for future SBA auto-increment use
+        sba_clr_cnt,                // SBA result clear counter reserved for future use
+        sba_rd_pending_tck,         // SBA pending flag reserved for future use
         data0_result_valid_sync_r,  // retained for future edge-detect use
         halted_clk,                 // synchronized debug-halted status (reserved)
         sbdata0_result_valid_sync_r, sbaddress0_result_valid_sync_r};

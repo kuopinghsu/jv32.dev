@@ -73,7 +73,7 @@ OPENLANE_DIR   := $(SYN_DIR)/openlane
 BUILD_DIR      := $(SYN_DIR)/build
 
 # ── TCM memory size (N × 8 KB OpenRAM macro units) ──────────────────────────
-# sram_1rw_2048x32 = 2048 words × 32 bits = 8 KB  (one basic macro sub-bank)
+# sram_1rw_1024x64 = 1024 words × 64 bits = 8 KB  (one basic macro sub-bank)
 # IRAM_BANKS / DRAM_BANKS: how many sub-banks to stitch per TCM.
 # The Makefile computes IRAM_SIZE/DRAM_SIZE and writes them into
 # build/tcm_params.yaml, which OpenLane2 picks up as a config override.
@@ -108,7 +108,7 @@ else
 endif
 
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)
-OPENRAM_CFG  ?= openram_sram_1rw_2048x32.py
+OPENRAM_CFG  ?= openram_sram_1rw_1024x64.py
 
 # Clock gating: 1=insert CLKGATE_X1 ICG cells before dfflibmap in gate-count
 # synthesis (default).  0=data-path enable muxes (disable for comparison).
@@ -236,7 +236,7 @@ gen-mem:
 	@echo "  PDK      : $(PDK) (Nangate 45nm)"
 	@echo "  OPENRAM  : $(OPENRAM)"
 	@echo "  Config   : $(OPENRAM_OUTDIR)/$(OPENRAM_CFG)"
-	@echo "  Macro    : sram_1rw_2048x32 (2048 words x 32-bit = 8 KB)"
+	@echo "  Macro    : sram_1rw_1024x64 (1024 words x 64-bit = 8 KB)"
 	@echo "  IRAM     : $(IRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB"
 	@echo "  DRAM     : $(DRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB"
 	@echo "========================================"
@@ -257,7 +257,7 @@ gen-mem:
 	    PYTHONPATH=$(OPENRAM)/compiler \
 	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(OPENRAM_CFG)
 	@echo "Snapping OpenRAM LEF pin geometry to manufacturing grid..."
-	@$(PYTHON3) $(SYN_DIR)/common/fix_openram_lef_grid.py $(OPENRAM_OUTDIR)/sram_1rw_2048x32.lef
+	@$(PYTHON3) $(SYN_DIR)/common/fix_openram_lef_grid.py $(OPENRAM_OUTDIR)/sram_1rw_1024x64.lef
 	@echo "========================================"
 	@echo " OpenRAM macros compiled in $(OPENRAM_OUTDIR)/"
 	@echo " Run 'make synth' to proceed to OpenLane2."
@@ -273,7 +273,7 @@ OPENLANE_FROM    ?=
 $(BUILD_DIR):
 	mkdir -p $@
 
-SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_2048x32.lef
+SRAM_LEF := $(OPENRAM_OUTDIR)/sram_1rw_1024x64.lef
 
 synth: check $(BUILD_DIR)
 	@echo "========================================"
@@ -434,6 +434,7 @@ synth: check $(BUILD_DIR)
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_gds.py \
 	    $(OPENLANE_RUN_DIR) \
 	    $(BUILD_DIR)/LAYOUT_gds.png \
+	    --lef-dir $(SYN_DIR)/lib/openram \
 	    --layers 35,36,38,39 \
 	    --title "$(DESIGN) — Post-P&R GDS Layout (FreePDK45 Nangate 45 nm)" \
 	    || echo " WARNING: GDS layout generation failed (gdstk + Pillow required)"
@@ -522,9 +523,9 @@ gate-count: check $(BUILD_DIR)
 NETLIST   ?= $(OPENLANE_RUN_DIR)/final/nl/jv32_soc.nl.v
 SDC_FILE  ?= $(OPENLANE_DIR)/jv32_soc_pnr.sdc
 
-SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_TT_1p1V_25C.lib
-SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_FF_1p0V_25C.lib
-SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_2048x32_SS_1p0V_25C.lib
+SRAM_LIB_TT := $(OPENRAM_OUTDIR)/sram_1rw_1024x64_TT_1p1V_25C.lib
+SRAM_LIB_FF := $(OPENRAM_OUTDIR)/sram_1rw_1024x64_FF_1p0V_25C.lib
+SRAM_LIB_SS := $(OPENRAM_OUTDIR)/sram_1rw_1024x64_SS_1p0V_25C.lib
 
 PNR_RESULTS := $(BUILD_DIR)/pnr/results
 PNR_REPORTS := $(BUILD_DIR)/pnr/reports

@@ -18,7 +18,7 @@ STD_CELL_LIBRARY: NangateOpenCellLibrary
 # (= the directory containing this config.yaml = syn/openlane/).
 # So ../../rtl/ → project rtl/, and ../lib/ → syn/lib/.
 # The black-box wrapper (syn/lib/sram_1rw.sv) is included here so Yosys
-# can emit a correct black-box reference for sram_1rw_32768x8 during synthesis.
+# can emit a correct black-box reference for sram_1rw_1024x64 during synthesis.
 # Include search paths for `include directives (e.g. jv32_dbgmsg.svh)
 VERILOG_INCLUDE_DIRS:
   - dir::../../rtl/jv32
@@ -63,18 +63,18 @@ SIGNOFF_SDC_FILE: dir::jv32_soc_pnr.sdc
 # views. In the Classic flow, these 32 instances still need explicit placement
 # coordinates; see `macro_placement.cfg` below.
 MACROS:
-  sram_1rw_2048x32:
+  sram_1rw_1024x64:
     gds:
-      - dir::../lib/openram/sram_1rw_2048x32.gds
+      - dir::../lib/openram/sram_1rw_1024x64.gds
     lef:
-      - dir::../lib/openram/sram_1rw_2048x32.lef
+      - dir::../lib/openram/sram_1rw_1024x64.lef
     lib:
       "tt_025C_1v10":
-        - dir::../lib/openram/sram_1rw_2048x32_TT_1p1V_25C.lib
+        - dir::../lib/openram/sram_1rw_1024x64_TT_1p1V_25C.lib
       "ff_025C_1v10":
-        - dir::../lib/openram/sram_1rw_2048x32_FF_1p0V_25C.lib
+        - dir::../lib/openram/sram_1rw_1024x64_FF_1p0V_25C.lib
       "ss_025C_1v10":
-        - dir::../lib/openram/sram_1rw_2048x32_SS_1p0V_25C.lib
+        - dir::../lib/openram/sram_1rw_1024x64_SS_1p0V_25C.lib
 
 # Magic streamout: OpenRAM GDS does not provide a Magic-extractable FIXED_BBOX
 # (PR boundary property), which breaks macro blackbox mode at stream-out.
@@ -86,7 +86,7 @@ MAGIC_MACRO_STD_CELL_SOURCE: PDK
 # from the Nangate45 magic.tech cifinput table.  Without this, Magic emits
 # "device missing 1 terminal" feedback which OpenLane flags as a fatal error.
 MAGIC_EXT_ABSTRACT_CELLS:
-  - sram_1rw_2048x32
+  - sram_1rw_1024x64
   - replica_cell_1rw
 
 # The Classic flow does not auto-place hard macros; provide fixed locations for
@@ -106,6 +106,14 @@ VERILOG_DEFINES:
 
 SYNTH_STRATEGY: AREA 0
 
+# ── Clock gating ─────────────────────────────────────────────────────────────
+# Lighter is a Yosys plugin that inserts integrated clock-gating (ICG) cells
+# by replacing $dffe/$adffe/$sdffe etc. with CLKGATE_X{1,2,4} + $dff.
+# The DFF map below maps those Yosys primitives to Nangate45 CLKGATE_X cells
+# (pins: CK=clock, E=enable, GCK=gated-clock-out).
+USE_LIGHTER: true
+LIGHTER_DFF_MAP: dir::../lib/NangateOpenCellLibrary_ff_map.v
+
 # ── Linter settings ───────────────────────────────────────────────────────────
 # Verilator in older versions cannot parse bit-slicing on function-call results
 # (e.g. c_sext6(...)[11:0]), which is valid SV-2012.  Yosys handles it fine.
@@ -118,20 +126,20 @@ ERROR_ON_LINTER_ERRORS: false
 USE_SYNLIG: true
 
 # ── Floorplan ─────────────────────────────────────────────────────────────────
-# Absolute die sizing.
+# Absolute die sizing — sized for ~80% overall utilization (macro + std-cell).
 #
-# Each sram_1rw_2048x32 macro is ~318.22 um wide x ~717.09 um tall (estimated;
-# words_per_row=4, half height / double width vs old wpr=2 which was 159.11 x 1434.18 um).
-# Re-run OpenRAM to confirm actual LEF SIZE after changing words_per_row to 4.
+# sram_1rw_1024x64 macro (current LEF, wpr=2): 245.02 x 740.9 um
 # Macro placement (macro_placement.cfg) -- 1x4 single row:
-#   DRAM bank[0/1]: x=20/348,  y=20  (10 um column gap)
-#   IRAM bank[0/1]: x=676/1004, y=20  (10 um column gap)
+#   DRAM bank[0/1]: x=20/348,  y=20  (83 um column gap)
+#   IRAM bank[0/1]: x=676/1004, y=20  (83 um column gap)
 #
-# SRAM row top: 20 + 717 = ~737 um -> standard-cell strip above: y=747 to 1990 (~1243 um tall)
-# SRAM row right edge: 1004 + 318 = ~1322 um -> die width 1400 um (78 um clearance).
+# SRAM row right edge: 1004 + 245.02 = 1249.02 um -> die width 1270 um (20.98 um clearance)
+# SRAM row top:          20 + 740.9  =  760.90 um -> std-cell strip + inter-macro gaps above
+# Area budget (~80% util): macros=726141 um2, cells=96040 um2, total=822181 um2
+#                          die = 1270 x 810 = 1029700 um2 -> util = 79.8%
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1400, 2000]
-CORE_AREA: [10, 10, 1390, 1990]
+DIE_AREA: [0, 0, 1270, 810]
+CORE_AREA: [10, 10, 1260, 800]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -153,7 +161,7 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY: 0.4
+PL_TARGET_DENSITY_PCT: 40
 PL_MACRO_CHANNEL: [10, 10]
 
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
@@ -162,11 +170,12 @@ PL_RESIZER_SETUP_MAX_BUFFER_PCT: 100
 
 # Reduce post-CTS timing margins to avoid over-constraining pre-route repair.
 PL_RESIZER_SETUP_SLACK_MARGIN: 0.01
-# Hold slack margin: 0.03 ns covers the worst observed post-route hold
-# violation (-7.2 ps WNS) with headroom.  Applied at placement, post-CTS, and
+# Hold slack margin: raised to 0.05 ns to absorb the ~40 ps post-route RC
+# degradation observed in the SPEF-based STA (was 0.03 ns, resulting in
+# -10.4 ps WNS post-route).  Applied at placement, post-CTS, and
 # post-global-routing resizer stages.
-PL_RESIZER_HOLD_SLACK_MARGIN: 0.03
-GRT_RESIZER_HOLD_SLACK_MARGIN: 0.03
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.05
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.05
 
 # Stage 36 hold repair can exceed the default hold-buffer budget on this
 # macro-heavy design; raise the cap to prevent RSZ-0060 early termination.
@@ -175,8 +184,16 @@ GRT_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 PL_RESIZER_ALLOW_SETUP_VIOS: true
 PL_RESIZER_FIX_HOLD_FIRST: true
 
+# Max slew/cap repair margins: run repair_design with 10% slew margin and
+# 10% cap margin so that post-route SPEF parasitics (which are ~20% higher
+# than wire-RC estimates) do not reintroduce violations.
+# OpenLane 2 uses DESIGN_REPAIR_MAX_SLEW_PCT / DESIGN_REPAIR_MAX_CAP_PCT
+# (replaces the deprecated PL_RESIZER_MAX_SLEW_MARGIN / _MAX_CAP_MARGIN).
+DESIGN_REPAIR_MAX_SLEW_PCT: 10
+DESIGN_REPAIR_MAX_CAP_PCT: 10
+
 # ── CTS ───────────────────────────────────────────────────────────────────────
-CLOCK_TREE_SYNTH: true
+RUN_CTS: true
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 # Global routing: increase layer count for large die

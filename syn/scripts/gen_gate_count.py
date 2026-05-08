@@ -325,7 +325,7 @@ def main() -> None:
         "    - Gate counts use hierarchical (non-flattening) synthesis.",
         "    - Each module is optimised independently; cross-module sharing",
         "      (as in the main flat synthesis) may differ by ±5–10%.",
-        "    - SRAM macros (sram_1rw_2048x32) are treated as black-boxes",
+        "    - SRAM macros (sram_1rw_1024x64) are treated as black-boxes",
         "      and their area is not included in the NAND2 equivalent count.",
         SEP,
     ]

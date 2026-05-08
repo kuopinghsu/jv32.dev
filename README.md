@@ -413,10 +413,10 @@ Config: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `FAST_MUL=1 (MUL_MC=1
 
 | Metric | Value |
 |---|---|
-| Standard cell area | 72,063 µm² |
-| Logic (pre-P&R) | 86,338 NAND2-eq · post-P&R flat: **90,304 NAND2-eq** |
+| Standard cell area | 68,918 µm² |
+| Logic (pre-P&R) | 85,250 NAND2-eq · post-P&R flat: **86,363 NAND2-eq** |
 | Timing | Setup ✅ MET · Hold ✅ MET (80 MHz, tt_025C_1v10) |
-| Total power | **17.19 mW** (seq 3.41 + comb 3.15 + clk 1.41 + SRAM 9.22) |
+| Total power | **33.93 mW** (seq 3.91 + comb 20.77 + clk 1.56 + SRAM 7.69) |
 | DRC | **0 errors** ✅ |
 
 > Full floorplan, timing, power, DRC, and P&R detail: [syn/REPORT.md](syn/REPORT.md)
@@ -428,8 +428,8 @@ Gate counts from hierarchical Yosys synthesis on Nangate 45 nm (NAND2\_X1 = 0.79
 
 | Config | jv32_soc | jv32_core | jv32_top |
 |---|---:|---:|---:|
-| RV32EC=1 (minimum) | 40,778 NAND2-eq | 26,391 | 30,105 |
-| RV32EC=0 (full, default) | 86,338 NAND2-eq | 53,840 | 57,566 |
+| RV32EC=1 (minimum) | 41,397 NAND2-eq | 26,781 | 30,833 |
+| RV32EC=0 (full, default) | 85,250 NAND2-eq | 52,493 | 56,559 |
 
 > Per-module hierarchy, FF counts, and clock gating breakdown: [syn/README.md](syn/README.md)
 

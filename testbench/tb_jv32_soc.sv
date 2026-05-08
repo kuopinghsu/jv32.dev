@@ -9,7 +9,6 @@
 /* verilator coverage_off */
 module tb_jv32_soc #(
     parameter int unsigned        CLK_FREQ   = 80_000_000,
-    parameter int unsigned        BAUD_RATE  = 115_200,
     parameter bit                 USE_CJTAG  = 1'b0,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,
@@ -560,7 +559,8 @@ module tb_jv32_soc #(
         .IBUF_EN        (IBUF_EN),
         .RV32B_EN       (RV32B_EN),
         .IRAM_BASE      (IRAM_BASE),
-        .DRAM_BASE      (DRAM_BASE)
+        .DRAM_BASE      (DRAM_BASE),
+        .BOOT_ADDR      (BOOT_ADDR)
     ) u_soc (
         .clk             (clk),
         .rst_n           (rst_n),
@@ -653,6 +653,10 @@ module tb_jv32_soc #(
         .perf_bp_jalr        (perf_bp_jalr),
         .heartbeat_o         (heartbeat_o)
     );
+
+    // Lint sink: output signals received but not consumed in simulation
+    logic _unused_tb;
+    assign _unused_tb = &{1'b0, uart_loopback_tx, extram_rlast};
 
 endmodule
 /* verilator coverage_on */

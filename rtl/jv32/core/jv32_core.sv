@@ -982,12 +982,12 @@ module jv32_core #(
     logic [N_TRIGGERS-1:0] trigger_match_vec;  // per-trigger: which trigger(s) matched
 
     // Address-match helper: supports exact (match=0) and NAPOT (match=1)
-    function automatic logic trig_addr_match(input logic [31:0] addr, input logic [31:0] tdata1,
+    function automatic logic trig_addr_match(input logic [31:0] addr, input logic [3:0] tdata1_match,
                                              input logic [31:0] tdata2);
         logic [31:0] napot_p, napot_rmask;
         napot_p     = (~tdata2) & (tdata2 + 32'd1);
         napot_rmask = (napot_p << 1) - 32'd1;
-        case (tdata1[10:7])  // match field
+        case (tdata1_match)  // match field [10:7]
             4'd0:    return (addr == tdata2);
             4'd1:    return (((addr ^ tdata2) & ~napot_rmask) == 32'd0);
             default: return (addr == tdata2);
@@ -1008,12 +1008,16 @@ module jv32_core #(
                     trigger_match_vec[i] = 1'b1;
                 end
                 // Store trigger: match effective address (timing=before)
-                if (tdata1_i[i][1] && dec_mem_write && trig_addr_match(mem_addr_ex, tdata1_i[i], tdata2_i[i])) begin
+                if (tdata1_i[i][1] && dec_mem_write && trig_addr_match(
+                        mem_addr_ex, tdata1_i[i][10:7], tdata2_i[i]
+                    )) begin
                     trigger_match        = 1'b1;
                     trigger_match_vec[i] = 1'b1;
                 end
                 // Load trigger: match effective address (timing=before)
-                if (tdata1_i[i][0] && dec_mem_read && trig_addr_match(mem_addr_ex, tdata1_i[i], tdata2_i[i])) begin
+                if (tdata1_i[i][0] && dec_mem_read && trig_addr_match(
+                        mem_addr_ex, tdata1_i[i][10:7], tdata2_i[i]
+                    )) begin
                     trigger_match        = 1'b1;
                     trigger_match_vec[i] = 1'b1;
                 end

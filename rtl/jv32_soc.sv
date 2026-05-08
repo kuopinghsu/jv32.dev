@@ -826,6 +826,7 @@ module jv32_soc #(
     jv32_top #(
         .RV32E_EN  (RV32E_EN),
         .RV32M_EN  (RV32M_EN),
+        .AMO_EN    (AMO_EN),
         .FAST_MUL  (FAST_MUL),
         .MUL_MC    (MUL_MC),
         .FAST_DIV  (FAST_DIV),

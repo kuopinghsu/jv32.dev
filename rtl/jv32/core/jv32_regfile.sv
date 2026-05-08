@@ -59,6 +59,22 @@ module jv32_regfile #(
 
     logic [31:0] regs[NREGS-1:1];  // x0 is hardwired to 0
 
+    // Read mux: explicit loop over valid indices [1..NREGS-1] with a constant index.
+    // Yosys treats regs[constant] as a direct wire — no variable-index mux tree is
+    // generated, so index 0 (absent from regs[NREGS-1:1]) is never referenced and
+    // the Yosys CHECK pass reports no undriven-wire errors.
+    logic [31:0] rs1_mux, rs2_mux, dbg_mux;
+    always_comb begin
+        rs1_mux = 32'd0;
+        rs2_mux = 32'd0;
+        dbg_mux = 32'd0;
+        for (int i = 1; i < NREGS; i++) begin
+            if (rs1_addr == 5'(i)) rs1_mux = regs[i];
+            if (rs2_addr == 5'(i)) rs2_mux = regs[i];
+            if (dbg_addr == 5'(i)) dbg_mux = regs[i];
+        end
+    end
+
     // Pipeline read ports: pure registered reads, no write-through.
     //
     // WB->EX forwarding for non-load results is handled entirely by the
@@ -72,14 +88,14 @@ module jv32_regfile #(
     // For load results, the load-use stall guarantees that regs[] is
     // updated one full cycle before the dependent instruction enters EX,
     // so a registered read is always correct.
-    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs1_addr[4]) ? 32'd0 : regs[rs1_addr];
-    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs2_addr[4]) ? 32'd0 : regs[rs2_addr];
+    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs1_addr[4]) ? 32'd0 : rs1_mux;
+    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : (RV32E_EN && rs2_addr[4]) ? 32'd0 : rs2_mux;
 
     assign dbg_rdata = (dbg_addr == 5'd0)                    ? 32'd0     :
                        (RV32E_EN && dbg_addr[4])             ? 32'd0     :
                        (dbg_we)                              ? dbg_wdata :
                        (we && (dbg_addr == rd_addr))         ? rd_data   :
-                       regs[dbg_addr];
+                       dbg_mux;
 
     // Synchronous write
     always_ff @(posedge clk) begin

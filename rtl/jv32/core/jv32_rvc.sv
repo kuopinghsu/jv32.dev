@@ -74,6 +74,11 @@ module jv32_rvc #(
         c_sext6 = {{26{v[5]}}, v};
     endfunction
 
+    // c_imm6: sign-extend 6-bit value to 12-bit I-type immediate field
+    function automatic logic [11:0] c_imm6(input logic [5:0] v);
+        c_imm6 = {{6{v[5]}}, v};
+    endfunction
+
     function automatic logic [31:0] c_sext9(input logic [8:0] v);
         c_sext9 = {{23{v[8]}}, v};
     endfunction
@@ -86,20 +91,24 @@ module jv32_rvc #(
         c_sext12 = {{20{v[11]}}, v};
     endfunction
 
-    function automatic logic [31:0] c_j_off(input logic [15:0] ci);
-        c_j_off = c_sext12({ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3], 1'b0});
+    // c_j_off: J-type offset [20:1] from C.JAL/C.J encoding (inlined sign-extension, no temp needed)
+    function automatic logic [20:1] c_j_off(input logic [12:2] ci);
+        c_j_off = {{9{ci[12]}}, ci[12], ci[8], ci[10:9], ci[6], ci[7], ci[2], ci[11], ci[5:3]};
     endfunction
 
-    function automatic logic [31:0] c_b_off(input logic [15:0] ci);
-        c_b_off = c_sext9({ci[12], ci[6:5], ci[2], ci[11:10], ci[4:3], 1'b0});
+    // c_b_off: B-type offset [12:1] from C.BEQZ/C.BNEZ encoding (inlined sign-extension, no temp needed)
+    function automatic logic [12:1] c_b_off(input logic [2:0] ci_hi, input logic [4:0] ci_lo);
+        c_b_off = {{4{ci_hi[2]}}, ci_hi[2], ci_lo[4:3], ci_lo[0], ci_hi[1:0], ci_lo[2:1]};
     endfunction
 
-    function automatic logic [31:0] enc_jal(input logic [4:0] rd, input logic [31:0] im);
+    // enc_jal: encode J-type instruction; im[20:1] are the offset bits (bit 0 always 0)
+    function automatic logic [31:0] enc_jal(input logic [4:0] rd, input logic [20:1] im);
         enc_jal = {im[20], im[10:1], im[11], im[19:12], rd, 7'h6F};
     endfunction
 
+    // enc_br: encode B-type instruction; im[12:1] are the offset bits (bit 0 always 0)
     function automatic logic [31:0] enc_br(input logic [2:0] f3, input logic [4:0] rs1, input logic [4:0] rs2,
-                                           input logic [31:0] im);
+                                           input logic [12:1] im);
         enc_br = {im[12], im[10:5], rs2, rs1, f3, im[4:1], im[11], 7'h63};
     endfunction
 
@@ -108,8 +117,8 @@ module jv32_rvc #(
         logic [2:0] funct3;
         logic [4:0] rd_rs1, rs2, rd_p, rs1_p, rs2_p;
         logic [11:0] nzuimm12, uimm12;
-        logic [31:0] nzimm, imm;
-        logic [31:0] _sext;  // intermediate for bit-slicing function results
+        logic [31:0] nzimm;
+        logic [11:0] _sext;  // lower 12 bits of sign-extended value (I-type immediate field)
         logic        f1;
         logic [ 1:0] f2_low;
 
@@ -120,7 +129,6 @@ module jv32_rvc #(
         nzuimm12 = '0;
         uimm12   = '0;
         nzimm    = '0;
-        imm      = '0;
         _sext    = '0;
         f1       = '0;
         f2_low   = '0;
@@ -168,13 +176,13 @@ module jv32_rvc #(
                 rd_rs1 = ci[11:7];
                 case (funct3)
                     3'h0: begin
-                        _sext    = c_sext6({ci[12], ci[6:2]});
-                        expand_c = {_sext[11:0], rd_rs1, 3'h0, rd_rs1, 7'h13};
+                        _sext    = c_imm6({ci[12], ci[6:2]});
+                        expand_c = {_sext, rd_rs1, 3'h0, rd_rs1, 7'h13};
                     end
-                    3'h1:    expand_c = enc_jal(5'd1, c_j_off(ci));
+                    3'h1:    expand_c = enc_jal(5'd1, c_j_off(ci[12:2]));
                     3'h2: begin
-                        _sext    = c_sext6({ci[12], ci[6:2]});
-                        expand_c = {_sext[11:0], 5'd0, 3'h0, rd_rs1, 7'h13};
+                        _sext    = c_imm6({ci[12], ci[6:2]});
+                        expand_c = {_sext, 5'd0, 3'h0, rd_rs1, 7'h13};
                     end
                     3'h3: begin
                         if (rd_rs1 == 5'd2) begin
@@ -194,8 +202,8 @@ module jv32_rvc #(
                             2'h0:    expand_c = {7'h00, ci[6:2], rd_p, 3'h5, rd_p, 7'h13};
                             2'h1:    expand_c = {7'h20, ci[6:2], rd_p, 3'h5, rd_p, 7'h13};
                             2'h2: begin
-                                _sext    = c_sext6({ci[12], ci[6:2]});
-                                expand_c = {_sext[11:0], rd_p, 3'h7, rd_p, 7'h13};
+                                _sext    = c_imm6({ci[12], ci[6:2]});
+                                expand_c = {_sext, rd_p, 3'h7, rd_p, 7'h13};
                             end
                             2'h3: begin
                                 f1     = ci[12];
@@ -228,9 +236,9 @@ module jv32_rvc #(
                             /* verilator coverage_on */
                         endcase
                     end
-                    3'h5:    expand_c = enc_jal(5'd0, c_j_off(ci));
-                    3'h6:    expand_c = enc_br(3'h0, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci));
-                    3'h7:    expand_c = enc_br(3'h1, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci));
+                    3'h5:    expand_c = enc_jal(5'd0, c_j_off(ci[12:2]));
+                    3'h6:    expand_c = enc_br(3'h0, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci[12:10], ci[6:2]));
+                    3'h7:    expand_c = enc_br(3'h1, {2'b01, ci[9:7]}, 5'd0, c_b_off(ci[12:10], ci[6:2]));
                     /* verilator coverage_off */  // funct3 is 3-bit: 0-7 exhaustive
                     default: expand_c = 32'h0;
                     /* verilator coverage_on */

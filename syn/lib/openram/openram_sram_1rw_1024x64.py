@@ -7,7 +7,7 @@ import os
 num_words       = 1024
 word_size       = 64
 write_size      = 8   # byte write enables: wmask0[7:0]
-words_per_row   = 2   # 512 rows, 10-bit decoder; wider aspect ratio
+words_per_row   = 4   # 256 rows, 8-bit column decode; ~2:1 width/height ratio
 
 # ── Technology ───────────────────────────────────────────────────────────────
 tech_name       = "freepdk45"
