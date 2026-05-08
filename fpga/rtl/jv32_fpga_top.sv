@@ -112,7 +112,7 @@ module jv32_fpga_top #(
         // cJTAG: SoC drives TMSC and controls output-enable
         assign tmsc_out   = soc_tms_o;
         assign tmsc_oe_n  = soc_tms_oe;
-        assign jtag_tdo_o = 1'b0;  // TDO pin (E12) unused in cJTAG – drive 0
+        assign jtag_tdo_o = soc_tdo_o;  // Route TAP TDO to J12 (ADBUS2) for OScan1 TDO read-back
     end else begin : g_jtag_io
         // JTAG: TMS is always an input – permanently tristate the IOBUF
         assign tmsc_out   = 1'b0;
