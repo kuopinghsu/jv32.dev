@@ -126,20 +126,24 @@ ERROR_ON_LINTER_ERRORS: false
 USE_SYNLIG: true
 
 # ── Floorplan ─────────────────────────────────────────────────────────────────
-# Absolute die sizing — sized for ~80% overall utilization (macro + std-cell).
+# Absolute die sizing.
 #
-# sram_1rw_1024x64 macro (current LEF, wpr=2): 245.02 x 740.9 um
-# Macro placement (macro_placement.cfg) -- 1x4 single row:
-#   DRAM bank[0/1]: x=20/348,  y=20  (83 um column gap)
-#   IRAM bank[0/1]: x=676/1004, y=20  (83 um column gap)
+# sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
+# Macro placement (macro_placement.cfg) -- 1x4 single row, 12 um inter-macro gap:
+#   DRAM bank[0/1]: x=10/270,  y=20  (12 um gap)
+#   IRAM bank[0/1]: x=530/790, y=20  (12 um gap)
 #
-# SRAM row right edge: 1004 + 245.02 = 1249.02 um -> die width 1270 um (20.98 um clearance)
-# SRAM row top:          20 + 740.9  =  760.90 um -> std-cell strip + inter-macro gaps above
-# Area budget (~80% util): macros=726141 um2, cells=96040 um2, total=822181 um2
-#                          die = 1270 x 810 = 1029700 um2 -> util = 79.8%
+# SRAM cluster right edge: 790 + 247.88 = 1037.88 um
+# Right clearance to core boundary: 1080 - 1037.88 = 42.12 um
+# SRAM row top:  20 + 386.12 = 406.12 um -> logic strip above (406.12 to 670 = 263.9 um)
+#
+# Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
+#               std cells (post-P&R) = 68,918 um2
+#               core area = 1080 x 660 = 712,800 um2  -> core util = 63.4%
+#               die  = 1100 x 680 = 748,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1270, 810]
-CORE_AREA: [10, 10, 1260, 800]
+DIE_AREA: [0, 0, 1100, 680]
+CORE_AREA: [10, 10, 1090, 670]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -161,7 +165,8 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY_PCT: 40
+PL_TARGET_DENSITY_PCT: 45
+PL_MAX_PHI_COEFFICIENT: 4.0
 PL_MACRO_CHANNEL: [10, 10]
 
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy

@@ -31,12 +31,12 @@
 
 | Metric | Value |
 |---|---|
-| Die area | 1028700 µm² = 1.029 mm² |
-| Core area | 985108 µm² = 0.985 mm² |
-| Standard cell area | 68918 µm² |
-| Macro area | 382846 µm² |
-| Total instance utilization | 45.9% |
-| Std cell utilization | 11.44% |
+| Die area | 748,000 µm² = 0.748 mm² |
+| Core area | 712,800 µm² = 0.713 mm² |
+| Standard cell area | 68,918 µm² |
+| Macro area | 382,846 µm² |
+| Total instance utilization | 63.4% |
+| Std cell utilization | 9.67% |
 
 ---
 

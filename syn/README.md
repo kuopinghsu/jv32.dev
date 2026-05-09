@@ -148,7 +148,7 @@ make gen-mem IRAM_SIZE=65536 DRAM_SIZE=65536
 The `openlane/config.yaml` targets:
 - **PDK**: `freepdk45` (Nangate 45nm Open Cell Library)
 - **Clock**: 80 MHz (12.5 ns period)
-- **Core utilisation**: 40% placement density (`PL_TARGET_DENSITY: 0.4`)
+- **Core utilisation**: 45% placement density (`PL_TARGET_DENSITY: 0.45`)
 - **Global routing**: up to Metal9
 
 The custom PDK configuration lives in `pdk/freepdk45/libs.tech/openlane/`.
@@ -330,4 +330,4 @@ KLayout view of the completed place-and-route GDS (`build/openlane_run/*/final/g
 
 ![jv32 SoC GDS layout — KLayout view](layout.png)
 
-The four white rectangles at the bottom are the hardened SRAM macros (`sram_1rw_1024x64`, 4× for the TCM — 2 IRAM + 2 DRAM banks, 247.88 × 386.12 µm each, `words_per_row=4`).  The dense salmon-coloured region above is the placed standard-cell logic (jv32_core + JTAG/DTM + AXI peripherals); the blue horizontal stripes are metal power/ground rails.  Die: 1270 × 810 µm.
+The four white rectangles at the bottom are the hardened SRAM macros (`sram_1rw_1024x64`, 4× for the TCM — 2 IRAM + 2 DRAM banks, 247.88 × 386.12 µm each, `words_per_row=4`).  The dense salmon-coloured region above is the placed standard-cell logic (jv32_core + JTAG/DTM + AXI peripherals); the blue horizontal stripes are metal power/ground rails.  Die: 1100 × 680 µm.
