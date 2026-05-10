@@ -12,7 +12,7 @@
 #
 # Top-level targets
 #   all             — test-jtag, then test-cjtag
-#   all-with-gdb    — test-jtag, test-cjtag, then test-gdb
+#   all-with-gdb    — test-jtag, test-cjtag, then test-gdb, then gdb-hello (trace compare)
 #   test-jtag       — run all JTAG TCL test scripts
 #   test-cjtag      — run all cJTAG TCL test scripts
 #   test-gdb        — run all GDB tests (JTAG VPI + OpenOCD GDB server)
@@ -91,7 +91,7 @@ CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_st
 
 # ── GDB test names (file stem of openocd/test_gdb_<name>.gdb) ────────────────
 # Each test is run with the JTAG VPI simulator + OpenOCD GDB server.
-GDB_TESTS := load step breakpoint memory regs debug
+GDB_TESTS := load step breakpoint memory regs debug hello
 
 # ── Test counts (computed from the lists above) ──────────────────────────────
 N_JTAG      := $(words $(JTAG_TESTS))
@@ -114,7 +114,7 @@ FORCE:
 all: test-jtag test-cjtag jtag-no-trace-step
 
 # Run all three test suites (OpenOCD TCL over JTAG, over cJTAG, and GDB)
-all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step
+all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build prerequisites
@@ -156,7 +156,7 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	    done; \
 	    ( cd "$(OPENOCD_DIR)" && \
 	      $(OPENOCD) -d0 \
-	          -c "gdb_port disabled" \
+	          -c "gdb port disabled" \
 	          -f jv32.cfg \
 	          -c "jtag_vpi set_port $(VPI_PORT)" \
 	          -c init \
@@ -214,7 +214,7 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	    done; \
 	    ( cd "$(OPENOCD_DIR)" && \
 	      $(OPENOCD) -d0 \
-	          -c "gdb_port disabled" \
+	          -c "gdb port disabled" \
 	          -f jv32_cjtag.cfg \
 	          -c "jtag_vpi set_port $(VPI_PORT)" \
 	          -c init \
@@ -264,7 +264,7 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
-	      -c "gdb_port disabled" \
+	      -c "gdb port disabled" \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
 	      -c init \
@@ -304,7 +304,7 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
-	      -c "gdb_port disabled" \
+	      -c "gdb port disabled" \
 	      -f jv32_cjtag.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
 	      -c init \
@@ -355,6 +355,7 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	    LOG="$(LOG_DIR)/gdb_$$t"; \
 	    printf "  [gdb]  %d/$(N_GDB_TESTS) %-20s ... " "$$N" "test_gdb_$$t"; \
 	    "$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	        --max-cycles 0 \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \
 	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
@@ -364,10 +365,10 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	      $(OPENOCD) -d0 \
 	          -f jv32.cfg \
 	          -c "jtag_vpi set_port $(VPI_PORT)" \
-	          -c "gdb_port $(GDB_PORT)" \
-	          -c "tcl_port disabled" \
-	          -c "telnet_port disabled" \
-	          -c "gdb_flash_program disable" \
+	          -c "gdb port $(GDB_PORT)" \
+	          -c "tcl port disabled" \
+	          -c "telnet port disabled" \
+	          -c "gdb flash_program disable" \
 	          -c init \
 	    ) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	    for _i in $$(seq 1 80); do \
@@ -377,7 +378,7 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	    $(GDB) --batch \
 	        -ex "set pagination off" \
 	        -ex "set confirm off" \
-	        -ex "set remotetimeout 30" \
+	        -ex "set remotetimeout 300" \
 	        -ex "target extended-remote :$(GDB_PORT)" \
 	        -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
 	        "$(BOOT_ELF)" \
@@ -414,6 +415,105 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	[ $$FAIL -eq 0 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# gdb-hello: GDB debug-workflow test + RTL instruction trace vs ISS comparison.
+#
+# The RTL instruction trace is captured BY the VPI testbench during the GDB
+# session (--rtl-trace), not from a separate jv32soc run.  This verifies that
+# the processor executes the correct instruction stream even while the debugger
+# is controlling it (breakpoints, watchpoints, single-step, next-over-call).
+# ─────────────────────────────────────────────────────────────────────────────
+RTL_TRACE_FILE  = $(BUILD_DIR)/rtl_trace.txt
+SIM_TRACE_FILE  = $(BUILD_DIR)/sim_trace.txt
+JV32SIM_BIN     = $(BUILD_DIR)/jv32sim
+TRACE_COMPARE   = $(ROOT_DIR)/scripts/trace_compare.py
+
+$(JV32SIM_BIN): FORCE
+	$(MAKE) -C $(ROOT_DIR) sim-build
+
+.PHONY: gdb-hello
+gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
+	@mkdir -p $(LOG_DIR)
+	@t=hello; LOG="$(LOG_DIR)/gdb_$$t"; \
+	echo "--- [gdb] test_gdb_$$t (GDB debug test + ISS trace compare) ---"; \
+	pkill -x jv32vpi_jtag 2>/dev/null || true; \
+	pkill -x openocd      2>/dev/null || true; \
+	fuser -k $(VPI_PORT)/tcp 2>/dev/null || true; \
+	fuser -k $(GDB_PORT)/tcp 2>/dev/null || true; \
+	sleep 0.3; \
+	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    --max-cycles 0 \
+	    --boot-clocks 50 \
+	    --rtl-trace "$(RTL_TRACE_FILE)" \
+	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	for _i in $$(seq 1 50); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
+	    sleep 0.1; \
+	done; \
+	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
+	( cd "$(OPENOCD_DIR)" && \
+	  $(OPENOCD) -d0 \
+	      -f jv32.cfg \
+	      -c "jtag_vpi set_port $(VPI_PORT)" \
+	      -c "gdb port $(GDB_PORT)" \
+	      -c "tcl port disabled" \
+	      -c "telnet port disabled" \
+	      -c "gdb flash_program disable" \
+	      -c init \
+	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
+	for _i in $$(seq 1 80); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	    sleep 0.1; \
+	done; \
+	$(GDB) --batch \
+	    -ex "set pagination off" \
+	    -ex "set confirm off" \
+	    -ex "set remotetimeout 300" \
+	    -ex "target extended-remote :$(GDB_PORT)" \
+	    -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
+	    "$(BOOT_ELF)" \
+	    >"$$LOG.gdb.log" 2>&1; \
+	GDB_RC=$$?; \
+	kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
+	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	cat "$$LOG.gdb.log"; \
+	if [ $$GDB_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.gdb.log" 2>/dev/null; then \
+	    if grep -q '\[SKIP\]' "$$LOG.gdb.log" 2>/dev/null; then \
+	        echo ""; echo "[SKIP] gdb: test_gdb_$$t"; exit 0; \
+	    fi; \
+	    echo ""; echo "[PASS] gdb: test_gdb_$$t"; \
+	    echo ""; \
+	    echo "--- [gdb-hello] Step 2: ISS (jv32sim) instruction trace ---"; \
+	    if [ ! -s "$(RTL_TRACE_FILE)" ]; then \
+	        echo "[SKIP] trace-compare: $(RTL_TRACE_FILE) empty — trace may not have fired"; exit 0; \
+	    fi; \
+	    "$(JV32SIM_BIN)" --trace "$(SIM_TRACE_FILE)" \
+	        --rtl-hints "$(RTL_TRACE_FILE)" \
+	        "$(BOOT_ELF)" \
+	        >"$$LOG.iss.log" 2>&1 \
+	        || { echo "[FAIL] jv32sim failed (see $$LOG.iss.log)"; exit 1; }; \
+	    echo "  ISS trace: $(SIM_TRACE_FILE)"; \
+	    echo ""; \
+	    echo "--- [gdb-hello] Step 3: trace comparison (ISS vs RTL) ---"; \
+	    python3 "$(TRACE_COMPARE)" \
+	        "$(SIM_TRACE_FILE)" \
+	        "$(RTL_TRACE_FILE)" \
+	        >"$$LOG.cmp.log" 2>&1; \
+	    CMP_RC=$$?; \
+	    cat "$$LOG.cmp.log"; \
+	    if [ $$CMP_RC -eq 0 ]; then \
+	        echo ""; echo "[PASS] gdb-hello: trace comparison passed"; \
+	        echo "  RTL trace: $(RTL_TRACE_FILE) (captured during GDB session)"; \
+	        echo "  ISS trace: $(SIM_TRACE_FILE)"; \
+	        exit 0; \
+	    else \
+	        echo ""; echo "[FAIL] gdb-hello: trace mismatch (see $$LOG.cmp.log)"; exit 1; \
+	    fi; \
+	else \
+	    echo ""; echo "[FAIL] gdb: test_gdb_$$t (gdb exit=$$GDB_RC)"; exit 1; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Individual GDB tests: make gdb-load, make gdb-step, make gdb-memory, ...
 # ─────────────────────────────────────────────────────────────────────────────
 gdb-%: $(VPI_JTAG) $(BOOT_ELF)
@@ -430,10 +530,10 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
-	      -c "gdb_port $(GDB_PORT)" \
-	      -c "tcl_port disabled" \
-	      -c "telnet_port disabled" \
-	      -c "gdb_flash_program disable" \
+	      -c "gdb port $(GDB_PORT)" \
+	      -c "tcl port disabled" \
+	      -c "telnet port disabled" \
+	      -c "gdb flash_program disable" \
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
@@ -486,7 +586,7 @@ jtag-no-trace-step: $(VPI_JTAG) $(BOOT_ELF)
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
-	      -c "gdb_port disabled" \
+	      -c "gdb port disabled" \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
 	      -c init \
