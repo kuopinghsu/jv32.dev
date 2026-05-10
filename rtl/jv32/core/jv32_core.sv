@@ -373,6 +373,7 @@ module jv32_core #(
     logic              bp_ras_push;
     logic              bp_ras_pop;
     logic       [31:0] bp_ras_top;
+    logic              ras_not_empty;  // 1 when RAS has at least one valid entry
 
     // Forward declarations - defined in the D-mem / WB section below
     logic              dmem_resp_valid_rd;
@@ -444,14 +445,37 @@ module jv32_core #(
     // dbg_enter_debug (EBREAK), trigger_match, or halt_req.  It ensures the
     // reported DPC reflects the actual halted instruction even after the pipeline
     // is flushed and pc_if has advanced further.
+    // For single-step DPC: we must capture the successor PC in the SAME cycle
+    // as trace_retire fires, because that is the only cycle where ex_wb_r
+    // reliably holds the retiring instruction.  trace_valid_r is the registered
+    // version (one cycle later); by then ex_wb_r may be a bubble or the next
+    // instruction, giving a wrong DPC (e.g. 0+2 = 0x2 → instruction-access fault).
+    //
+    // step_dpc_latch is loaded at the posedge where trace_retire=1 (same posedge
+    // that sets trace_valid_r<=1).  The halt actually fires one cycle later (when
+    // trace_valid_r=1), so dbg_halt_pc_r picks up step_dpc_latch which is stable.
+    //
+    // ex_wb_r.step_redirect: set for JAL, JALR, taken-branch, fence.i — any case
+    // where the sequential PC+size is not the correct next instruction.
+    logic        trace_retire;  // one-cycle retire pulse — assign near trace logic block
+    logic [31:0] step_dpc_latch;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) step_dpc_latch <= BOOT_ADDR;
+        else if (trace_retire)
+            step_dpc_latch <= ex_wb_r.step_redirect
+                              ? ex_wb_r.redirect_pc
+                              : ex_wb_r.pc + ((ex_wb_r.orig_instr[1:0] == 2'b11) ? 32'd4 : 32'd2);
+    end
+
     logic [31:0] dbg_halt_pc_r;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) dbg_halt_pc_r <= BOOT_ADDR;
         else if (dbg_pc_we_i) dbg_halt_pc_r <= dbg_pc_wdata_i;  // PC write from debugger
         else if (dbg_step_pending_r && trace_valid_r)
-            // For single-step, DPC must point to the next instruction.
-            dbg_halt_pc_r <= ex_wb_r.pc + ((ex_wb_r.orig_instr[1:0] == 2'b11) ? 32'd4 : 32'd2);
+            // Single-step: DPC = pre-computed successor PC (captured at trace_retire time,
+            // before ex_wb_r could advance to the next instruction or become a bubble).
+            dbg_halt_pc_r <= step_dpc_latch;
         else if ((dbg_enter_debug || trigger_match || (halt_req_i && !dbg_halted_r)) && if_ex_r.valid)
             dbg_halt_pc_r <= if_ex_r.pc;  // latch at halt
     end
@@ -569,21 +593,30 @@ module jv32_core #(
     // RAS_EN is forced off for RV32E minimum configurations (RV32E_EN=1)
     localparam bit RAS_ACTIVE = RAS_EN && !RV32E_EN;
 
-    // Push: any JAL or JALR that writes a link register (call instruction)
+    // Push: any JAL or JALR that writes a link register (call instruction).
+    // Gated by !dbg_halted_r: when the core is in debug halt, stale instructions
+    // buffered in the IBUF must not modify the RAS (they will be discarded on resume).
     assign bp_ras_push = BP_EN && RAS_ACTIVE && rvc_instr_valid && !if_stall && !if_flush
+                         && !dbg_halted_r
                          && (bp_is_jal || bp_is_jalr) && bp_rd_is_link;
 
-    // Pop: JALR that reads a link register and does not write one (return)
+    // Pop: JALR that reads a link register and does not write one (return).
+    // Guard with ras_not_empty: do not redirect (and do not pop) when the RAS
+    // has no entries — the hardware init value (0x0) would cause a spurious
+    // I-fetch to address 0 that the stale-fetch suppressor cannot always catch.
+    // Also gated by !dbg_halted_r to prevent stale-IBUF RAS corruption during halts.
     assign bp_ras_pop  = BP_EN && RAS_ACTIVE && rvc_instr_valid && !if_stall && !if_flush
-                         && bp_is_jalr && bp_rs1_is_link && !bp_rd_is_link;
+                         && !dbg_halted_r
+                         && bp_is_jalr && bp_rs1_is_link && !bp_rd_is_link && ras_not_empty;
 
     // Redirect for:
     //   - Backward-taken branches (BTFNT: imm[31]=1 means negative offset)
     //   - L0-hit branches that were recently resolved as taken (any direction)
     //   - All JAL instructions (always-taken unconditional jump)
     //   - JALR return instructions predicted by the RAS
-    // Suppress if a higher-priority flush is in flight or pipeline is stalled.
-    assign bp_redirect = BP_EN && rvc_instr_valid && !if_stall && !if_flush &&
+    // Suppress if a higher-priority flush is in flight, pipeline is stalled, or
+    // the core is in debug halt (stale IBUF instructions must not redirect the IBUF).
+    assign bp_redirect = BP_EN && rvc_instr_valid && !if_stall && !if_flush && !dbg_halted_r &&
                          ((bp_is_branch && (rvc_instr_data[31] || bp_l0_hit)) || bp_is_jal ||
                           bp_ras_pop);
 
@@ -790,6 +823,7 @@ module jv32_core #(
 
             assign ras_rd_ptr     = ras_wr_ptr - RAS_BITS'(1);
             assign bp_ras_top     = ras_stack[ras_rd_ptr];
+            assign ras_not_empty  = (ras_wr_ptr != '0);
 
             // Link address to push: next sequential PC after the call instruction
             assign bp_ras_push_pc = rvc_instr_pc + (rvc_is_compressed ? 32'd2 : 32'd4);
@@ -799,8 +833,16 @@ module jv32_core #(
                     ras_wr_ptr <= '0;
                     for (int i = 0; i < RAS_DEPTH; i++) ras_stack[i] <= 32'h0;
                 end
-                else if (wb_redirect || dbg_pc_we_i) begin
-                    // Flush on non-speculative redirect (exception/mret/interrupt/debug)
+                else if (wb_redirect) begin
+                    // Flush on non-speculative redirect (exception/mret/interrupt).
+                    // NOTE: dbg_pc_we_i (CMD_DONE) is intentionally excluded: every
+                    // abstract-command completion fires dbg_pc_we_i=1, which would
+                    // spuriously reset ras_wr_ptr to 0 during a debug halt, making
+                    // the RAS appear empty.  The first ret after resume would then
+                    // read ras_stack[depth-1] = 0x0 and speculatively fetch from
+                    // address 0, crashing the simulation.  After a debug resume the
+                    // IBUF is flushed to DPC; any RAS misprediction on the first ret
+                    // is corrected by the EX redirect as normal.
                     ras_wr_ptr <= '0;
                 end
                 else if (bp_ras_push && bp_ras_pop) begin
@@ -818,7 +860,8 @@ module jv32_core #(
         end
         else begin : g_ras_disabled
             // RAS_ACTIVE=0: no FFs instantiated; bp_ras_top is a constant zero.
-            assign bp_ras_top = 32'h0;
+            assign bp_ras_top    = 32'h0;
+            assign ras_not_empty = 1'b0;
         end
     endgenerate
 
@@ -830,12 +873,10 @@ module jv32_core #(
         redirect_pc_ex = 32'h0;
         if (if_ex_r.valid) begin
             if (dec_jal) begin
-                // If the front-end already pre-decoded this JAL (bp_taken=1),
-                // pc_if is already pointing at the target -- no EX redirect needed.
-                if (!if_ex_r.bp_taken) begin
-                    redirect_ex    = 1'b1;
-                    redirect_pc_ex = pc_ex + dec_imm;
-                end
+                // Always compute target so ex_wb_r.redirect_pc is valid for step-DPC.
+                // No EX redirect needed when the front-end already pre-decoded this JAL.
+                redirect_pc_ex = pc_ex + dec_imm;
+                if (!if_ex_r.bp_taken) redirect_ex = 1'b1;
             end
             if (dec_jalr) begin
                 // If the RAS pre-predicted this return (bp_taken=1), suppress the EX
@@ -845,11 +886,14 @@ module jv32_core #(
                 redirect_ex    = !if_ex_r.bp_taken || (redirect_pc_ex != if_ex_r.bp_pred_pc);
             end
             if (dec_branch) begin
+                if (branch_taken)
+                    // Always compute branch target for step-DPC even when the front-end
+                    // correctly predicted taken (redirect_ex=0 in that case).
+                    redirect_pc_ex = branch_target;
                 if (!BP_EN) begin
                     // Predict-not-taken fallback
                     if (branch_taken) begin
-                        redirect_ex    = 1'b1;
-                        redirect_pc_ex = branch_target;
+                        redirect_ex = 1'b1;
                     end
                 end
                 else begin
@@ -857,8 +901,7 @@ module jv32_core #(
                     if (branch_taken && !if_ex_r.bp_taken)
                         // predicted not-taken, actually taken
                         begin
-                        redirect_ex    = 1'b1;
-                        redirect_pc_ex = branch_target;
+                        redirect_ex = 1'b1;
                     end
                     else if (!branch_taken && if_ex_r.bp_taken)
                         // predicted taken, actually not-taken -> squash speculative fetch
@@ -1415,25 +1458,32 @@ module jv32_core #(
     end
 
     // Multi-cycle ALU stall
-    assign alu_stall         = if_ex_r.valid && !alu_ready;
+    assign alu_stall = if_ex_r.valid && !alu_ready;
 
     // Operand stall: forwarding not yet available (load in WB not done)
     assign alu_operand_stall = load_use_stall;
 
     // External EX holds can delay retirement of a completed multi-cycle ALU op.
-    assign alu_result_hold   = dmem_stall || dbg_halted_r;
+    assign alu_result_hold = dmem_stall || dbg_halted_r;
 
     // =====================================================================
     // Hazard control
     // =====================================================================
     // ex_stall: stall EX stage (freeze EX/WB, freeze IF/EX, hold IF)
-    assign ex_stall          = dmem_stall || alu_stall || dbg_halted_r;
+    assign ex_stall = dmem_stall || alu_stall || dbg_halted_r;
 
     // if_stall: hold IF (do not advance PC or consume RVC output)
-    assign if_stall          = ex_stall || load_use_stall;
+    assign if_stall = ex_stall || load_use_stall;
 
     // WB retirement pulse (single-cycle commit point for side effects).
-    assign wb_retire         = ex_wb_r.valid && !ex_stall && !dbg_halted_r;
+    // Block retire at the exact cycle the step-halt fires (trace_valid_r=1 or
+    // dbg_step_fire_r=1 while step pending): the instruction in WB at that cycle
+    // is the one FOLLOWING the stepped instruction (already pipelined due to
+    // IBUF pre-fetch + forwarding).  Without this gate it retires and the debugger
+    // sees a spurious double-execution.  The frozen WB slot is discarded by the
+    // ex_wb_r<=0 clear that fires on the subsequent resume.
+    assign wb_retire         = ex_wb_r.valid && !ex_stall && !dbg_halted_r
+                               && !(dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r));
 
     // -------------------------------------------------------------------------
     // WB-phase data-memory fault: AXI DECERR on load or store response.
@@ -1452,10 +1502,20 @@ module jv32_core #(
                         : ex_wb_r.exc_cause;
     assign wb_exc_tval = dmem_fault_active ? ex_wb_r.mem_addr : ex_wb_r.exc_tval;
 
-    // Flush IF stage when branch/jump/exception/interrupt redirect
+    logic dbg_resume_flush;
+    assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r;
+
+    // Flush IF stage when branch/jump/exception/interrupt redirect, or debug resume
     always_comb begin
         if_flush    = 1'b0;
         if_flush_pc = BOOT_ADDR;
+        // Debug resume: flush pc_if back to DPC so the hart re-fetches from the
+        // correct address.  Must come first (highest priority) so stale pc_if
+        // accumulated during a halt does not drive the first post-resume fetch.
+        if (dbg_resume_flush) begin
+            if_flush    = 1'b1;
+            if_flush_pc = dbg_halt_pc_r;
+        end
         // WB redirects (exception, mret, interrupt take priority)
         if (wb_exception) begin
             if_flush    = 1'b1;
@@ -1515,15 +1575,12 @@ module jv32_core #(
     // Debug PC writes also flush any stale prefetched halfword(s).
     // Debug resume flushes the RVC buffer to discard any instruction buffered
     // while the core was halted (prevents stale instructions from executing on step).
-    logic dbg_resume_flush;
-
-    assign dbg_resume_flush = resume_req_i && dbg_halted_r && !dbg_step_served_r && !dbg_resumeack_r;
     assign rvc_stall = if_stall;
     assign rvc_flush = if_flush || bp_redirect || dbg_pc_we_i || dbg_resume_flush;
     assign rvc_flush_pc = if_flush         ? if_flush_pc      :
                           dbg_pc_we_i      ? dbg_pc_wdata_i   :
-                          dbg_resume_flush ? pc_if             :
-                                             bp_redirect_pc;
+                          dbg_resume_flush ? dbg_halt_pc_r    :  // resume from DPC, not stale pc_if
+        bp_redirect_pc;
 
     // Expose flush so jv32_top can suppress stale TCM SRAM responses
     assign imem_flush = rvc_flush;
@@ -1741,29 +1798,35 @@ module jv32_core #(
                 ex_wb_r <= '0;
             end
             else begin
-                ex_wb_r.valid       <= if_ex_r.valid;
-                ex_wb_r.pc          <= if_ex_r.pc;
-                ex_wb_r.orig_instr  <= if_ex_r.orig_instr;
-                ex_wb_r.rd_addr     <= dec_rd;
-                ex_wb_r.reg_we      <= dec_reg_we && !ex_exception;
-                ex_wb_r.rd_data     <= ex_result;
-                ex_wb_r.mem_read    <= dec_mem_read && !ex_exception;
-                ex_wb_r.mem_write   <= dec_mem_write && !ex_exception;
-                ex_wb_r.mem_op      <= dec_mem_op;
-                ex_wb_r.mem_addr    <= dec_is_amo ? fwd_rs1 : mem_addr_ex;
-                ex_wb_r.store_data  <= store_data_aligned;
-                ex_wb_r.is_amo      <= dec_is_amo && !ex_exception;
-                ex_wb_r.amo_op      <= dec_amo_op;
-                ex_wb_r.csr_op      <= dec_csr_op;
-                ex_wb_r.csr_addr    <= dec_csr_addr;
-                ex_wb_r.csr_wdata   <= csr_wdata_ex;
-                ex_wb_r.csr_zimm    <= dec_rs1;
-                ex_wb_r.exception   <= ex_exception;
-                ex_wb_r.exc_cause   <= ex_exc_cause;
-                ex_wb_r.exc_tval    <= ex_exc_tval;
-                ex_wb_r.mret        <= dec_is_mret;
-                ex_wb_r.redirect    <= redirect_ex;
-                ex_wb_r.redirect_pc <= redirect_pc_ex;
+                ex_wb_r.valid         <= if_ex_r.valid;
+                ex_wb_r.pc            <= if_ex_r.pc;
+                ex_wb_r.orig_instr    <= if_ex_r.orig_instr;
+                ex_wb_r.rd_addr       <= dec_rd;
+                ex_wb_r.reg_we        <= dec_reg_we && !ex_exception;
+                ex_wb_r.rd_data       <= ex_result;
+                ex_wb_r.mem_read      <= dec_mem_read && !ex_exception;
+                ex_wb_r.mem_write     <= dec_mem_write && !ex_exception;
+                ex_wb_r.mem_op        <= dec_mem_op;
+                ex_wb_r.mem_addr      <= dec_is_amo ? fwd_rs1 : mem_addr_ex;
+                ex_wb_r.store_data    <= store_data_aligned;
+                ex_wb_r.is_amo        <= dec_is_amo && !ex_exception;
+                ex_wb_r.amo_op        <= dec_amo_op;
+                ex_wb_r.csr_op        <= dec_csr_op;
+                ex_wb_r.csr_addr      <= dec_csr_addr;
+                ex_wb_r.csr_wdata     <= csr_wdata_ex;
+                ex_wb_r.csr_zimm      <= dec_rs1;
+                ex_wb_r.exception     <= ex_exception;
+                ex_wb_r.exc_cause     <= ex_exc_cause;
+                ex_wb_r.exc_tval      <= ex_exc_tval;
+                ex_wb_r.mret          <= dec_is_mret;
+                ex_wb_r.redirect      <= redirect_ex;
+                ex_wb_r.redirect_pc   <= redirect_pc_ex;
+                // step_redirect: tell single-step DPC logic to use redirect_pc
+                // instead of sequential PC+size.  True for:
+                //   JAL/JALR   (always — redirect_pc is the jump/return target)
+                //   taken branch (redirect_pc = branch target)
+                //   fence.i    (redirect_pc = PC+4, same as PC+size but explicit)
+                ex_wb_r.step_redirect <= dec_jal || dec_jalr || (dec_branch && branch_taken) || dec_is_fence_i;
             end
         end
     end
@@ -1829,7 +1892,6 @@ module jv32_core #(
     // counting and debug single-step even in synthesis.
     // All other trace logic is simulation-only (excluded from synthesis).
     // =====================================================================
-    logic trace_retire;  // one-cycle retire pulse (combinational, not output)
     assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
 
 `ifndef SYNTHESIS

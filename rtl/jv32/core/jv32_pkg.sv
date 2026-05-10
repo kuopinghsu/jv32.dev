@@ -302,8 +302,10 @@ package jv32_pkg;
         logic        mret;       // MRET instruction
 
         // Redirect (branches/jumps resolved in EX)
-        logic        redirect;     // EX computed a new PC
-        logic [31:0] redirect_pc;  // target PC for branch/jump
+        logic        redirect;       // EX computed a new PC
+        logic [31:0] redirect_pc;    // target PC for branch/jump
+        logic        step_redirect;  // use redirect_pc for single-step DPC
+                                     // true for JAL, JALR, taken branches, fence.i
     } ex_wb_t;
 
 endpackage

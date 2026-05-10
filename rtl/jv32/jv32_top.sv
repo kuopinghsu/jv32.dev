@@ -437,16 +437,19 @@ module jv32_top #(
     logic core_d_dram_we;  // D-write inside DRAM
     logic core_d_axi;      // D-access misses TCM -> needs AXI
 
-    assign core_if_dbgrom = imem_req_valid
-                            && (imem_req_addr[31:4] == DEBUG_ROM_BASE[31:4])
-                            && (imem_req_addr[3:2] <= 2'd2);
-    assign core_if_iram = imem_req_valid && in_iram(imem_req_addr);
-    assign core_if_axi = imem_req_valid && !core_if_dbgrom && !core_if_iram;
+    // Debug ROM window covers 64 bytes (DEBUG_ROM_BASE through BASE+0x3F).
+    // The IBUF with 2 slots can overshoot up to ~5 words past the last progbuf
+    // EBREAK before a halt stops it.  Using bits[31:6] (64-byte window) ensures
+    // all overshoot fetches are served as EBREAK internally rather than escaping
+    // to external AXI (which returns DECERR → instruction-access-fault loop).
+    assign core_if_dbgrom = imem_req_valid && (imem_req_addr[31:6] == DEBUG_ROM_BASE[31:6]);
+    assign core_if_iram   = imem_req_valid && in_iram(imem_req_addr);
+    assign core_if_axi    = imem_req_valid && !core_if_dbgrom && !core_if_iram;
     assign core_d_iram_re = dmem_req_valid & ~dmem_req_write & in_iram(dmem_req_addr);
     assign core_d_iram_we = dmem_req_valid & dmem_req_write & in_iram(dmem_req_addr);
     assign core_d_dram_re = dmem_req_valid & ~dmem_req_write & in_dram(dmem_req_addr);
     assign core_d_dram_we = dmem_req_valid & dmem_req_write & in_dram(dmem_req_addr);
-    assign core_d_axi = dmem_req_valid & ~in_tcm(dmem_req_addr);
+    assign core_d_axi     = dmem_req_valid & ~in_tcm(dmem_req_addr);
 
     // =========================================================================
     // Slave state machines (external TCM access, core has priority)
@@ -676,9 +679,13 @@ module jv32_top #(
             dbgrom_used_by_core_i_d <= core_if_dbgrom;
             dbgrom_pc_d             <= imem_req_addr;
 
-            case (imem_req_addr[3:2])
-                2'd0:    dbgrom_data_d <= progbuf0_i;
-                2'd1:    dbgrom_data_d <= progbuf1_i;
+            // Use addr[5:2] (4 bits) so the 64-byte window returns correct
+            // data: word 0 = progbuf0, word 1 = progbuf1, all others = EBREAK.
+            // Without the extra bits, addr[3:2] wraps and word-4 (0x10) would
+            // incorrectly re-serve progbuf0 to the IBUF.
+            case (imem_req_addr[5:2])
+                4'd0:    dbgrom_data_d <= progbuf0_i;
+                4'd1:    dbgrom_data_d <= progbuf1_i;
                 default: dbgrom_data_d <= DEBUG_ROM_EBREAK;
             endcase
 
