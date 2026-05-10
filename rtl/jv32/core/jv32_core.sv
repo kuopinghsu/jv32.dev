@@ -29,6 +29,7 @@ module jv32_core #(
     parameter bit                 IBUF_EN    = 1'b1,  // 1=2-entry instruction prefetch buffer; 0=disabled
     parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
     parameter bit                 RV32B_EN   = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 ZCMP_EN    = 1'b1,  // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
     parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
     parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
@@ -177,7 +178,8 @@ module jv32_core #(
     logic        ibuf_fault_pending;  // fault latched, FIFO not yet drained
 
     jv32_rvc #(
-        .RVM23_EN(1'b1)
+        .RVM23_EN(1'b1),
+        .ZCMP_EN (ZCMP_EN)
     ) u_rvc (
         .clk            (clk),
         .rst_n          (rst_n),

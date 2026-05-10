@@ -728,6 +728,11 @@ OL_PNL   := $(shell ls -d $(OPENLANE_RUN_DIR)/*-openroad-fillinsertion 2>/dev/nu
 define _find_spice_pnl
 	_ols=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-magic-spiceextraction 2>/dev/null | sort -V | tail -1); \
 	_olp=$$(ls -d "$(OPENLANE_RUN_DIR)"/*-openroad-fillinsertion 2>/dev/null | sort -V | tail -1); \
+	if [ -z "$$_ols" ] || [ ! -f "$$_ols/$(DESIGN).spice" ]; then \
+	    echo "ERROR: Extracted SPICE not found in $(OPENLANE_RUN_DIR)/*-magic-spiceextraction/."; \
+	    echo "       OpenLane likely failed before Magic.SpiceExtraction (e.g. GRT congestion)."; \
+	    exit 1; \
+	fi; \
 	_ols="$$_ols/$(DESIGN).spice"; \
 	_olp="$$_olp/$(DESIGN).pnl.v";
 endef

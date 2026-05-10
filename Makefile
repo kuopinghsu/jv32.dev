@@ -50,7 +50,15 @@ else
   ifneq ($(AMO_EN),0)
     _SW_EXTS := $(_SW_EXTS)a
   endif
-  export ARCH := rv32i$(_SW_EXTS)c_zicsr
+  _ARCH_EXTS := _zicsr
+  ifneq ($(RV32B_EN),0)
+    _ARCH_EXTS := $(_ARCH_EXTS)_zba_zbb_zbs
+  endif
+  # Note: ZCMP_EN controls RTL hardware only; _zcmp is NOT added to ARCH
+  # because the toolchain has no rv32*_zcmp multilib.
+  # Zcmp instructions in sw/zcmp use raw .hword encodings and compile fine
+  # without _zcmp in -march.
+  export ARCH := rv32i$(_SW_EXTS)c$(_ARCH_EXTS)
   export ABI  := ilp32
 endif
 
@@ -161,6 +169,9 @@ endif
 ifdef RV32B_EN
   VERILATOR_FLAGS += -pvalue+RV32B_EN=$(RV32B_EN)
 endif
+ifdef ZCMP_EN
+  VERILATOR_FLAGS += -pvalue+ZCMP_EN=$(ZCMP_EN)
+endif
 ifdef IRAM_SIZE
   VERILATOR_FLAGS += -pvalue+IRAM_SIZE=$(IRAM_SIZE)
 endif
@@ -250,7 +261,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) \
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) ZCMP_EN=$(ZCMP_EN) JTAG_EN=$(JTAG_EN) \
 AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) \
 RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) \
 IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)

@@ -78,6 +78,7 @@ module jv32_top #(
     parameter bit                 IBUF_EN    = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
     parameter bit                 AMO_EN     = 1'b1,
     parameter bit                 RV32B_EN   = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 ZCMP_EN    = 1'b1,        // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
     parameter int                 N_TRIGGERS = 2,
     parameter int unsigned        IRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
     parameter int unsigned        DRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
@@ -292,6 +293,7 @@ module jv32_top #(
         .IBUF_EN   (IBUF_EN),
         .AMO_EN    (AMO_EN),
         .RV32B_EN  (RV32B_EN),
+        .ZCMP_EN   (ZCMP_EN),
         .N_TRIGGERS(N_TRIGGERS),
         .BOOT_ADDR (BOOT_ADDR),
         .IRAM_BASE (IRAM_BASE),

@@ -45,6 +45,16 @@ ARCH_TEST_EXTENSIONS_FILE := $(ARCH_TEST_CONFIG_DIR)/extensions.txt
 # the default IRAM_SIZE in Makefile.cfg and the SV files stays at 128 KB.
 ARCH_TEST_IRAM_SIZE := 262144
 
+# ── Extra hand-written arch-tests (tracked in parent repo, not in submodule) ─
+# Place test .S files here mirroring the tests/ layout: rv32i/<EXT>/<name>.S
+# arch-test-run overlays them into the submodule's tests/ before running ACT.
+ARCH_TEST_EXTRA := $(VERIF_DIR)arch-test-extra
+
+# ── Zcmp-specific ACT config (uses jv32sim as reference model) ───────────────
+# Sail v0.11 does not support Zcmp; jv32sim acts as the reference model instead.
+ZCMP_DUT_CONFIG       := $(VERIF_DIR)config/jv32-rv32imac-zcmp
+ARCH_TEST_ZCMP_CONFIG := $(WORKDIR)/test_config.zcmp.generated.yaml
+
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 RISCV_PREFIX ?= riscv-none-elf-
 # SPIKE is set via env.config in repo root; fall back to bare 'spike' if not exported
@@ -54,7 +64,7 @@ SPIKE        ?= spike
 UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 
 # ============================================================================
-.PHONY: all arch-test-setup arch-test-run arch-test-clean help
+.PHONY: all arch-test-setup arch-test-run arch-test-zcmp arch-test-clean help
 
 all: help
 
@@ -77,6 +87,17 @@ $(ARCH_TEST_CONFIG): $(DUT_CONFIG)/test_config.yaml $(ARCH_TEST_REF_WRAPPER) $(V
 	     -e 's|^[[:space:]]*linker_script:.*|linker_script: $(DUT_CONFIG)/link.ld|' \
 	     -e 's|^[[:space:]]*dut_include_dir:.*|dut_include_dir: $(DUT_CONFIG)|' \
 	     "$(DUT_CONFIG)/test_config.yaml" > "$@"
+
+# Generate Zcmp-specific ACT config that uses jv32sim as reference model.
+$(ARCH_TEST_ZCMP_CONFIG): $(ZCMP_DUT_CONFIG)/test_config.yaml $(VERIF_DIR)Makefile
+	@mkdir -p "$(WORKDIR)"
+	@sed -e 's|^[[:space:]]*compiler_exe:.*|compiler_exe: $(RISCV_PREFIX)gcc|' \
+	     -e 's|^[[:space:]]*objdump_exe:.*|objdump_exe: $(RISCV_PREFIX)objdump|' \
+	     -e 's|^[[:space:]]*ref_model_exe:.*|ref_model_exe: $(JV32_ROOT)/build/jv32sim|' \
+	     -e 's|^[[:space:]]*udb_config:.*|udb_config: $(DUT_CONFIG)/jv32-rv32imac.yaml|' \
+	     -e 's|^[[:space:]]*linker_script:.*|linker_script: $(DUT_CONFIG)/link.ld|' \
+	     -e 's|^[[:space:]]*dut_include_dir:.*|dut_include_dir: $(DUT_CONFIG)|' \
+	     "$(ZCMP_DUT_CONFIG)/test_config.yaml" > "$@"
 
 # Pre-generate implemented extension list directly from DUT UDB YAML.
 # If this file is present and up-to-date, ACT skips invoking external UDB tooling
@@ -137,6 +158,7 @@ arch-test-setup: $(ACT_SENTINEL)
 #   ExceptionsZc    — uses rv32ifdc march (F/D unimplemented); Sail segfaults on this config
 #   PMPSm/PMPZca/PMPmisaligned — PMP tests; JV32 has no PMP
 #   Sv/Svade/...    — virtual memory tests; JV32 has no MMU
+#   Zcmp            — Sail 0.11 does not implement Zcmp; enable once Sail adds support
 # ============================================================================
 arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@set -e; \
@@ -158,10 +180,14 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	echo "=========================================="; \
 	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
 	echo "=========================================="; \
+	if [ -d "$(ARCH_TEST_EXTRA)" ]; then \
+	  echo "[arch-test] Overlaying local tests from verif/arch-test-extra/..."; \
+	  cp -r "$(ARCH_TEST_EXTRA)/." "$(ACT_DIR)/tests/"; \
+	fi; \
 	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
-            EXCLUDE_EXTENSIONS=Sm,S,ExceptionsSm,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo \
+            EXCLUDE_EXTENSIONS=Sm,S,ExceptionsSm,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zcmp \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS); \
 	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
@@ -171,6 +197,62 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
 	    "$(JV32_ROOT)/build/jv32soc" \
 	    "$(WORKDIR)/jv32-rv32imac/elfs"
+
+# ============================================================================
+# arch-test-zcmp: run Zcmp extension tests using jv32sim as reference model
+#
+# Sail v0.11 does not implement Zcmp, so jv32sim is used as the reference model
+# for this extension only.  jv32sim accepts the same --test-signature and
+# --signature-granularity flags as Sail (ref_model_type: sail).
+#
+# This target:
+#   1. Builds jv32sim (reference model) and jv32soc (RTL sim, arch-test build)
+#   2. Overlays verif/arch-test-extra/rv32i/Zcmp/ tests into the ACT tests dir
+#   3. Runs ACT for Zcmp only (EXTENSIONS=Zcmp) with jv32sim as reference
+#   4. Runs ALL ELFs in the elfs/ dir on jv32soc (combines Zcmp + prior tests)
+#      and writes a unified build/arch-test-work/jv32-rv32imac/summary.log
+#
+# Requires arch-test-run to have been run first so the non-Zcmp ELFs exist.
+# ============================================================================
+arch-test-zcmp: $(ACT_SENTINEL) $(ARCH_TEST_ZCMP_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
+	@set -e; \
+	stty_state="$$(stty -g 2>/dev/null || true)"; \
+	restore_tty() { \
+	  if [ -n "$$stty_state" ]; then \
+	    stty "$$stty_state" 2>/dev/null || stty sane 2>/dev/null || true; \
+	  else \
+	    stty sane 2>/dev/null || true; \
+	  fi; \
+	}; \
+	trap 'restore_tty' EXIT INT TERM; \
+	mkdir -p "$(WORKDIR)"; \
+	echo "=========================================="; \
+	echo "[arch-test-zcmp] Building jv32sim (Zcmp reference model)"; \
+	echo "=========================================="; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory sim-build; \
+	echo "=========================================="; \
+	echo "[arch-test-zcmp] Building RTL simulator (jv32soc)"; \
+	echo "=========================================="; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) RV32B_EN=$(RV32B_EN) RAS_EN=$(RAS_EN) build-rtl; \
+	echo "=========================================="; \
+	echo "[arch-test-zcmp] Generating Zcmp self-checking ELFs"; \
+	echo "=========================================="; \
+	if [ -d "$(ARCH_TEST_EXTRA)" ]; then \
+	  echo "[arch-test-zcmp] Overlaying Zcmp tests from verif/arch-test-extra/..."; \
+	  cp -r "$(ARCH_TEST_EXTRA)/." "$(ACT_DIR)/tests/"; \
+	fi; \
+	PATH="$(JV32_ROOT)/build:$$PATH" IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
+	    CONFIG_FILES=$(ARCH_TEST_ZCMP_CONFIG) \
+	    WORKDIR=$(WORKDIR) \
+	    EXTENSIONS=Zcmp \
+	    --jobs $(ARCH_TEST_JOBS); \
+	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
+	echo "[arch-test-zcmp] Running $$elf_count ELF tests on JV32 RTL (all extensions)"; \
+	echo "[arch-test-zcmp] Summary: $(WORKDIR)/jv32-rv32imac/summary.log"; \
+	cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
+	    "$(JV32_ROOT)/build/jv32soc" \
+	    "$(WORKDIR)/jv32-rv32imac/elfs"; \
+	echo "[arch-test-zcmp] Done. Zcmp tests now included in summary.log"
 
 # ============================================================================
 # arch-test-%: pass-through any other target to the ACT4 Makefile

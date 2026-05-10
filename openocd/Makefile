@@ -104,7 +104,7 @@ LOG_DIR := $(BUILD_DIR)/openocd_logs
 # ─────────────────────────────────────────────────────────────────────────────
 # Phony targets
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% jtag-no-trace-step FORCE
+.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% gdb-zcmp jtag-no-trace-step FORCE
 
 FORCE:
 
@@ -114,7 +114,7 @@ FORCE:
 all: test-jtag test-cjtag jtag-no-trace-step
 
 # Run all three test suites (OpenOCD TCL over JTAG, over cJTAG, and GDB)
-all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello
+all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello gdb-zcmp
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build prerequisites
@@ -603,6 +603,108 @@ jtag-no-trace-step: $(VPI_JTAG) $(BOOT_ELF)
 	fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# gdb-zcmp: run zcmp.elf on the VPI + OpenOCD GDB server, verify all Zcmp
+#           instruction tests passed via the magic exit register, then compare
+#           the RTL instruction trace against the ISS (jv32sim) trace.
+#
+# Pattern:
+#   1. Build zcmp.elf (sw/zcmp) if not present.
+#   2. Start VPI with zcmp.elf + --rtl-trace to capture the RTL trace.
+#   3. Start OpenOCD GDB server; run test_gdb_zcmp.gdb which halts the core
+#      and reads the magic exit register to confirm all C-level tests passed.
+#   4. Run jv32sim to produce the ISS trace for zcmp.elf.
+#   5. Compare ISS trace vs RTL trace with trace_compare.py.
+# ─────────────────────────────────────────────────────────────────────────────
+ZCMP_ELF = $(BUILD_DIR)/zcmp.elf
+
+$(ZCMP_ELF): FORCE
+	$(MAKE) -C $(ROOT_DIR) sw-zcmp BUILD_DIR=$(BUILD_DIR)
+
+gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
+	@mkdir -p $(LOG_DIR)
+	@t=zcmp; LOG="$(LOG_DIR)/gdb_$$t"; \
+	echo "--- [gdb] test_gdb_$$t (Zcmp instruction test + ISS trace compare) ---"; \
+	pkill -x jv32vpi_jtag 2>/dev/null || true; \
+	pkill -x openocd      2>/dev/null || true; \
+	fuser -k $(VPI_PORT)/tcp 2>/dev/null || true; \
+	fuser -k $(GDB_PORT)/tcp 2>/dev/null || true; \
+	sleep 0.3; \
+	"$(VPI_JTAG)" "$(ZCMP_ELF)" --port $(VPI_PORT) \
+	    --max-cycles 0 \
+	    --boot-clocks 50 \
+	    --rtl-trace "$(RTL_TRACE_FILE)" \
+	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	for _i in $$(seq 1 50); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
+	    sleep 0.1; \
+	done; \
+	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
+	( cd "$(OPENOCD_DIR)" && \
+	  $(OPENOCD) -d0 \
+	      -f jv32.cfg \
+	      -c "jtag_vpi set_port $(VPI_PORT)" \
+	      -c "gdb port $(GDB_PORT)" \
+	      -c "tcl port disabled" \
+	      -c "telnet port disabled" \
+	      -c "gdb flash_program disable" \
+	      -c init \
+	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
+	for _i in $$(seq 1 80); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	    sleep 0.1; \
+	done; \
+	$(GDB) --batch \
+	    -ex "set pagination off" \
+	    -ex "set confirm off" \
+	    -ex "set remotetimeout 300" \
+	    -ex "target extended-remote :$(GDB_PORT)" \
+	    -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
+	    "$(ZCMP_ELF)" \
+	    >"$$LOG.gdb.log" 2>&1; \
+	GDB_RC=$$?; \
+	kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
+	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	cat "$$LOG.gdb.log"; \
+	if [ $$GDB_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.gdb.log" 2>/dev/null; then \
+	    if grep -q '\[SKIP\]' "$$LOG.gdb.log" 2>/dev/null; then \
+	        echo ""; echo "[SKIP] gdb: test_gdb_$$t"; exit 0; \
+	    fi; \
+	    echo ""; echo "[PASS] gdb: test_gdb_$$t"; \
+	    echo ""; \
+	    echo "--- [gdb-zcmp] Step 2: ISS (jv32sim) instruction trace ---"; \
+	    if [ ! -s "$(RTL_TRACE_FILE)" ]; then \
+	        echo "[SKIP] trace-compare: $(RTL_TRACE_FILE) empty — trace may not have fired"; exit 0; \
+	    fi; \
+	    "$(JV32SIM_BIN)" --trace "$(SIM_TRACE_FILE)" \
+	        --rtl-hints "$(RTL_TRACE_FILE)" \
+	        "$(ZCMP_ELF)" \
+	        >"$$LOG.iss.log" 2>&1 \
+	        || { echo "[FAIL] jv32sim failed (see $$LOG.iss.log)"; exit 1; }; \
+	    echo "  ISS trace: $(SIM_TRACE_FILE)"; \
+	    echo ""; \
+	    echo "--- [gdb-zcmp] Step 3: trace comparison (ISS vs RTL) ---"; \
+	    python3 "$(TRACE_COMPARE)" \
+	        "$(SIM_TRACE_FILE)" \
+	        "$(RTL_TRACE_FILE)" \
+	        >"$$LOG.cmp.log" 2>&1; \
+	    CMP_RC=$$?; \
+	    cat "$$LOG.cmp.log"; \
+	    if [ $$CMP_RC -eq 0 ]; then \
+	        echo ""; echo "[PASS] gdb-zcmp: trace comparison passed"; \
+	        echo "  RTL trace: $(RTL_TRACE_FILE)"; \
+	        echo "  ISS trace: $(SIM_TRACE_FILE)"; \
+	        exit 0; \
+	    else \
+	        echo ""; echo "[FAIL] gdb-zcmp: trace mismatch (see $$LOG.cmp.log)"; exit 1; \
+	    fi; \
+	else \
+	    echo ""; echo "[FAIL] gdb: test_gdb_$$t (gdb exit=$$GDB_RC)"; \
+	    cat "$$LOG.ocd.log"; \
+	    exit 1; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Clean
 # ─────────────────────────────────────────────────────────────────────────────
 clean:
@@ -625,7 +727,9 @@ help:
 	@echo "  jtag-no-trace-step — run test_step with trace_en=0 (FPGA regression)"
 	@echo "  test-gdb      — run all GDB tests (JTAG VPI + OpenOCD GDB server)"
 	@echo "  gdb-<name>    — single GDB test   (e.g. gdb-step)"
-	@echo "  all-with-gdb  — test-jtag + test-cjtag + test-gdb"
+	@echo "  gdb-hello     — GDB debug workflow + ISS trace compare (hello.elf)"
+	@echo "  gdb-zcmp      — Zcmp instruction test + ISS trace compare (zcmp.elf)"
+	@echo "  all-with-gdb  — test-jtag + test-cjtag + test-gdb + gdb-hello + gdb-zcmp"
 	@echo ""
 	@echo "  Available TCL test names:"
 	@echo "    halt_resume  registers  memory  memory_modes  reset  dm_status"

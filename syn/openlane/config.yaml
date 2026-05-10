@@ -129,21 +129,19 @@ USE_SYNLIG: true
 # Absolute die sizing.
 #
 # sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
-# Macro placement (macro_placement.cfg) -- 1x4 single row, 12 um inter-macro gap:
-#   DRAM bank[0/1]: x=10/270,  y=20  (12 um gap)
-#   IRAM bank[0/1]: x=530/790, y=20  (12 um gap)
+# Macro placement (macro_placement.cfg) -- 2x2 with wider routing channels:
+#   row 0 (y=80):  DRAM0 x=180, IRAM0 x=860
+#   row 1 (y=620): DRAM1 x=180, IRAM1 x=860
 #
-# SRAM cluster right edge: 790 + 247.88 = 1037.88 um
-# Right clearance to core boundary: 1080 - 1037.88 = 42.12 um
-# SRAM row top:  20 + 386.12 = 406.12 um -> logic strip above (406.12 to 670 = 263.9 um)
+# Channels: horizontal ~=432 um, vertical ~=154 um
+# This further relieves M2/M3/M4 choke points that can still trigger GRT-0118.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               std cells (post-P&R) = 68,918 um2
-#               core area = 1080 x 660 = 712,800 um2  -> core util = 63.4%
-#               die  = 1100 x 680 = 748,000 um2
+#               core area = 1480 x 1080 = 1,598,400 um2 -> core util ~=24.0%
+#               die  = 1500 x 1100 = 1,650,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1100, 680]
-CORE_AREA: [10, 10, 1090, 670]
+DIE_AREA: [0, 0, 1500, 1100]
+CORE_AREA: [10, 10, 1490, 1090]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -165,9 +163,9 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY_PCT: 45
+PL_TARGET_DENSITY_PCT: 40
 PL_MAX_PHI_COEFFICIENT: 4.0
-PL_MACRO_CHANNEL: [10, 10]
+PL_MACRO_CHANNEL: [40, 40]
 
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
 # design to avoid terminating before the dominant SRAM-to-core paths are fixed.
@@ -203,7 +201,11 @@ RUN_CTS: true
 # ── Routing ───────────────────────────────────────────────────────────────────
 # Global routing: increase layer count for large die
 RT_MAX_LAYER: metal9
-GRT_ALLOW_CONGESTION: true
+# Fail fast on severe congestion instead of spending hours in overflow retries.
+GRT_ALLOW_CONGESTION: false
+# Keep the overflow search short on this macro-heavy floorplan so a bad
+# placement does not burn a full run on the same global-routing failure.
+GRT_OVERFLOW_ITERS: 12
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
 # Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so

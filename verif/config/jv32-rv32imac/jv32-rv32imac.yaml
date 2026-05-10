@@ -17,6 +17,7 @@ implemented_extensions:
   - { name: Zalrsc,   version: "= 1.0.0" } # LR/SC instructions (part of A)
   - { name: C,        version: "= 2.0"   } # Compressed instructions
   - { name: Zca,      version: "= 1.0.0" } # Zcx subset of C
+  - { name: Zcmp,     version: "= 1.0.0" } # Push/pop and register-pair move sequences
   - { name: Zicsr,    version: "= 2.0"   }
   - { name: Zifencei, version: "= 2.0"   }
   - { name: Zicntr,   version: "= 2.0"   } # mcycle, minstret, mcycleh, minstreth

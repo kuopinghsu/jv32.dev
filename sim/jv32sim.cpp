@@ -8,6 +8,8 @@
 //
 // Usage:
 //   ./jv32sim [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>
+//   ./jv32sim --test-signature=<file> --signature-granularity 4 [--config <sail.json>] <elf>
+//             (Sail-compatible reference-model mode for ACT arch-tests)
 //
 // Debug levels (--debug=N):
 //   0  silent — no informational messages (default)
@@ -136,7 +138,18 @@ struct Elf32_Ehdr {
 struct Elf32_Phdr {
     uint32_t p_type, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_flags, p_align;
 };
-#define PT_LOAD 1u
+struct Elf32_Shdr {
+    uint32_t sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size;
+    uint32_t sh_link, sh_info, sh_addralign, sh_entsize;
+};
+struct Elf32_Sym {
+    uint32_t st_name, st_value, st_size;
+    uint8_t  st_info, st_other;
+    uint16_t st_shndx;
+};
+#define PT_LOAD    1u
+#define SHT_SYMTAB 2u
+#define SHT_STRTAB 3u
 #define ELFMAG  "\177ELF"
 
 // ============================================================================
@@ -147,6 +160,11 @@ static uint32_t pc;
 static bool     running;
 static int      exit_code;
 static uint64_t insn_count;
+
+// tohost address — used by arch-test SIGNATURE mode (sail_macros.h writes here).
+// Value 1 → pass (exit 0), value 3 → fail (exit 1).
+// Set from ELF symbol 'tohost' after load_elf(); 0 = not present.
+static uint32_t tohost_addr = 0;
 
 // Physical memory
 static uint8_t iram[IRAM_SIZE];
@@ -648,6 +666,23 @@ static uint32_t mem_read(uint32_t addr, int size) {
 
 static void mem_write(uint32_t addr, uint32_t val, int size) {
     uint32_t off = 0;
+
+    // tohost — RISC-V arch-test SIGNATURE-mode halt convention (sail_macros.h):
+    //   write 1 to tohost → test passed (exit 0)
+    //   write 3 to tohost → test failed (exit 1)
+    // Must be checked before DRAM since tohost lives in DRAM.
+    if (tohost_addr && size == 4 && addr == tohost_addr) {
+        if (val == 1) {
+            DBG(1, "tohost: PASS (value=1)\n");
+            running   = false;
+            exit_code = 0;
+        } else if (val == 3) {
+            DBG(1, "tohost: FAIL (value=3)\n");
+            running   = false;
+            exit_code = 1;
+        }
+        // Fall through to store the value in DRAM as well.
+    }
 
     // DRAM (primary + alias)
     if (dram_offset_for_addr(addr, size, &off)) {
@@ -1315,6 +1350,202 @@ static uint32_t expand_rvc(uint16_t ci) {
 }
 
 // ============================================================================
+// Zcmp extension helper: detect and execute cm.push/pop/popret/popretz/mv*
+//
+// Returns true if `ci` is a valid Zcmp instruction (and executes it, emitting
+// one trace entry per micro-op).  Returns false for non-Zcmp compressed words.
+//
+// Zcmp encodings (Q2 = ci[1:0]=10, funct3=5 = ci[15:13]=101):
+//   cm.push:    ci[15:10]=101110, ci[9:8]=00, ci[7:4]=rlist, ci[3:2]=spimm_extra
+//   cm.pop:     ci[15:10]=101110, ci[9:8]=10, ci[7:4]=rlist, ci[3:2]=spimm_extra
+//   cm.popretz: ci[15:10]=101111, ci[9:8]=00, ci[7:4]=rlist, ci[3:2]=spimm_extra
+//   cm.popret:  ci[15:10]=101111, ci[9:8]=10, ci[7:4]=rlist, ci[3:2]=spimm_extra
+//   cm.mvsa01:  ci[15:10]=101011, ci[9:7]=sreg1, ci[6]=0, ci[5]=1, ci[4:2]=sreg2
+//   cm.mva01s:  ci[15:10]=101011, ci[9:7]=sreg1, ci[6]=1, ci[5]=1, ci[4:2]=sreg2
+// ============================================================================
+
+// Map 3-bit s-register encoding to GPR index
+// 0→s0(x8), 1→s1(x9), 2→s2(x18), 3→s3(x19), 4→s4(x20), 5→s5(x21), 6→s6(x22), 7→s7(x23)
+static uint32_t zcmp_sreg_to_gpr(uint32_t s) {
+    static const uint32_t tab[8] = {8, 9, 18, 19, 20, 21, 22, 23};
+    return tab[s & 7u];
+}
+
+// Map save-list index to GPR index: 0→ra, 1→s0, 2→s1, 3+→s{i-1}
+static uint32_t zcmp_save_gpr(uint32_t idx) {
+    if (idx == 0) return 1;   // ra
+    if (idx == 1) return 8;   // s0
+    if (idx == 2) return 9;   // s1
+    return 15u + idx;         // s{idx-1}: x18..x27 for idx=3..12
+}
+
+// Compute minimum stack adjustment for a given rlist value
+static uint32_t zcmp_min_stack(uint32_t rlist) {
+    if (rlist <= 3)  return 0;
+    if (rlist <= 7)  return 16;
+    if (rlist <= 11) return 32;
+    if (rlist <= 14) return 48;
+    return 64;
+}
+
+// Emit one Zcmp trace entry and increment counters (matching RTL trace format)
+static void zcmp_emit(uint32_t instr_pc, uint32_t raw_ci, uint32_t expanded,
+                      int wr_rd, uint32_t wr_val,
+                      bool has_mem, uint32_t mem_addr, uint32_t mem_val, bool is_store) {
+    // In the RTL trace, each Zcmp micro-op is a separate retired instruction.
+    // The trace uses the EXPANDED instruction as the instruction word and
+    // the original CI as the raw_instr for the trace line.
+    // The disassembler sees the expanded 32-bit instruction.
+    (void)expanded;  // raw_ci is used as raw_instr to match RTL orig_instr trace
+    csr_minstret++;
+    insn_count++;
+    emit_trace(instr_pc, raw_ci, wr_rd, wr_val, has_mem, mem_addr, mem_val, is_store);
+}
+
+static bool exec_zcmp(uint32_t instr_pc, uint16_t ci) {
+    uint32_t funct3 = (ci >> 13) & 7u;
+    if ((ci & 3u) != 2u || funct3 != 5u) return false;
+
+    uint32_t raw_ci = (uint32_t)ci;
+
+    // Distinguish push/pop vs mv variants by ci[12]
+    if ((ci >> 12) & 1u) {
+        // push/pop/popret/popretz: ci[12]=1
+        // ci[11] distinguishes push/pop (0) from popret/popretz (1)
+        // ci[9:8]: 00=push or popretz, 10=pop or popret
+        uint32_t rlist = (ci >> 4) & 0xFu;
+        if (rlist < 4) return false;  // reserved
+        uint32_t spimm_extra = (ci >> 2) & 3u;
+        uint32_t rcount = rlist - 3;   // number of saved registers: 1..12
+        uint32_t sadj   = zcmp_min_stack(rlist) + spimm_extra * 16u;
+
+        bool is_pop_group  = ((ci >> 10) & 1u) == 0u;  // ci[10]=0: push/pop; ci[10]=1: popret/popretz
+        bool is_push_or_popretz = ((ci >> 8) & 3u) == 0u;  // ci[9:8]=00: push or popretz
+
+        // mtime/mcycle/pc are updated at the end
+        // Do NOT call the normal retire path; we call zcmp_emit directly.
+
+        if (is_pop_group && is_push_or_popretz) {
+            // cm.push: addi sp,sp,-sadj; sw ra,off(sp); sw s0,off(sp); ...
+            regs[2] -= sadj;  // adjust SP first
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x13u | (2u << 7) | (0u << 12) | (2u << 15) | (((uint32_t)-(int32_t)sadj & 0xFFFu) << 20),
+                      2, regs[2], false, 0, 0, false);
+            // Save registers: ra at sp+(sadj-4), s0 at sp+(sadj-8), ...
+            for (uint32_t i = 0; i < rcount; i++) {
+                uint32_t gpr  = zcmp_save_gpr(i);
+                uint32_t addr = regs[2] + (sadj - 4u * (i + 1u));
+                uint32_t val  = regs[gpr];
+                mem_write(addr, val, 4);
+                zcmp_emit(instr_pc, raw_ci,
+                          0x23u | (2u << 7) | (2u << 12) | (2u << 15) | (gpr << 20),
+                          0, 0, true, addr, val, true);
+            }
+        } else if (is_pop_group && !is_push_or_popretz) {
+            // cm.pop: lw ra,off(sp); lw s0,off(sp); ...; addi sp,sp,+sadj
+            for (uint32_t i = 0; i < rcount; i++) {
+                uint32_t gpr  = zcmp_save_gpr(i);
+                uint32_t addr = regs[2] + (sadj - 4u * (i + 1u));
+                uint32_t val  = mem_read(addr, 4);
+                regs[gpr] = val;
+                regs[0]   = 0;
+                zcmp_emit(instr_pc, raw_ci,
+                          0x03u | (gpr << 7) | (2u << 12) | (2u << 15),
+                          (int)gpr, val, true, addr, val, false);
+            }
+            regs[2] += sadj;
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x13u | (2u << 7) | (0u << 12) | (2u << 15) | ((sadj & 0xFFFu) << 20),
+                      2, regs[2], false, 0, 0, false);
+        } else if (!is_pop_group && is_push_or_popretz) {
+            // cm.popretz: lw regs; addi sp,sp,+sadj; addi a0,x0,0; jalr x0,0(ra)
+            for (uint32_t i = 0; i < rcount; i++) {
+                uint32_t gpr  = zcmp_save_gpr(i);
+                uint32_t addr = regs[2] + (sadj - 4u * (i + 1u));
+                uint32_t val  = mem_read(addr, 4);
+                regs[gpr] = val;
+                regs[0]   = 0;
+                zcmp_emit(instr_pc, raw_ci,
+                          0x03u | (gpr << 7) | (2u << 12) | (2u << 15),
+                          (int)gpr, val, true, addr, val, false);
+            }
+            regs[2] += sadj;
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x13u | (2u << 7) | (0u << 12) | (2u << 15) | ((sadj & 0xFFFu) << 20),
+                      2, regs[2], false, 0, 0, false);
+            regs[10] = 0;  // a0 = 0
+            zcmp_emit(instr_pc, raw_ci, 0x13u | (10u << 7), 10, 0u, false, 0, 0, false);
+            // jalr x0,0(ra): return to ra
+            pc = regs[1] & ~1u;
+            zcmp_emit(instr_pc, raw_ci, 0x67u | (1u << 15), 0, 0, false, 0, 0, false);
+        } else {
+            // cm.popret: lw regs; addi sp,sp,+sadj; jalr x0,0(ra)
+            for (uint32_t i = 0; i < rcount; i++) {
+                uint32_t gpr  = zcmp_save_gpr(i);
+                uint32_t addr = regs[2] + (sadj - 4u * (i + 1u));
+                uint32_t val  = mem_read(addr, 4);
+                regs[gpr] = val;
+                regs[0]   = 0;
+                zcmp_emit(instr_pc, raw_ci,
+                          0x03u | (gpr << 7) | (2u << 12) | (2u << 15),
+                          (int)gpr, val, true, addr, val, false);
+            }
+            regs[2] += sadj;
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x13u | (2u << 7) | (0u << 12) | (2u << 15) | ((sadj & 0xFFFu) << 20),
+                      2, regs[2], false, 0, 0, false);
+            pc = regs[1] & ~1u;
+            zcmp_emit(instr_pc, raw_ci, 0x67u | (1u << 15), 0, 0, false, 0, 0, false);
+        }
+        // Update pc (unless already set by popret/popretz)
+        if (is_pop_group) pc = instr_pc + 2u;
+        mtime++;
+        csr_mcycle++;
+    } else {
+        // mv variants (ci[12]=0): ci[11:10] must be 11
+        if (((ci >> 10) & 3u) != 3u) return false;
+        uint32_t sreg1 = (ci >> 7) & 7u;
+        uint32_t sreg2 = (ci >> 2) & 7u;
+        uint32_t gpr1  = zcmp_sreg_to_gpr(sreg1);
+        uint32_t gpr2  = zcmp_sreg_to_gpr(sreg2);
+
+        if (!((ci >> 6) & 1u)) {
+            // cm.mvsa01: mv s[sreg1],a0; mv s[sreg2],a1
+            regs[gpr1] = regs[10];
+            regs[0]    = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x33u | (gpr1 << 7) | (10u << 20), (int)gpr1, regs[gpr1],
+                      false, 0, 0, false);
+            regs[gpr2] = regs[11];
+            regs[0]    = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x33u | (gpr2 << 7) | (11u << 20), (int)gpr2, regs[gpr2],
+                      false, 0, 0, false);
+        } else {
+            // cm.mva01s: mv a0,s[sreg1]; mv a1,s[sreg2]
+            regs[10] = regs[gpr1];
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x33u | (10u << 7) | (gpr1 << 20), 10, regs[10],
+                      false, 0, 0, false);
+            regs[11] = regs[gpr2];
+            regs[0]  = 0;
+            zcmp_emit(instr_pc, raw_ci,
+                      0x33u | (11u << 7) | (gpr2 << 20), 11, regs[11],
+                      false, 0, 0, false);
+        }
+        pc = instr_pc + 2u;
+        mtime++;
+        csr_mcycle++;
+    }
+    return true;
+}
+
+// ============================================================================
 // Main instruction execution step
 // ============================================================================
 static void step() {
@@ -1336,6 +1567,11 @@ static void step() {
     if ((half0 & 3u) != 3u) {
         // Compressed 16-bit instruction
         raw_instr = (uint32_t)half0;
+
+        // Check for Zcmp extension (Q2, funct3=5): must be handled before expand_rvc
+        // since expand_rvc returns 0 for these encodings.
+        if (exec_zcmp(instr_pc, half0)) return;
+
         instr   = expand_rvc(half0);
         pc_step = 2;
         if (instr == 0) {
@@ -1758,6 +1994,84 @@ static void step() {
 }
 
 // ============================================================================
+// ELF symbol lookup
+// ============================================================================
+static bool find_elf_symbol(const char *path, const char *sym_name, uint32_t *out_addr) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    Elf32_Ehdr ehdr;
+    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1 || memcmp(ehdr.e_ident, ELFMAG, 4) != 0) {
+        fclose(f); return false;
+    }
+    if (ehdr.e_shnum == 0 || ehdr.e_shoff == 0) { fclose(f); return false; }
+    // Read all section headers
+    std::vector<Elf32_Shdr> shdrs(ehdr.e_shnum);
+    if (fseek(f, (long)ehdr.e_shoff, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    for (int i = 0; i < ehdr.e_shnum; i++) {
+        if (fread(&shdrs[i], sizeof(Elf32_Shdr), 1, f) != 1) {
+            fclose(f);
+            return false;
+        }
+    }
+    // Find .symtab section
+    int symtab_idx = -1, strtab_idx = -1;
+    for (int i = 0; i < ehdr.e_shnum; i++) {
+        if (shdrs[i].sh_type == SHT_SYMTAB) {
+            symtab_idx = i;
+            strtab_idx = (int)shdrs[i].sh_link;
+            break;
+        }
+    }
+    if (symtab_idx < 0 || strtab_idx < 0 || strtab_idx >= ehdr.e_shnum) {
+        fclose(f); return false;
+    }
+    // Read string table
+    Elf32_Shdr &strtab_hdr = shdrs[strtab_idx];
+    std::vector<char> strings(strtab_hdr.sh_size + 1, '\0');
+    if (fseek(f, (long)strtab_hdr.sh_offset, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    if (fread(strings.data(), 1, strtab_hdr.sh_size, f) != strtab_hdr.sh_size) {
+        fclose(f);
+        return false;
+    }
+    // Scan symbol table
+    Elf32_Shdr &symtab_hdr = shdrs[symtab_idx];
+    uint32_t entsize = symtab_hdr.sh_entsize ? symtab_hdr.sh_entsize : sizeof(Elf32_Sym);
+    int sym_count = (int)(symtab_hdr.sh_size / entsize);
+    if (fseek(f, (long)symtab_hdr.sh_offset, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    for (int i = 0; i < sym_count; i++) {
+        Elf32_Sym sym;
+        memset(&sym, 0, sizeof(sym));
+        if (fread(&sym, sizeof(Elf32_Sym), 1, f) != 1) {
+            fclose(f);
+            return false;
+        }
+        // Skip padding bytes if entsize > sizeof(Elf32_Sym)
+        if (entsize > sizeof(Elf32_Sym) &&
+            fseek(f, (long)(entsize - sizeof(Elf32_Sym)), SEEK_CUR) != 0) {
+            fclose(f);
+            return false;
+        }
+        if (sym.st_name < strtab_hdr.sh_size &&
+            strcmp(&strings[sym.st_name], sym_name) == 0) {
+            *out_addr = sym.st_value;
+            fclose(f);
+            return true;
+        }
+    }
+    fclose(f);
+    return false;
+}
+
+// ============================================================================
 // ELF loader
 // ============================================================================
 static bool load_elf(const char *path, uint32_t *entry) {
@@ -1853,12 +2167,32 @@ static bool load_elf(const char *path, uint32_t *entry) {
 int main(int argc, char **argv) {
     std::signal(SIGINT, handle_sigint);
 
-    const char *elf_path    = nullptr;
-    const char *trace_path  = nullptr;
-    const char *hints_path  = nullptr;
+    const char *elf_path        = nullptr;
+    const char *trace_path      = nullptr;
+    const char *hints_path      = nullptr;
+    const char *sig_out_path    = nullptr;  // --test-signature=<file>
+    uint32_t    sig_granularity = 4;        // --signature-granularity <N>
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--version") == 0) {
+            // Respond with the Sail version string so ACT4 version check passes
+            printf("0.11\n");
+            return 0;
+        } else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
+            trace_path = argv[++i];
+        } else if (strcmp(argv[i], "--trace-output") == 0 && i + 1 < argc) {
+            ++i; // consume argument, ignored
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            ++i; // consume sail.json path, ignored
+        } else if (strncmp(argv[i], "--test-signature=", 17) == 0) {
+            sig_out_path = argv[i] + 17;
+        } else if (strcmp(argv[i], "--test-signature") == 0 && i + 1 < argc) {
+            sig_out_path = argv[++i];
+        } else if (strcmp(argv[i], "--signature-granularity") == 0 && i + 1 < argc) {
+            sig_granularity = (uint32_t)strtoul(argv[++i], nullptr, 10);
+        } else if (strncmp(argv[i], "--signature-granularity=", 24) == 0) {
+            sig_granularity = (uint32_t)strtoul(argv[i] + 24, nullptr, 10);
+        } else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
             trace_path = argv[++i];
         } else if (strcmp(argv[i], "--rtl-hints") == 0 && i + 1 < argc) {
             hints_path = argv[++i];
@@ -1881,7 +2215,8 @@ int main(int argc, char **argv) {
     }
 
     if (!elf_path) {
-        fprintf(stderr, "Usage: %s [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>] <elf>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--trace <file>] [--rtl-hints <file>] [--max-insns <N>] [--timeout=<sec>] [--debug=<N>]\n"
+                        "       [--test-signature=<file>] [--signature-granularity <N>] [--config <file>] <elf>\n", argv[0]);
         return 1;
     }
 
@@ -1934,6 +2269,12 @@ int main(int argc, char **argv) {
     uint32_t entry = 0;
     if (!load_elf(elf_path, &entry)) return 1;
     pc = entry;
+
+    // Look up 'tohost' symbol for arch-test SIGNATURE mode halt detection.
+    // sail_macros.h (included for non-selfcheck builds) writes 1/3 to tohost.
+    if (find_elf_symbol(elf_path, "tohost", &tohost_addr)) {
+        DBG(1, "tohost symbol found at 0x%08x\n", (unsigned)tohost_addr);
+    }
 
     // Run
     auto time_begin = std::chrono::steady_clock::now();
@@ -2022,6 +2363,46 @@ int main(int argc, char **argv) {
         (unsigned long long)csr_mcycle,
         eff_mhz,
         cpi);
+
+    // ── Signature dump (arch-test reference-model mode) ──────────────────────
+    if (sig_out_path && !exit_code) {
+        uint32_t sig_begin = 0, sig_end = 0;
+        bool have_begin = find_elf_symbol(elf_path, "begin_signature", &sig_begin);
+        bool have_end   = find_elf_symbol(elf_path, "end_signature",   &sig_end);
+        if (!have_begin || !have_end || sig_begin >= sig_end) {
+            fprintf(stderr, "[SIM] signature dump: cannot locate begin_signature/end_signature in %s\n", elf_path);
+            exit_code = 1;
+        } else {
+            FILE *sf = fopen(sig_out_path, "w");
+            if (!sf) {
+                fprintf(stderr, "[SIM] Cannot open signature file: %s\n", sig_out_path);
+                exit_code = 1;
+            } else {
+                uint32_t gran = (sig_granularity >= 4) ? sig_granularity : 4;
+                for (uint32_t a = sig_begin; a + gran <= sig_end; a += gran) {
+                    // Read little-endian word(s) and output as lowercase hex
+                    if (gran == 4) {
+                        uint32_t val = (uint32_t)mem_read(a, 4);
+                        fprintf(sf, "%08x\n", val);
+                    } else if (gran == 8) {
+                        uint32_t lo = (uint32_t)mem_read(a,     4);
+                        uint32_t hi = (uint32_t)mem_read(a + 4, 4);
+                        fprintf(sf, "%08x%08x\n", hi, lo);
+                    } else {
+                        // Generic: read byte by byte, output as pairs
+                        for (uint32_t b = 0; b < gran; b += 4) {
+                            uint32_t val = (uint32_t)mem_read(a + b, 4);
+                            fprintf(sf, "%08x", val);
+                        }
+                        fprintf(sf, "\n");
+                    }
+                }
+                fclose(sf);
+                DBG(1, "[SIM] Signature written: %s (%u bytes)\n",
+                    sig_out_path, sig_end - sig_begin);
+            }
+        }
+    }
 
     if (trace_fp && trace_fp != stdout) fclose(trace_fp);
     return exit_code;

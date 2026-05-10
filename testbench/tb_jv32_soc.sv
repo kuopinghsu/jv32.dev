@@ -24,6 +24,7 @@ module tb_jv32_soc #(
     parameter bit                 RAS_EN     = 1'b1,
     parameter bit                 IBUF_EN    = 1'b1,
     parameter bit                 RV32B_EN   = 1'b1,
+    parameter bit                 ZCMP_EN    = 1'b1,
     parameter logic        [31:0] BOOT_ADDR  = 32'h8000_0000,
     parameter logic        [31:0] IRAM_BASE  = 32'h8000_0000,
     parameter logic        [31:0] DRAM_BASE  = 32'h9000_0000
@@ -558,6 +559,7 @@ module tb_jv32_soc #(
         .RAS_EN         (RAS_EN),
         .IBUF_EN        (IBUF_EN),
         .RV32B_EN       (RV32B_EN),
+        .ZCMP_EN        (ZCMP_EN),
         .IRAM_BASE      (IRAM_BASE),
         .DRAM_BASE      (DRAM_BASE),
         .BOOT_ADDR      (BOOT_ADDR)
