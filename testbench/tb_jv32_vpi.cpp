@@ -33,6 +33,7 @@
 //   --port N            TCP port for VPI server (default: 3333)
 //   --trace <file.fst>  Write FST waveform (extension .fst)
 //   --trace <file.vcd>  Write VCD waveform (extension .vcd)
+//   --rtl-trace <file>  Write RTL instruction trace (same format as jv32soc)
 //   --max-cycles N      Exit after N simulation cycles (default: 50 000 000)
 //   --boot-clocks N     System clocks before accepting connections (default: 2000)
 //   --tck-half-clks N   System clocks per TCK/TCKC half-period (default: 10)
@@ -56,12 +57,84 @@
 #include <cstring>
 #include <csignal>
 #include <cerrno>
+#include <sstream>
+#include <iomanip>
+#include <inttypes.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include "riscv-dis.h"
+
+// ─── RTL trace helpers (same format as tb_jv32_soc.cpp) ────────────────────
+static const char* const RTL_REG_ABI[32] = {
+    "zero","ra","sp","gp","tp","t0","t1","t2",
+    "s0","s1","a0","a1","a2","a3","a4","a5",
+    "a6","a7","s2","s3","s4","s5","s6","s7",
+    "s8","s9","s10","s11","t3","t4","t5","t6"
+};
+static RiscvDisassembler g_rtl_disasm;
+
+static const char* vpi_csr_name(uint32_t a) {
+    switch (a) {
+    case 0x300: return "mstatus";  case 0x301: return "misa";
+    case 0x304: return "mie";      case 0x305: return "mtvec";
+    case 0x340: return "mscratch"; case 0x341: return "mepc";
+    case 0x342: return "mcause";   case 0x343: return "mtval";
+    case 0x344: return "mip";      case 0xB00: return "mcycle";
+    case 0xB80: return "mcycleh";  case 0xB02: return "minstret";
+    case 0xB82: return "minstreth";case 0xC00: return "cycle";
+    case 0xC80: return "cycleh";   case 0xC01: return "time";
+    case 0xC81: return "timeh";    case 0xC02: return "instret";
+    case 0xC82: return "instreth"; case 0xF14: return "mhartid";
+    default: return nullptr;
+    }
+}
+
+static void vpi_emit_rtl_trace(FILE* fp, uint64_t n, uint64_t cyc,
+                               uint32_t pc, uint32_t instr,
+                               uint32_t rd, uint32_t rddata,
+                               bool mem_we, bool mem_re,
+                               uint32_t mem_addr, uint32_t mem_data) {
+    std::ostringstream oss;
+    oss << std::dec << n << ":" << cyc << " "
+        << "0x" << std::hex << std::setfill('0') << std::setw(8) << pc << " "
+        << "(0x" << std::setw(8) << instr << ")";
+    if (rd != 0)
+        oss << " " << RTL_REG_ABI[rd & 31]
+            << " 0x" << std::setfill('0') << std::setw(8) << rddata;
+    if (mem_we)
+        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr
+            << " 0x" << std::setw(8) << mem_data;
+    else if (mem_re)
+        oss << " mem 0x" << std::setfill('0') << std::setw(8) << mem_addr;
+    uint32_t op = instr & 0x7fu, fn3 = (instr >> 12) & 0x7u;
+    if (op == 0x73u && fn3 != 0) {
+        uint32_t ca = instr >> 20;
+        const char* cn = vpi_csr_name(ca);
+        if (cn) oss << " csr " << cn;
+        else    oss << " csr 0x" << std::hex << std::setfill('0') << std::setw(3) << (ca & 0xFFFu);
+    }
+    std::string base = oss.str();
+    std::string dis  = g_rtl_disasm.disassemble(instr, pc);
+    int pad = 72 - (int)base.size(); if (pad < 2) pad = 2;
+    fprintf(fp, "%s%*s; %s\n", base.c_str(), pad, "", dis.c_str());
+    // cycle-CSR hints for jv32sim synchronisation
+    if (rd != 0 && op == 0x73u && fn3 != 0) {
+        uint32_t ca = instr >> 20;
+        const char* cn = vpi_csr_name(ca);
+        if (cn && (ca == 0xB00||ca == 0xB80||ca == 0xB02||ca == 0xB82||
+                   ca == 0xC00||ca == 0xC80||ca == 0xC01||ca == 0xC81||
+                   ca == 0xC02||ca == 0xC82))
+            fprintf(fp, "! csr_hint %s 0x%08x\n", cn, rddata);
+    }
+    if (mem_re && rd != 0) {
+        if      (mem_addr == 0x02004000U) fprintf(fp, "! csr_hint mtime_lo 0x%08x\n", rddata);
+        else if (mem_addr == 0x02004004U) fprintf(fp, "! csr_hint mtime_hi 0x%08x\n", rddata);
+    }
+}
 
 // ─── VPI protocol constants ─────────────────────────────────────────────────
 // Must match OpenOCD src/jtag/drivers/jtag_vpi.c exactly.
@@ -108,6 +181,10 @@ static int      g_tck_half_clks  = 10;          // sys clocks per TCK/TCKC half-
 static int      g_idle_clks      = 1000;        // sys clocks advanced per idle poll
 static int      g_boot_clks      = 2000;        // sys clocks before accepting connection
 static bool     g_trace_en       = true;         // mirrors trace_en input; false = simulate FPGA (no-trace) mode
+static FILE*    g_rtl_trace_fp   = nullptr;      // --rtl-trace output file
+static uint64_t g_rtl_trace_n    = 0;            // retired instruction counter
+static uint64_t g_rtl_trace_max  = 0;            // --max-trace-insns (0 = unlimited)
+static bool     g_openocd_connected = false;     // set true after accept(); gates trace-limit abort
 
 static void sig_handler(int) { g_abort = true; }
 
@@ -134,6 +211,34 @@ static inline void tick_half() {
 
 static inline void tick() {
     g_dut->clk = 1; tick_half();
+    // Sample RTL instruction trace after posedge (same signals as jv32soc).
+    // trace_valid fires for one cycle per retired instruction.
+    // g_rtl_trace_n always counts retired instructions; writing stops at the limit.
+    if (g_dut->trace_valid) {
+        ++g_rtl_trace_n;
+        if (g_rtl_trace_fp &&
+            (g_rtl_trace_max == 0 || g_rtl_trace_n <= g_rtl_trace_max)) {
+            vpi_emit_rtl_trace(g_rtl_trace_fp, g_rtl_trace_n, g_cycle,
+                               g_dut->trace_pc, g_dut->trace_instr,
+                               g_dut->trace_reg_we ? (uint32_t)g_dut->trace_rd : 0u,
+                               g_dut->trace_rd_data,
+                               (bool)g_dut->trace_mem_we, (bool)g_dut->trace_mem_re,
+                               g_dut->trace_mem_addr, g_dut->trace_mem_data);
+            if (g_dut->trace_irq_taken) {
+                if (g_dut->trace_irq_store_we)
+                    fprintf(g_rtl_trace_fp,
+                            "! sq_store insn=%" PRIu64 " addr=0x%08x data=0x%08x\n",
+                            g_rtl_trace_n,
+                            (uint32_t)g_dut->trace_irq_store_addr,
+                            (uint32_t)g_dut->trace_irq_store_data);
+                fprintf(g_rtl_trace_fp,
+                        "! irq cause=0x%08x epc=0x%08x insn=%" PRIu64 " cycle=%" PRIu64 "\n",
+                            (uint32_t)g_dut->trace_irq_cause,
+                            (uint32_t)g_dut->trace_irq_epc,
+                            g_rtl_trace_n, g_cycle);
+            }
+        }
+    }
     g_dut->clk = 0; tick_half();
     ++g_cycle;
 }
@@ -295,16 +400,21 @@ int main(int argc, char **argv) {
     signal(SIGINT, sig_handler);
 
     // ── Argument parsing ─────────────────────────────────────────────────────
-    const char *elf_path   = nullptr;
-    const char *trace_file = nullptr;
+    const char *elf_path      = nullptr;
+    const char *trace_file    = nullptr;
+    const char *rtl_trace_file = nullptr;
 
     for (int i = 1; i < argc; ++i) {
         if      (!strcmp(argv[i], "--port")          && i+1 < argc)
             g_vpi_port      = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--trace")         && i+1 < argc)
             trace_file      = argv[++i];
+        else if (!strcmp(argv[i], "--rtl-trace")     && i+1 < argc)
+            rtl_trace_file  = argv[++i];
         else if (!strcmp(argv[i], "--max-cycles")    && i+1 < argc)
             g_max_cycles    = static_cast<uint64_t>(strtoull(argv[++i], nullptr, 10));
+        else if (!strcmp(argv[i], "--max-trace-insns") && i+1 < argc)
+            g_rtl_trace_max = static_cast<uint64_t>(strtoull(argv[++i], nullptr, 10));
         else if (!strcmp(argv[i], "--boot-clocks")   && i+1 < argc)
             g_boot_clks     = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--tck-half-clks") && i+1 < argc)
@@ -325,7 +435,7 @@ int main(int argc, char **argv) {
 
     if (!elf_path) {
         fprintf(stderr,
-            "Usage: %s <elf> [--port N] [--trace <f.fst>] [--max-cycles N]\n"
+            "Usage: %s <elf> [--port N] [--trace <f.fst>] [--rtl-trace <f.txt>] [--max-cycles N] [--max-trace-insns N]\n"
             "              [--boot-clocks N] [--tck-half-clks N] [--idle-clks N]\n"
             "              [--no-trace-en]   simulate FPGA: drive trace_en=0\n",
             argv[0]);
@@ -375,6 +485,15 @@ int main(int argc, char **argv) {
 #endif
     }
 
+    // ── Open RTL instruction trace file ──────────────────────────────────────
+    if (rtl_trace_file) {
+        g_rtl_trace_fp = fopen(rtl_trace_file, "w");
+        if (!g_rtl_trace_fp) {
+            perror("[VPI] cannot open rtl-trace file"); return 1;
+        }
+        fprintf(stderr, "[VPI] RTL trace: %s\n", rtl_trace_file);
+    }
+
     // ── Reset sequence ───────────────────────────────────────────────────────
     g_dut->rst_n           = 0;
     g_dut->clk             = 0;
@@ -412,6 +531,8 @@ int main(int argc, char **argv) {
             client_fd = accept(server_fd, nullptr, nullptr);
             if (client_fd > 0) {
                 setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                g_openocd_connected = true;
+                g_rtl_trace_n = 0;  // restart counter — limit applies to GDB session only
                 fprintf(stderr, "[VPI] OpenOCD connected\n");
             }
         } else {
@@ -462,6 +583,7 @@ int main(int argc, char **argv) {
     // ── Cleanup ───────────────────────────────────────────────────────────────
     close(client_fd);
     close(server_fd);
+    if (g_rtl_trace_fp) { fflush(g_rtl_trace_fp); fclose(g_rtl_trace_fp); g_rtl_trace_fp = nullptr; }
 #if VM_TRACE_VCD
     if (g_vcdp) { g_vcdp->flush(); g_vcdp->close(); }
 #else

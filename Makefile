@@ -120,7 +120,8 @@ LINT_MODULE_LIST = $(filter-out %_pkg.sv, $(RTL_ONLY_SRCS))
 # -Wno-SYNCASYNCNET: false positive for async-reset FF
 # NOTE: no -pvalue+ here; parameters use module defaults when linting individually
 LINT_MOD_FLAGS  = --lint-only -Wall -Wno-UNSIGNED -sv
-LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL -Wno-DECLFILENAME -Wno-SYNCASYNCNET -Wno-PINCONNECTEMPTY -Wno-UNOPTFLAT -Werror-IMPLICIT
+LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL -Wno-DECLFILENAME -Wno-SYNCASYNCNET
+LINT_MOD_FLAGS += -Wno-PINCONNECTEMPTY -Wno-UNOPTFLAT -Werror-IMPLICIT
 LINT_MOD_FLAGS += -I$(CORE_DIR) -I$(JV32_DIR) -I$(AXI_DIR) -I$(RTL_DIR)
 
 # Simulation parameters (override on command line, e.g. make build-rtl FAST_MUL=0)
@@ -221,10 +222,11 @@ TB_SOURCES = \
     $(TB_DIR)/elfloader.cpp \
     $(SIM_DIR)/riscv-dis.cpp
 
-# VPI testbench sources (no riscv-dis -- the VPI testbench does not emit traces)
+# VPI testbench sources (includes riscv-dis for --rtl-trace instruction disassembly)
 VPI_SOURCES = \
     $(TB_DIR)/tb_jv32_vpi.cpp \
-    $(TB_DIR)/elfloader.cpp
+    $(TB_DIR)/elfloader.cpp \
+    $(SIM_DIR)/riscv-dis.cpp
 
 # VPI build output binaries
 VPI_TARGET_JTAG     = $(BUILD_DIR)/jv32vpi_jtag
@@ -248,7 +250,10 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
-RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
+RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) JTAG_EN=$(JTAG_EN) \
+AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) \
+RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) \
+IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
 # ============================================================================
 # Phony targets
@@ -269,7 +274,9 @@ RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV
         build-rtl-cov build-vpi-jtag-cov coverage
 
 # Default: build RTL simulator, run all tests, then verification suite
-all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all compare-zephyr-all rtl-threadx-all sim-threadx-all compare-threadx-all rtl-riot-all sim-riot-all compare-riot-all extra-tests arch-test-run openocd-test
+all: rtl-all sim-all compare-all rtl-freertos-all sim-freertos-all compare-freertos-all rtl-zephyr-all sim-zephyr-all \
+compare-zephyr-all rtl-threadx-all sim-threadx-all compare-threadx-all rtl-riot-all sim-riot-all compare-riot-all \
+extra-tests arch-test-run openocd-test
 
 extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
