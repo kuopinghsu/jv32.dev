@@ -1,0 +1,19 @@
+# test_config.yaml for JV32 RV32IMAC — Zcmp extension (jv32sim reference model)
+# SPDX-License-Identifier: Apache-2.0
+#
+# This config is used exclusively for Zcmp arch-tests.
+# Sail v0.11 does not support Zcmp instructions, so jv32sim acts as the
+# reference model here.  jv32sim accepts the same --test-signature and
+# --signature-granularity flags that Sail does (ref_model_type: sail), and
+# responds to --version with "0.11" so ACT4's version check passes.
+#
+# jv32sim must be on PATH when ACT is invoked (the arch-test-zcmp Makefile
+# target prepends $(JV32_ROOT)/build to PATH automatically).
+name: jv32-rv32imac
+compiler_exe: riscv-none-elf-gcc
+objdump_exe: riscv-none-elf-objdump
+ref_model_exe: jv32sim
+ref_model_type: sail
+udb_config: ../jv32-rv32imac/jv32-rv32imac.yaml
+linker_script: ../jv32-rv32imac/link.ld
+dut_include_dir: ../jv32-rv32imac
