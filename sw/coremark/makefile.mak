@@ -1,3 +1,5 @@
+JV_IO_BACKEND = magic
+
 PORT_CFLAGS += -O3 -DITERATIONS=4 -DPERFORMANCE_RUN=1 -Wno-unused-parameter -Wno-unused-but-set-parameter
 
 #PORT_CFLAGS += -mtune=rocket -frename-registers -fselective-scheduling
@@ -8,6 +10,8 @@ PORT_CFLAGS += -falign-jumps=4 -falign-loops=4 -finline-limit=1000
 #PORT_CFLAGS += --param case-values-threshold=8 -fno-crossjumping
 PORT_CFLAGS += -freorder-blocks-and-partition -fno-tree-loop-if-convert
 PORT_CFLAGS += -fno-tree-sink -fgcse-sm -fno-strict-overflow
+
+#PORT_CFLAGS += -msave-restore
 
 FLAGS_STR    = "$(PORT_CFLAGS)"
 CFLAGS      += $(PORT_CFLAGS) -DFLAGS_STR=\"$(FLAGS_STR)\"

@@ -56,7 +56,7 @@ if core_icgs:
     rows = [pins[i:i+5] for i in range(0, len(pins), 5)]
     pin_lines = "\n               ".join(" ".join(r) for r in rows)
     print("create_generated_clock -name core_clk_gck \\")
-    print("    -source [get_ports clk] -master_clock core_clk \\")
+    print("    -combinational -source [get_ports clk] -master_clock core_clk \\")
     print(f"    [get_pins {{{pin_lines}}}]")
     print()
 

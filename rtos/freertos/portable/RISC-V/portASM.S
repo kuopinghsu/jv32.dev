@@ -338,12 +338,16 @@ freertos_risc_v_trap_handler:
 
 asynchronous_interrupt:
     store_x a1, 0( sp )                 /* Asynchronous interrupt so save unmodified exception return address. */
+    load_x t0, pxCurrentTCB
+    beq t0, x0, handle_interrupt
     load_x sp, xISRStackTop             /* Switch to ISR stack. */
     j handle_interrupt
 
 synchronous_exception:
     addi a1, a1, 4                      /* Synchronous so update exception return address to the instruction after the instruction that generated the exeption. */
     store_x a1, 0( sp )                 /* Save updated exception return address. */
+    load_x t0, pxCurrentTCB
+    beq t0, x0, handle_exception
     load_x sp, xISRStackTop             /* Switch to ISR stack. */
     j handle_exception
 
@@ -371,7 +375,15 @@ application_interrupt_handler:
 handle_exception:
     /* a0 contains mcause. */
     li t0, 11                                   /* 11 == environment call. */
-    bne a0, t0, application_exception_handler   /* Not an M environment call, so some other exception. */
+    beq a0, t0, ecall_exception_handler         /* FreeRTOS yield path (ecall). */
+
+    li t0, 3                                    /* 3 == breakpoint exception. */
+    beq a0, t0, processed_source                /* Semihost ebreak: resume at mepc+4. */
+
+    /* Other synchronous exceptions use application handler hook. */
+    j application_exception_handler
+
+ecall_exception_handler:
     call vTaskSwitchContext
     j processed_source
 

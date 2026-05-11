@@ -36,6 +36,8 @@ RIOT_BOARDS  = $(RIOT_DIR)/boards/jv32
 RIOT_CPUDIR  = $(RIOT_DIR)/cpu/jv32
 RIOT_COMMON  = $(RIOT_DIR)/cpu/riscv_common
 SW_INCLUDE   = $(PROJECT_ROOT)/sw/include
+JV_IO_BACKEND ?= semihost
+RIOT_IO_SRC   = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
 
 # ── RIOT source files (minimal kernel — no module system required) ────
 #
@@ -69,7 +71,8 @@ RIOT_JV32_SRCS = \
 	$(RIOT_CPUDIR)/cpu.c \
 	$(RIOT_CPUDIR)/riot_init.c \
 	$(RIOT_BOARDS)/board.c \
-	$(RIOT_BOARDS)/riot_syscall.c
+	$(RIOT_BOARDS)/riot_syscall.c \
+	$(RIOT_IO_SRC)
 
 RIOT_ASM_SRCS = \
 	$(RIOT_BOARDS)/riot_start.S

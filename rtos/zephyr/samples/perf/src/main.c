@@ -39,17 +39,18 @@ static inline uint32_t get_cycles(void)
 /* Simple statistics accumulator                                       */
 /* ================================================================== */
 
-typedef struct { int cnt; uint32_t sum; uint32_t max; } stats_t;
+typedef struct { int cnt; uint32_t sum; uint32_t min; uint32_t max; } stats_t;
 
 static void stats_reset(stats_t *s)
 {
-    s->cnt = 0; s->sum = 0; s->max = 0;
+    s->cnt = 0; s->sum = 0; s->max = 0; s->min = UINT32_MAX;
 }
 
 static void stats_update(stats_t *s, uint32_t v)
 {
     s->cnt++; s->sum += v;
     if (v > s->max) s->max = v;
+    if (v < s->min) s->min = v;
 }
 
 static uint32_t stats_avg(const stats_t *s)
@@ -140,9 +141,9 @@ static void yield_test(void)
             stats_update(&s, delta > calib ? delta - calib : 0);
     }
 
-    printk("Solicited context switch time        : avg %u max %u cycles"
-           " [calib %u]\n", (unsigned)stats_avg(&s), (unsigned)s.max,
-           (unsigned)calib);
+    printk("Solicited context switch time        : min %u avg %u max %u cycles"
+           " [calib %u]\n", (unsigned)s.min, (unsigned)stats_avg(&s),
+           (unsigned)s.max, (unsigned)calib);
 }
 
 /* ================================================================== */
@@ -206,8 +207,10 @@ static void unsolicited_test(void)
     uint32_t c0 = get_cycles(), c1 = get_cycles();
     uint32_t calib = c1 - c0;
 
-    printk("Unsolicited context switch time      : avg %u max %u cycles"
+    printk("Unsolicited context switch time      : min %u avg %u max %u cycles"
            " [calib %u]\n",
+           (unsigned)(g_unsol_stats.min > calib ?
+                      g_unsol_stats.min - calib : 0),
            (unsigned)(stats_avg(&g_unsol_stats) > calib ?
                       stats_avg(&g_unsol_stats) - calib : 0),
            (unsigned)(g_unsol_stats.max > calib ?
@@ -268,8 +271,8 @@ static void sem_test(void)
         k_sem_give(&g_sem);
         stats_update(&s, get_cycles() - t0);
     }
-    printk("Semaphore give with no wake          : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Semaphore give with no wake          : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     stats_reset(&s);
     for (int i = 0; i < TEST_ITER; i++) {
@@ -277,8 +280,8 @@ static void sem_test(void)
         k_sem_take(&g_sem, K_NO_WAIT);
         stats_update(&s, get_cycles() - t0);
     }
-    printk("Semaphore take with no contention    : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Semaphore take with no contention    : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     /* ---- (b) give wakes a lower-priority waiter ---- */
     k_sem_init(&g_sem, 0, TEST_ITER + 1);
@@ -297,8 +300,8 @@ static void sem_test(void)
         stats_update(&s, get_cycles() - t0);
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Semaphore give with thread wake      : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Semaphore give with thread wake      : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     /* ---- (c) give causes immediate context switch (higher-priority waiter) ---- */
     k_sem_init(&g_sem, 0, TEST_ITER + 1);
@@ -317,8 +320,9 @@ static void sem_test(void)
         k_sem_give(&g_sem);   /* triggers immediate switch */
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Semaphore give with context switch   : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&g_remote_stats), (unsigned)g_remote_stats.max);
+    printk("Semaphore give with context switch   : min %u avg %u max %u cycles\n",
+           (unsigned)g_remote_stats.min, (unsigned)stats_avg(&g_remote_stats),
+           (unsigned)g_remote_stats.max);
 }
 
 /* ================================================================== */
@@ -372,10 +376,10 @@ static void mutex_test(void)
         k_mutex_unlock(&g_mutex);
         stats_update(&su, get_cycles() - t0);
     }
-    printk("Mutex lock with no contention        : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&sl), (unsigned)sl.max);
-    printk("Mutex unlock with no contention      : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&su), (unsigned)su.max);
+    printk("Mutex lock with no contention        : min %u avg %u max %u cycles\n",
+           (unsigned)sl.min, (unsigned)stats_avg(&sl), (unsigned)sl.max);
+    printk("Mutex unlock with no contention      : min %u avg %u max %u cycles\n",
+           (unsigned)su.min, (unsigned)stats_avg(&su), (unsigned)su.max);
 
     /* ---- (b) unlock wakes a lower-priority waiter ---- */
     k_mutex_init(&g_mutex);
@@ -395,8 +399,8 @@ static void mutex_test(void)
         stats_update(&s, get_cycles() - t0);
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Mutex unlock with thread wake        : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Mutex unlock with thread wake        : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     /* ---- (c) unlock causes immediate switch (higher-priority waiter) ---- */
     k_mutex_init(&g_mutex);
@@ -420,8 +424,9 @@ static void mutex_test(void)
         k_sleep(K_TICKS(1));
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Mutex unlock with context switch     : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&g_remote_stats), (unsigned)g_remote_stats.max);
+    printk("Mutex unlock with context switch     : min %u avg %u max %u cycles\n",
+           (unsigned)g_remote_stats.min, (unsigned)stats_avg(&g_remote_stats),
+           (unsigned)g_remote_stats.max);
 }
 
 /* ================================================================== */
@@ -475,10 +480,10 @@ static void event_test(void)
         k_event_clear(&g_event, EVT_ALL_BITS);
         stats_update(&sc, get_cycles() - t0);
     }
-    printk("Event set with no contention         : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&ss), (unsigned)ss.max);
-    printk("Event clear with no contention       : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&sc), (unsigned)sc.max);
+    printk("Event set with no contention         : min %u avg %u max %u cycles\n",
+           (unsigned)ss.min, (unsigned)stats_avg(&ss), (unsigned)ss.max);
+    printk("Event clear with no contention       : min %u avg %u max %u cycles\n",
+           (unsigned)sc.min, (unsigned)stats_avg(&sc), (unsigned)sc.max);
 
     /* ---- (b) set wakes a lower-priority waiter ---- */
     k_event_init(&g_event);
@@ -498,8 +503,8 @@ static void event_test(void)
         k_sleep(K_TICKS(1));  /* let waiter consume event and re-block */
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Event set with thread wake           : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Event set with thread wake           : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     /* ---- (c) set causes immediate switch (higher-priority waiter) ---- */
     k_event_init(&g_event);
@@ -519,8 +524,9 @@ static void event_test(void)
         k_event_set(&g_event, EVT_ALL_BITS);
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Event set with context switch        : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&g_remote_stats), (unsigned)g_remote_stats.max);
+    printk("Event set with context switch        : min %u avg %u max %u cycles\n",
+           (unsigned)g_remote_stats.min, (unsigned)stats_avg(&g_remote_stats),
+           (unsigned)g_remote_stats.max);
 }
 
 /* ================================================================== */
@@ -577,10 +583,10 @@ static void msgq_test(void)
         k_msgq_get(&g_msgq, &msg, K_NO_WAIT);
         stats_update(&sg, get_cycles() - t0);
     }
-    printk("Message put with no contention       : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&sp), (unsigned)sp.max);
-    printk("Message get with no contention       : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&sg), (unsigned)sg.max);
+    printk("Message put with no contention       : min %u avg %u max %u cycles\n",
+           (unsigned)sp.min, (unsigned)stats_avg(&sp), (unsigned)sp.max);
+    printk("Message get with no contention       : min %u avg %u max %u cycles\n",
+           (unsigned)sg.min, (unsigned)stats_avg(&sg), (unsigned)sg.max);
 
     /* ---- (b) put wakes a lower-priority receiver ---- */
     k_msgq_purge(&g_msgq);
@@ -599,8 +605,8 @@ static void msgq_test(void)
         stats_update(&s, get_cycles() - t0);
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Message put with thread wake         : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&s), (unsigned)s.max);
+    printk("Message put with thread wake         : min %u avg %u max %u cycles\n",
+           (unsigned)s.min, (unsigned)stats_avg(&s), (unsigned)s.max);
 
     /* ---- (c) put causes immediate switch (higher-priority receiver) ---- */
     k_msgq_purge(&g_msgq);
@@ -620,8 +626,9 @@ static void msgq_test(void)
         k_msgq_put(&g_msgq, &msg, K_NO_WAIT);
     }
     k_sem_take(&g_done, K_FOREVER);
-    printk("Message put with context switch      : avg %u max %u cycles\n",
-           (unsigned)stats_avg(&g_remote_stats), (unsigned)g_remote_stats.max);
+    printk("Message put with context switch      : min %u avg %u max %u cycles\n",
+           (unsigned)g_remote_stats.min, (unsigned)stats_avg(&g_remote_stats),
+           (unsigned)g_remote_stats.max);
 }
 
 /* ================================================================== */
@@ -640,7 +647,7 @@ int main(void)
     event_test();
     msgq_test();
 
-    printk("\nAll performance tests done.\n");
+    printk("\nTest PASSED\n");
     jv_exit(0);
     return 0;
 }

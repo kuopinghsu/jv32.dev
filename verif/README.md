@@ -77,6 +77,7 @@ The arch-test run proceeds in three phases:
 | `Zicsr` | Control and status register instructions |
 | `Zifencei` | Instruction-fetch fence |
 | `Zicntr` | Base counters and timers (`cycle`, `time`, `instret`) |
+| `Zcmp` | Compressed push/pop and stack-adjust instructions |
 | `Zba` / `Zbb` / `Zbs` | B-extension: address generation, basic bit manipulation, single-bit instructions (enabled by `RV32B_EN=1`) |
 | `Sm` | Machine-mode privileged architecture |
 

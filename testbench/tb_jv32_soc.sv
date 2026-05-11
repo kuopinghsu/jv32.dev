@@ -288,24 +288,6 @@ module tb_jv32_soc #(
         end
     end
 
-    // Debug: trace testbench alias bridge activity
-    always @(posedge clk) begin
-        if (tb_alias_rd_sel) begin
-            $display("[TB_ALIAS_RD] @%0t ext_axi_araddr=0x%08x → mapped=0x%08x is_iram=%b", $time, ext_axi_araddr,
-                     alias_to_tcm_addr(ext_axi_araddr), in_iram_alias(ext_axi_araddr));
-        end
-        if (tb_alias_wr_sel) begin
-            $display("[TB_ALIAS_WR] @%0t ext_axi_awaddr=0x%08x → mapped=0x%08x is_iram=%b", $time, ext_axi_awaddr,
-                     alias_to_tcm_addr(ext_axi_awaddr), in_iram_alias(ext_axi_awaddr));
-        end
-        if (ext_axi_arvalid && !tb_alias_rd_sel && !tb_extram_rd_sel) begin
-            $display("[TB_EXT_RD] @%0t ext_axi_araddr=0x%08x (NOT alias/extram)", $time, ext_axi_araddr);
-        end
-        if (ext_axi_awvalid && !tb_alias_wr_sel && !tb_extram_wr_sel) begin
-            $display("[TB_EXT_WR] @%0t ext_axi_awaddr=0x%08x (NOT alias/extram)", $time, ext_axi_awaddr);
-        end
-    end
-
     // Latch a pending DECERR B-response for non-alias unmapped writes.
     // bvalid must stay asserted until bready, but wvalid drops before
     // jv32_top transitions from BUS_DAW to BUS_DB and asserts bready.

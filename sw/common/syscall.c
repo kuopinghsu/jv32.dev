@@ -4,8 +4,9 @@
  * Description: Newlib syscall stubs for bare-metal sw/ tests.
  *
  * Overrides the Linux-ecall-based stubs that newlib ships by default.
- * _write routes characters to the JV32 magic-device console so that
- * puts() / printf() work without triggering an ecall exception.
+ * _write routes characters through jv_putc(), which uses semihosting v1.0
+ * by default (with raw magic-device fallback), so puts()/printf() work
+ * without Linux ecall handling.
  * ============================================================================ */
 
 #include <sys/stat.h>

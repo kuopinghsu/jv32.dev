@@ -36,15 +36,27 @@ Patched OpenOCD fork ([kuopinghsu/openocd](https://github.com/kuopinghsu/openocd
 
 [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build/releases) (Yosys + SymbiYosys + Z3) — recommended all-in-one bundle. See [verif/README.md](verif/README.md) for install options.
 
-## ASIC Synthesis and P&R (required for `make -C syn synth`)
+## ASIC Synthesis and P&R (required for `make syn` / `make -C syn synth`)
+
+Typical setup/run sequence:
+
+1. `make -C syn syn-setup` (pre-fetch OpenLane2 Nix dependencies)
+2. `make -C syn openram-setup`
+3. `make -C syn gen-mem`
+4. `make syn` (or `make -C syn synth`)
+
+Optional post-flow targets:
+
+- `make -C syn gate-count` (hierarchical gate count report)
+- `make -C syn timing-report` (OpenROAD/OpenSTA timing report)
 
 | Tool | Notes |
 |---|---|
-| [OpenLane2](https://github.com/efabless/openlane2) | Full RTL-to-GDS flow; set `OPENLANE=` in `env.config`; Nix-based setup recommended |
+| [OpenLane2](https://github.com/efabless/openlane2) | Full RTL-to-GDS flow; set `OPENLANE=` in `env.config`; default launcher is `syn/scripts/openlane_nix.sh` |
 | [OpenRAM](https://github.com/VLSIDA/OpenRAM) | SRAM macro compiler (1.2.x); set `OPENRAM=` in `env.config` |
-| [OpenROAD](https://theopenroadproject.org) | P&R engine bundled with OpenLane2 / Nix; set `OPENROAD=` in `env.config` |
+| [OpenROAD](https://theopenroadproject.org) | Used by `make -C syn pnr` and `make -C syn timing-report`; set `OPENROAD=` in `env.config` |
 | Nangate 45nm PDK | FreePDK45 Open Cell Library; set `NANGATE_HOME=` in `env.config`; download from [NCSU EDA](https://www.eda.ncsu.edu/wiki/FreePDK45) |
-| [Nix](https://nixos.org) | Package manager used by the OpenLane2 Nix shell wrapper (`syn/scripts/openlane_nix.sh`) |
+| [Nix](https://nixos.org) | `nix-shell` is used by `syn/scripts/openlane_nix.sh` and `syn/scripts/openroad_nix.sh` |
 | Python 3 | 3.9+ | Required by OpenLane2 and synthesis helper scripts |
 
 ## FPGA (required for `make -C fpga impl`)

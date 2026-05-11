@@ -23,6 +23,7 @@ endif
 
 CC      := $(CROSS)-gcc
 CXX     := $(CROSS)-g++
+AR      := $(CROSS)-ar
 OBJCOPY := $(CROSS)-objcopy
 OBJDUMP := $(CROSS)-objdump
 SIZE    := $(CROSS)-size
@@ -45,8 +46,6 @@ CFLAGS  += -nostartfiles -ffreestanding
 CFLAGS  += -ffunction-sections -fdata-sections
 CFLAGS  += -Iinclude
 
-CXXFLAGS := $(CFLAGS)
-
 # Per-test optional extra flags: sourced from <test>/makefile.mak if it exists.
 # That file may append to CFLAGS, e.g.:  CFLAGS += -O3 -DFOO
 SW_DIR := $(CURDIR)
@@ -54,11 +53,31 @@ ifneq ($(strip $(TEST)),)
 -include $(SW_DIR)/$(TEST)/makefile.mak
 endif
 
+JV_IO_BACKEND ?= semihost
+ifeq ($(JV_IO_BACKEND),semihost)
+	JV_IO_USE_SEMIHOST := 1
+else ifeq ($(JV_IO_BACKEND),magic)
+	JV_IO_USE_SEMIHOST := 0
+else ifeq ($(JV_IO_BACKEND),uart)
+	JV_IO_USE_SEMIHOST := 0
+else
+	$(error Unsupported JV_IO_BACKEND='$(JV_IO_BACKEND)'; use magic, semihost, or uart)
+endif
+
+CFLAGS   += -DJV_STARTUP_USE_SEMIHOST=$(JV_IO_USE_SEMIHOST)
+CXXFLAGS = $(CFLAGS)
+# Append per-test C++-only flags if the test defined them (e.g., cpp test)
+ifdef CPP_EXTRA_FLAGS
+CXXFLAGS += $(CPP_EXTRA_FLAGS)
+endif
+
 # Output directory for ELFs.
 # When invoked by the root Makefile the root passes BUILD_DIR=$(BUILD_DIR_ABS).
 # When invoked standalone (make -C sw ...) default to the top-level build/ dir.
 BUILD_DIR ?= $(abspath $(SW_DIR)/../build)
 OBJ_DIR   := $(BUILD_DIR)/obj
+JV_IO_SRC := common/jv_io_$(JV_IO_BACKEND).c
+JV_IO_LIB := $(OBJ_DIR)/libjv_io_$(JV_IO_BACKEND).a
 
 # Linker script
 COMMON_LINK := common/link.ld
@@ -68,8 +87,10 @@ LDFLAGS += -nostartfiles
 LDFLAGS += -T $(COMMON_LINK)
 LDFLAGS += -Wl,--gc-sections
 
-# Common sources compiled into every test ELF
-COMMON_SRCS := common/startup.S $(wildcard common/*.c)
+# Common sources compiled into every test ELF.
+# jv_putc()/jv_exit() come from the selected backend library, not this wildcard.
+COMMON_SRCS := common/startup.S \
+			   $(filter-out common/jv_io_magic.c common/jv_io_semihost.c common/jv_io_uart.c,$(wildcard common/*.c))
 
 # Discover all test directories (exclude common and include)
 TEST_DIRS  := $(shell find $(SW_DIR) -mindepth 1 -maxdepth 1 -type d \
@@ -105,7 +126,8 @@ FORCE:
 # or any source/header under the test directory changes.
 .SECONDEXPANSION:
 $(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(COMMON_LINK) \
-                    $$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.S $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h)
+					$(JV_IO_SRC) \
+					$$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.S $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/makefile.mak)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@
 
 __build-test:
@@ -125,6 +147,9 @@ __build-test:
 		OBJS="$$OBJS $$obj"; \
 		$(CC) $(CFLAGS) -c $$src -o $$obj; \
 	done; \
+	backend_obj="$(OBJ_DIR)/_common_jv_io_$(JV_IO_BACKEND).o"; \
+	$(CC) $(CFLAGS) -c $(JV_IO_SRC) -o $$backend_obj; \
+	$(AR) rcs $(JV_IO_LIB) $$backend_obj; \
 	C_SRCS="$(wildcard $(SW_DIR)/$(TEST)/*.c)"; \
 	if [ -n "$$C_SRCS" ]; then \
 		for src in $$C_SRCS; do \
@@ -150,8 +175,11 @@ __build-test:
 			OBJS="$$OBJS $$obj"; \
 			$(CXX) $(CXXFLAGS) -I$(SW_DIR)/$(TEST) -c $$src -o $$obj; \
 		done; \
+		cxx_stubs_obj="$(OBJ_DIR)/_common_cxx_stubs.o"; \
+		$(CXX) $(CXXFLAGS) -c $(SW_DIR)/common/cxx_stubs.cpp -o $$cxx_stubs_obj; \
+		OBJS="$$OBJS $$cxx_stubs_obj"; \
 	fi; \
-	$$LINKER $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/$(TEST).map -o $(OUT) $$OBJS
+	$$LINKER $(LDFLAGS) -Wl,-Map,$(OBJ_DIR)/$(TEST).map -o $(OUT) $$OBJS $(JV_IO_LIB)
 	@$(SIZE) $(OUT)
 
 # Disassembly (built on demand)
@@ -180,3 +208,4 @@ help:
 	@echo "Variables:"
 	@echo "  CROSS=<prefix>   Toolchain prefix (default: riscv32-unknown-elf)"
 	@echo "  BUILD_DIR=<dir>  Output directory (default: sw/)"
+	@echo "  JV_IO_BACKEND=<magic|semihost|uart>  Select app I/O backend (default: semihost)"

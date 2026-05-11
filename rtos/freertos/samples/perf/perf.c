@@ -1,5 +1,5 @@
 /*******************************************************************************
-// Copyright (c) 2003-2015 Cadence Design Systems, Inc.
+// Copyright (c) 2003-2025 Cadence Design Systems, Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -25,7 +25,6 @@
 // perf_test.c -- measure FreeRTOS operation timing.
 
 #include <stdio.h>
-#include <stdlib.h>
 #include "jv_platform.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -33,8 +32,6 @@
 #include "event_groups.h"
 #include "queue.h"
 #include "testcommon.h"
-
-extern void exit(int);
 
 #define TEST_ITER           3
 #define PERF_TEST_PRIORITY  5  // Priorities will vary between 2 and 7
@@ -69,6 +66,7 @@ static QueueHandle_t      xQueue;
 typedef struct {
     int cnt;
     int sum;
+    int min;
     int max;
 } stats_t;
 
@@ -81,6 +79,7 @@ static void stats_reset(stats_t *s)
 {
     s->cnt = s->sum = 0;
     s->max = -0x7FFFFFFF; // Small number
+    s->min =  0x7FFFFFFF; // Large number
 }
 
 static void stats_update(stats_t *s, int value)
@@ -89,6 +88,8 @@ static void stats_update(stats_t *s, int value)
     s->sum += value;
     if (s->max < value)
         s->max = value;
+    if (s->min > value)
+        s->min = value;
 }
 
 static void yield_func(void * arg)
@@ -110,6 +111,28 @@ static void yield_func(void * arg)
     *pResponse = 1;
 
     vTaskDelete(NULL);
+}
+
+//-----------------------------------------------------------------------------
+// Task creation wrapper.
+//-----------------------------------------------------------------------------
+BaseType_t task_create( TaskFunction_t pvTaskCode,
+                        const char * const pcName,
+                        configSTACK_DEPTH_TYPE usStackDepth,
+                        void * pvParameters,
+                        UBaseType_t uxPriority,
+                        TaskHandle_t *pxCreatedTask)
+{
+    BaseType_t xret;
+
+    xret = xTaskCreate(pvTaskCode, pcName, usStackDepth, pvParameters,
+                       uxPriority, pxCreatedTask);
+    if (xret != pdPASS) {
+        fprintf(stderr, "Error creating task '%s'\n", pcName);
+        jv_exit(-1);
+    }
+
+    return xret;
 }
 
 //-----------------------------------------------------------------------------
@@ -146,6 +169,7 @@ void sem_test(void * arg)
     uint32_t total = 0;
     uint32_t max   = 0;
     uint32_t i;
+    TaskHandle_t thandle;
     volatile uint32_t* pResponse = (volatile uint32_t*)arg;
 
     *pResponse = 0;
@@ -167,7 +191,7 @@ void sem_test(void * arg)
     }
 
     if (printStats)
-        printf("Semaphore put with no wake           : avg %u max %u cycles\n", (unsigned)total/TEST_ITER, (unsigned)max);
+        printf("Semaphore put with no wake           : avg %lu max %lu cycles\n", total/TEST_ITER, max);
 
     // Measure time to get a semaphore with no contention and no waits/
     // wakeups.
@@ -189,7 +213,7 @@ void sem_test(void * arg)
     // thread has to be unblocked.
 
     uiTaskResponse[0] = 0;
-    xTaskCreate(sem_get, "sem_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
+    task_create(sem_get, "sem_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
 
     total = 0;
     max = 0;
@@ -216,7 +240,8 @@ void sem_test(void * arg)
     // Now measure the time taken to put a semaphore + context switch when
     // a higher priority thread is unblocked.
 
-    xTaskCreate(sem_get, "sem_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), NULL);
+    task_create(sem_get, "sem_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), &thandle);
+    UNUSED(thandle);
 
     test_total = 0;
     test_max = 0;
@@ -231,6 +256,7 @@ void sem_test(void * arg)
     {
         vTaskDelay(1);
     }
+
     if (printStats)
         printf("Semaphore put with context switch    : avg %lu max %lu cycles\n", test_total/TEST_ITER, test_max);
     *pResponse = 1;
@@ -294,6 +320,7 @@ void mutex_test(void * arg)
     uint32_t total;
     uint32_t max;
     uint32_t i;
+    TaskHandle_t thandle;
     volatile uint32_t* pResponse = (volatile uint32_t*)arg;
     *pResponse = 0;
     printf("\nMutex timing test"
@@ -335,7 +362,7 @@ void mutex_test(void * arg)
     // Now measure the time taken to unlock a mutex when a lower priority
     // thread has to be unblocked.
     uiTaskResponse[1] = 0;
-    xTaskCreate(mutex_get, "mutex_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
+    task_create(mutex_get, "mutex_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
 
     test_total = 0;
     test_max = 0;
@@ -364,7 +391,8 @@ void mutex_test(void * arg)
     // Now measure the time taken to unlock a mutex + context switch when
     // a higher priority thread is unblocked.
 
-    xTaskCreate(mutex_get2, "mutex_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), NULL);
+    task_create(mutex_get2, "mutex_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), &thandle);
+    UNUSED(thandle);
 
     test_total = 0;
     test_max = 0;
@@ -373,7 +401,7 @@ void mutex_test(void * arg)
     {
         xSemaphoreTake(xMutex, portMAX_DELAY);
         // Now signal the other thread with the semaphore. This will cause an
-        // immdeiate switch to the other thread, which will then block on the
+        // immediate switch to the other thread, which will then block on the
         // mutex and give back control to here.
         xSemaphoreGive(xSemaphore);
         test_start = get_timer();
@@ -453,6 +481,7 @@ void event_test(void * arg)
     uint32_t max;
     uint32_t i;
 
+    TaskHandle_t thandle;
     volatile uint32_t* pResponse = (volatile uint32_t*)arg;
 
     *pResponse = 0;
@@ -496,7 +525,10 @@ void event_test(void * arg)
     // Now measure the time taken to set an event when a lower priority
     // thread has to be unblocked.
     uiTaskResponse[1] = 0;
-    xTaskCreate(event_get, "event_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
+    task_create(event_get, "event_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
+
+    // Let the other thread run so that it can block on the event
+    vTaskDelay(1);
 
     test_total = 0;
     test_max = 0;
@@ -515,7 +547,7 @@ void event_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(3);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -526,7 +558,8 @@ void event_test(void * arg)
     // a higher priority thread is unblocked.
 
     uiTaskResponse[1] = 0;
-    xTaskCreate(event_get2, "event_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), NULL);
+    task_create(event_get2, "event_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), &thandle);
+    UNUSED(thandle);
 
     test_total = 0;
     test_max = 0;
@@ -544,7 +577,7 @@ void event_test(void * arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(3);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -617,6 +650,7 @@ void msgq_test(void* arg)
     uint32_t delta;
     uint32_t get_avg, get_max, put_avg, put_max;
 
+    TaskHandle_t thandle;
     volatile uint32_t* pResponse = (volatile uint32_t*)arg;
 
     *pResponse = 0;
@@ -646,7 +680,7 @@ void msgq_test(void* arg)
 
     for (i = 0; i < 16; i++)
     {
-        uint32_t start = get_timer();
+        start = get_timer();
 
         xQueueReceive(xQueue, msg, portMAX_DELAY);
         delta = get_timer() - start;
@@ -668,14 +702,14 @@ void msgq_test(void* arg)
     // thread has to be unblocked.
 
     uiTaskResponse[1] = 0;
-    xTaskCreate(msg_get, "msg_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
+    task_create(msg_get, "msg_get", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY - 1), NULL);
 
     test_total = 0;
     test_max = 0;
 
     for(i = 0; i < TEST_ITER; i++)
     {
-        // Let the other thread run so that it can block on the event
+        // Let the other thread run so that it can block on the queue
         vTaskDelay(1);
         start = get_timer();
         xQueueSend(xQueue, msg, portMAX_DELAY);
@@ -686,18 +720,19 @@ void msgq_test(void* arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(3);
+        vTaskDelay(1);
     }
 
     if (printStats)
         printf("Message put with thread wake         : avg %lu max %lu cycles\n",
                 test_total/TEST_ITER, test_max);
 
-    // Now measure the time taken to set an event + context switch when
+    // Now measure the time taken to send a message + context switch when
     // a higher priority thread is unblocked.
 
     uiTaskResponse[1] = 0;
-    xTaskCreate(msg_get2, "msg_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), NULL);
+    task_create(msg_get2, "msg_get2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), &thandle);
+    UNUSED(thandle);
 
     test_total = 0;
     test_max = 0;
@@ -714,7 +749,7 @@ void msgq_test(void* arg)
 
     while (!uiTaskResponse[1])
     {
-        vTaskDelay(3);
+        vTaskDelay(1);
     }
 
     if (printStats)
@@ -732,7 +767,7 @@ void msgq_test(void* arg)
 //-----------------------------------------------------------------------------
 void yieldTest(void)
 {
-#define OVERHEAD_MEASUREMENT_RPT    TEST_ITER
+#define OVERHEAD_MEASUREMENT_RPT    10
     uint32_t oh_cycles;
     int32_t  i;
 
@@ -758,15 +793,15 @@ void yieldTest(void)
     // Launch test threads
     uiTaskResponse[0] = uiTaskResponse[1] = uiTaskResponse[2] = 0;
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 2);
-    xTaskCreate( yield_func, "thd1", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
-    xTaskCreate( yield_func, "thd2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
-    xTaskCreate( yield_func, "thd3", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[2], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
+    task_create( yield_func, "thd1", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
+    task_create( yield_func, "thd2", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
+    task_create( yield_func, "thd3", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[2], portPRIVILEGE_BIT | (PERF_TEST_PRIORITY +2), NULL );
 
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
     // Wait for them all to finish
     while (3 > (uiTaskResponse[0] + uiTaskResponse[1] + uiTaskResponse[2]))
     {
-        vTaskDelay(2);
+        vTaskDelay(1);
     }
 
     // Compute average values for solicited context switch
@@ -774,19 +809,23 @@ void yieldTest(void)
     stats_reset(&solicited);
 
     // Throw first and last values containing delete tasks instructions (FreeRTOS) and such
-    for (i = OVERHEAD_MEASUREMENT_RPT + 2; i < indx - 3; i++) {
+    // Use an adaptive skip so short runs (small TEST_ITER) still produce valid results.
+    int front_skip = (indx > 6) ? 2 : 1;
+    int back_skip  = (indx > 4) ? 3 : 1;
+    for (i = front_skip; i < indx - back_skip; i++) {
         if (clock_interrupted[i]) {
             i += 2; // Skip region perturbed by interrupt
             continue;
         }
         uint32_t delta = clock_vals[i] - clock_vals[i-1] - oh_cycles;
-        stats_update(&solicited, delta);
+        stats_update(&solicited, (int)delta);
     }
 
-    if (printStats)
-        printf("Solicited context switch time : avg %d max %d cycles [calibration %ld]\n",
-                (solicited.sum / solicited.cnt),
-                solicited.max,
+    if (printStats && solicited.cnt > 0)
+        printf("Solicited context switch time : min %u avg %u max %u cycles [calibration %lu]\n",
+                (unsigned)solicited.min,
+                (unsigned)(solicited.sum / solicited.cnt),
+                (unsigned)solicited.max,
                 oh_cycles);
 
 }
@@ -825,6 +864,8 @@ void unsolicited_hipriority(void *arg)
 //-----------------------------------------------------------------------------
 void unsolicitedTest(void)
 {
+    TaskHandle_t thd_bg_h, thd_hi_h;
+
     printf("\nUnsolicited context switch timing test"
            "\n--------------------------------------\n");
 
@@ -833,23 +874,27 @@ void unsolicitedTest(void)
     // Launch test threads
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 2);
 
-    xTaskCreate( unsolicited_background, "thd_bg", configMINIMAL_STACK_SIZE, NULL, portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), NULL );
-    xTaskCreate( unsolicited_hipriority, "thd_hi", configMINIMAL_STACK_SIZE, NULL, portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 2), NULL );
+    task_create( unsolicited_background, "thd_bg", configMINIMAL_STACK_SIZE, NULL, portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 1), &thd_bg_h );
+    UNUSED(thd_bg_h);
+    task_create( unsolicited_hipriority, "thd_hi", configMINIMAL_STACK_SIZE, NULL, portPRIVILEGE_BIT | (PERF_TEST_PRIORITY + 2), &thd_hi_h );
+    UNUSED(thd_hi_h);
 
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY);
 
     // Wait for them all to finish
     while (!unsolicited_done)
-        vTaskDelay(2);
+        vTaskDelay(1);
 
     // Calibrate read counter function (approximate calibration)
     unsigned calib = get_timer();
     calib = get_timer() - calib;
 
     if (printStats)
-        printf("Unsolicited context switch time      : avg %u max %u cycles [calibration %d]\n",
-                (unsolicited_stats.sum + unsolicited_stats.cnt - 1) / unsolicited_stats.cnt - calib,
-                unsolicited_stats.max - calib,
+        printf("Unsolicited context switch time      : min %u avg %u max %u cycles [calibration %u]\n",
+                (unsigned)unsolicited_stats.min - calib,
+                (unsigned)(unsolicited_stats.sum + unsolicited_stats.cnt - 1) /
+                    (unsigned)unsolicited_stats.cnt - calib,
+                (unsigned)unsolicited_stats.max - calib,
                 calib);
 
 }
@@ -859,10 +904,9 @@ void unsolicitedTest(void)
 //-----------------------------------------------------------------------------
 void semaphoreTest(void)
 {
-    printf("semaphoreTest....\n");
     uiTaskResponse[1] = 0;
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 1);
-    xTaskCreate( sem_test, "sem_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
+    task_create( sem_test, "sem_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[1], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 3);
     while (!uiTaskResponse[1])
     {
@@ -875,7 +919,7 @@ void mutexTest(void)
 {
     uiTaskResponse[0] = 0;
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 1);
-    xTaskCreate( mutex_test, "mutex_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
+    task_create( mutex_test, "mutex_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
@@ -888,7 +932,7 @@ void eventTest(void)
 {
     uiTaskResponse[0] = 0;
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 1);
-    xTaskCreate( event_test, "event_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
+    task_create( event_test, "event_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
@@ -901,7 +945,7 @@ void queueTest(void)
 {
     uiTaskResponse[0] = 0;
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY + 1);
-    xTaskCreate( msgq_test, "msgq_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
+    task_create( msgq_test, "msgq_test", configMINIMAL_STACK_SIZE, (void *)&uiTaskResponse[0], portPRIVILEGE_BIT | PERF_TEST_PRIORITY, NULL );
     vTaskPrioritySet( NULL, PERF_TEST_PRIORITY - 2);
     while (!uiTaskResponse[0])
     {
@@ -912,19 +956,30 @@ void queueTest(void)
 
 void test(void* pArg)
 {
+    UNUSED(pArg);
+
+    /* Delays between tests are inserted to allow the idle task to run.
+       The idle task frees up memory from deleted tasks and makes that
+       memory available to the next test.
+     */
     yieldTest();
+    vTaskDelay(1);
     unsolicitedTest();
+    vTaskDelay(1);
     semaphoreTest();
+    vTaskDelay(1);
     mutexTest();
+    vTaskDelay(1);
     eventTest();
+    vTaskDelay(1);
     queueTest();
+    printf("\nTest PASSED\n");
     jv_exit(0);
 }
 
 int main(void)
 {
-    printf("start....\n");
-    xTaskCreate( test, "test", configMINIMAL_STACK_SIZE, (void *)NULL, portPRIVILEGE_BIT | PERF_TEST_PRIORITY , NULL );
+    task_create( test, "test", configMINIMAL_STACK_SIZE, (void *)NULL, portPRIVILEGE_BIT | PERF_TEST_PRIORITY , NULL );
     /* Finally start the scheduler. */
     vTaskStartScheduler();
     /* Will only reach here if there is insufficient heap available to start

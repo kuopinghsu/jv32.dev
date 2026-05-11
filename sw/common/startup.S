@@ -83,14 +83,38 @@ _spin:
 
     .size _start, . - _start
 
+#ifndef JV_STARTUP_USE_SEMIHOST
+#define JV_STARTUP_USE_SEMIHOST 1
+#endif
+
 /* ============================================================================
- * _exit: write exit code to magic peripheral then spin
+ * _exit: optional semihosting exit, always with magic-device fallback
  * ============================================================================ */
     .section .text, "ax", @progbits
     .global  _exit
     .type    _exit, @function
 _exit:
-    /* magic peripheral EXIT register at 0x4000_0004:
+#if JV_STARTUP_USE_SEMIHOST
+    /* Try semihosting SYS_EXIT_EXTENDED first:
+     *   a0 = 0x20
+     *   a1 = &{ reason=0x20026 (ADP_Stopped_ApplicationExit), subcode=code }
+     * sequence marker: slli x0,x0,0x1f ; ebreak ; srai x0,x0,7 */
+    addi    sp, sp, -16
+    sw      a0, 0(sp)
+    li      t0, 0x20026
+    sw      t0, 4(sp)
+    lw      t1, 0(sp)
+    sw      t1, 8(sp)
+    li      a0, 0x20
+    addi    a1, sp, 4
+    .word   0x01F01013
+    .word   0x00100073
+    .word   0x40705013
+    lw      a0, 0(sp)
+    addi    sp, sp, 16
+#endif
+
+    /* Fallback: magic peripheral EXIT register at 0x4000_0004:
      *   encoding: PASS (code=0) → write 1; FAIL (code≠0) → write (code<<1)|1
      *   write non-zero value triggers sim_request_exit(value>>1) DPI-C call */
     li      t0, 0x40000004

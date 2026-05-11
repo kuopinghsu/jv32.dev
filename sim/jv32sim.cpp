@@ -128,6 +128,23 @@ static const uint32_t MAGIC_BASE = 0x40000000U;
 #define CAUSE_SOFTWARE_INT       0x80000003u
 #define CAUSE_EXTERNAL_INT       0x8000000Bu
 
+// RISC-V semihosting v1.0 marker sequence (all 32-bit instructions)
+#define SEMIHOST_ENTRY_NOP 0x01F01013u  // slli x0, x0, 0x1f
+#define SEMIHOST_EBREAK    0x00100073u  // ebreak
+#define SEMIHOST_EXIT_NOP  0x40705013u  // srai x0, x0, 7
+
+// ARM/RISC-V semihosting operation numbers (subset used in practice)
+#define SEMIHOST_SYS_WRITEC        0x03u
+#define SEMIHOST_SYS_WRITE0        0x04u
+#define SEMIHOST_SYS_WRITE         0x05u
+#define SEMIHOST_SYS_READC         0x07u
+#define SEMIHOST_SYS_EXIT          0x18u
+#define SEMIHOST_SYS_EXIT_EXTENDED 0x20u
+
+// Common semihosting ADP stop reasons (RV32 typically passes these in a1)
+#define SEMIHOST_ADP_STOPPED_APP_EXIT      0x20026u
+#define SEMIHOST_ADP_STOPPED_INTERNAL_ERROR 0x20023u
+
 // ELF32 structures (minimal)
 struct Elf32_Ehdr {
     uint8_t  e_ident[16];
@@ -257,13 +274,12 @@ struct SqStoreHint {
 };
 static std::deque<SqStoreHint> g_sq_store_hints;
 
-// MMIO read hints for UART STATUS register (offset 0x04 = 0x20010004).
-// In RTL, the UART loopback path takes many clock cycles so the RX FIFO
-// appears empty during poll_out STATUS checks that happen immediately after
-// a TX write.  The ISS loopback is instantaneous, producing a STATUS mismatch.
-// When running in compare mode (--rtl-hints), override STATUS reads with
-// the exact RTL-observed values collected from the trace.
-static std::deque<uint32_t> g_uart_status_hints;
+// Separate per-register hint queues — one per UART MMIO offset that the test
+// reads.  STATUS (0x04), DATA (0x00), and IS (0x0C) can all diverge between
+// the cycle-accurate RTL and the instantaneous ISS model.
+static std::deque<uint32_t> g_uart_status_hints;   // loads from 0x20010004
+static std::deque<uint32_t> g_uart_data_hints;     // loads from 0x20010000
+static std::deque<uint32_t> g_uart_is_hints;       // loads from 0x2001000C
 
 // Map CSR name string → address
 static uint32_t hint_csr_addr(const char* name) {
@@ -302,6 +318,7 @@ static bool load_rtl_hints(const char* path) {
             g_csr_hints.push_back({addr, val});
         }
         // Match lines of the form: ! sq_store insn=<N> addr=0x<a> data=0x<d>
+
         uint32_t sq_addr = 0, sq_data = 0;
         uint64_t sq_insn = 0;
         if (sscanf(line, "! sq_store insn=%" SCNu64 " addr=0x%x data=0x%x",
@@ -349,12 +366,12 @@ static bool load_rtl_hints(const char* path) {
             fclose(f2);
         }
     }
-    // Collect UART STATUS read hints (loads from UART_BASE+4 = 0x20010004).
-    // These fix the timing mismatch in compare mode: ISS loopback is
-    // instantaneous while RTL loopback takes many cycles.  The RTL trace line
-    // format for a load is:
-    //   insn:cycle 0xPC (0xINSTR) REG 0xVAL mem 0xADDR ; disasm
-    // (no value after the address, unlike stores which have mem ADDR VAL).
+    // Collect per-register UART MMIO read hints.
+    // STATUS (0x04), DATA (0x00), and IS (0x0C) can all diverge between RTL
+    // and the instantaneous ISS UART model.  Collecting each in its own queue
+    // ensures that the hint for register R is consumed by the ISS exactly when
+    // the ISS performs a read of register R — no cross-register ordering risk.
+    // RTL trace load format: insn:cycle 0xPC (0xINSTR) REGNAME 0xVAL mem 0xADDR
     {
         FILE *fus = fopen(path, "r");
         if (fus) {
@@ -362,13 +379,14 @@ static bool load_rtl_hints(const char* path) {
             char lus[256];
             while (fgets(lus, sizeof(lus), fus)) {
                 if (lus[0] == '!') continue;
-                if (!strstr(lus, " mem 0x20010004")) continue;
+                if (!strstr(lus, " mem 0x20010")) continue;
                 uint64_t ic, cy; uint32_t pc_r, ir, rv, ma; char rn[12];
                 if (sscanf(lus,
                            "%" SCNu64 ":%" SCNu64 " 0x%x (0x%x) %11s 0x%x mem 0x%x",
-                           &ic, &cy, &pc_r, &ir, rn, &rv, &ma) == 7
-                        && ma == UART_BASE + 4U)
-                    g_uart_status_hints.push_back(rv);
+                           &ic, &cy, &pc_r, &ir, rn, &rv, &ma) != 7) continue;
+                if      (ma == UART_BASE + 0x00U) g_uart_data_hints.push_back(rv);
+                else if (ma == UART_BASE + 0x04U) g_uart_status_hints.push_back(rv);
+                else if (ma == UART_BASE + 0x0CU) g_uart_is_hints.push_back(rv);
             }
             fclose(fus);
         }
@@ -627,7 +645,14 @@ static uint32_t mem_read(uint32_t addr, int size) {
     if (addr >= UART_BASE && addr < UART_BASE + 0x10000U) {
         uint32_t off = addr - UART_BASE;
         if (off == UART_DATA_OFF) {
-            // Pop one byte from the RX FIFO on read
+            if (g_hints_loaded && !g_uart_data_hints.empty()) {
+                uint32_t hinted = g_uart_data_hints.front();
+                g_uart_data_hints.pop_front();
+                // Keep uart_rx_fifo in sync so IS fallback stays consistent.
+                if (!uart_rx_fifo.empty()) uart_rx_fifo.pop_front();
+                return hinted;
+            }
+            // Pop one byte from the RX FIFO on read (fallback: no hint available).
             if (!uart_rx_fifo.empty()) {
                 uint8_t b = uart_rx_fifo.front();
                 uart_rx_fifo.pop_front();
@@ -636,9 +661,6 @@ static uint32_t mem_read(uint32_t addr, int size) {
             return 0u;
         }
         if (off == UART_STATUS_OFF) {
-            // In compare mode, return the RTL-observed STATUS value so that the
-            // instantaneous ISS loopback doesn't diverge from the RTL's
-            // cycle-delayed loopback path.
             if (g_hints_loaded && !g_uart_status_hints.empty()) {
                 uint32_t hinted = g_uart_status_hints.front();
                 g_uart_status_hints.pop_front();
@@ -650,10 +672,17 @@ static uint32_t mem_read(uint32_t addr, int size) {
         if (off == 0x08U) return uart_ie;                          // IE register
         // IS: bit1=txf_empty (always 1 in SW sim: TX is instantaneous),
         //     bit0=rxf_not_empty (RX data available)
-        if (off == 0x0CU) return (1u << 1) | (uart_rx_fifo.empty() ? 0u : 1u);
+        if (off == 0x0CU) {
+            if (g_hints_loaded && !g_uart_is_hints.empty()) {
+                uint32_t hinted = g_uart_is_hints.front();
+                g_uart_is_hints.pop_front();
+                return hinted;
+            }
+            return (1u << 1) | (uart_rx_fifo.empty() ? 0u : 1u);
+        }
         if (off == 0x10U) return (uint32_t)uart_rx_fifo.size();    // LEVEL[15:0]=RX count
         if (off == 0x14U) return uart_loopback;                    // CTRL: loopback_en
-        if (off == UART_CAP_OFF) return 0x00010808u;               // version=1, rx=8, tx=8
+        if (off == UART_CAP_OFF) return 0x00010000u;               // version=1, rx/tx depth field overflows to 0 (RTL FIFO_DEPTH=4096 > 8-bit)
         return 0u;
     }
     // Magic device (reads return 0)
@@ -763,6 +792,80 @@ static bool check_align(uint32_t addr, int size, bool is_load) {
     exc_cause   = is_load ? CAUSE_LOAD_MISALIGN : CAUSE_STORE_MISALIGN;
     exc_tval    = addr;
     return false;
+}
+
+static inline uint32_t semihost_u32_at(uint32_t addr) {
+    return mem_read(addr, 4);
+}
+
+static inline bool semihost_is_call_site(uint32_t ebreak_pc) {
+    if (ebreak_pc < 4) return false;
+    return semihost_u32_at(ebreak_pc - 4) == SEMIHOST_ENTRY_NOP
+        && semihost_u32_at(ebreak_pc)     == SEMIHOST_EBREAK
+        && semihost_u32_at(ebreak_pc + 4) == SEMIHOST_EXIT_NOP;
+}
+
+static bool semihost_handle_call() {
+    const uint32_t op = regs[10];      // a0
+    const uint32_t p  = regs[11];      // a1
+
+    switch (op) {
+    case SEMIHOST_SYS_WRITEC: {
+        uint32_t ch = (p <= 0xFFu) ? p : (mem_read(p, 1) & 0xFFu);
+        fputc((int)ch, stdout);
+        fflush(stdout);
+        regs[10] = 0;
+        return true;
+    }
+    case SEMIHOST_SYS_WRITE0: {
+        uint32_t addr = p;
+        while (true) {
+            uint32_t ch = mem_read(addr++, 1) & 0xFFu;
+            if (ch == 0) break;
+            fputc((int)ch, stdout);
+        }
+        fflush(stdout);
+        regs[10] = 0;
+        return true;
+    }
+    case SEMIHOST_SYS_WRITE: {
+        uint32_t handle = semihost_u32_at(p + 0u);
+        uint32_t buf    = semihost_u32_at(p + 4u);
+        uint32_t len    = semihost_u32_at(p + 8u);
+        FILE* out = (handle == 2u) ? stderr : stdout;
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t ch = mem_read(buf + i, 1) & 0xFFu;
+            fputc((int)ch, out);
+        }
+        fflush(out);
+        regs[10] = 0;  // bytes not written
+        return true;
+    }
+    case SEMIHOST_SYS_READC:
+        regs[10] = 0xFFFFFFFFu;  // EOF / no console input available
+        return true;
+    case SEMIHOST_SYS_EXIT: {
+        uint32_t reason = p;
+        running = false;
+        exit_code = (reason == SEMIHOST_ADP_STOPPED_APP_EXIT) ? 0 : 1;
+        DBG(1, "semihost SYS_EXIT reason=0x%08x -> exit=%d\n", reason, exit_code);
+        return true;
+    }
+    case SEMIHOST_SYS_EXIT_EXTENDED: {
+        uint32_t reason  = semihost_u32_at(p + 0u);
+        uint32_t subcode = semihost_u32_at(p + 4u);
+        running = false;
+        if (reason == SEMIHOST_ADP_STOPPED_APP_EXIT) exit_code = (int)subcode;
+        else exit_code = (subcode != 0u) ? (int)subcode : 1;
+        DBG(1, "semihost SYS_EXIT_EXTENDED reason=0x%08x subcode=%u -> exit=%d\n",
+            reason, subcode, exit_code);
+        return true;
+    }
+    default:
+        DBG(1, "semihost unsupported op=0x%08x (a1=0x%08x)\n", op, p);
+        regs[10] = 0xFFFFFFFFu;  // -1 for unsupported operation
+        return true;
+    }
 }
 
 // ============================================================================
@@ -1866,7 +1969,17 @@ static void step() {
             if      (sys_imm == 0x000) { // ECALL
                 exc_pending = true; exc_cause = CAUSE_ECALL_M; exc_tval = 0;
             } else if (sys_imm == 0x001) { // EBREAK
-                exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
+                if (semihost_is_call_site(instr_pc) && !g_hints_loaded) {
+                    // RISC-V semihosting v1.0 call sequence:
+                    //   slli x0,x0,0x1f ; ebreak ; srai x0,x0,7
+                    // Treat as a host call instead of raising breakpoint trap.
+                    // In compare mode (RTL hints loaded), do NOT short-circuit
+                    // here: RTL takes the breakpoint trap path and executes the
+                    // software trap handler sequence before exit.
+                    (void)semihost_handle_call();
+                } else {
+                    exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
+                }
             } else if (sys_imm == 0x302) { // MRET
                 uint32_t mpie = (csr_mstatus >> 7) & 1u;
                 // When returning from a CLIC trap (MIL != 0) in hints mode,

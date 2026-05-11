@@ -28,11 +28,6 @@
 static uint32_t tests_passed = 0;
 static uint32_t tests_failed = 0;
 
-// Trap handler required by start.S
-void trap_handler(jv_trap_frame_t *frame) {
-    (void)frame;
-}
-
 // ============================================================================
 // Test 1: Basic FENCE - just executes without hanging
 // ============================================================================

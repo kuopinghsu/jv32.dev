@@ -20,6 +20,13 @@ THREADX_DIR      = $(PROJECT_ROOT)/rtos/threadx
 THREADX_COMMON   = $(THREADX_DIR)/common
 THREADX_PORT     = $(THREADX_DIR)/ports/jv32
 THREADX_SAMPLES  = $(THREADX_DIR)/samples
+JV_IO_BACKEND ?= semihost
+THREADX_IO_SRC = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
+ifeq ($(JV_IO_BACKEND),semihost)
+THREADX_IO_USE_SEMIHOST := 1
+else
+THREADX_IO_USE_SEMIHOST := 0
+endif
 
 THREADX_COMMON_SRCS = $(wildcard $(THREADX_COMMON)/src/*.c)
 THREADX_PORT_SRCS   = \
@@ -28,6 +35,7 @@ THREADX_PORT_SRCS   = \
 
 COMMON_SRCS = \
 	$(PROJECT_ROOT)/sw/common/startup.S \
+	$(THREADX_IO_SRC) \
 	$(PROJECT_ROOT)/sw/common/syscall.c \
 	$(PROJECT_ROOT)/sw/common/jv_irq.c \
 	$(PROJECT_ROOT)/sw/common/putc.c \
@@ -36,6 +44,7 @@ COMMON_SRCS = \
 THREADX_CFLAGS  = -march=$(ARCH) -mabi=$(ABI) -O2 -g
 THREADX_CFLAGS += -ffreestanding -nostartfiles
 THREADX_CFLAGS += -ffunction-sections -fdata-sections
+THREADX_CFLAGS += -DJV_STARTUP_USE_SEMIHOST=$(THREADX_IO_USE_SEMIHOST)
 THREADX_CFLAGS += -DTX_INCLUDE_USER_DEFINE_FILE
 THREADX_CFLAGS += -I$(THREADX_COMMON)/inc
 THREADX_CFLAGS += -I$(THREADX_PORT)

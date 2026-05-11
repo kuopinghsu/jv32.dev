@@ -10,6 +10,20 @@
 #   - IRAM ≥ 256 KB  (libstdc++ unwind runtime + application > 128 KB)
 # Both constraints make it impractical on this 128 KB IRAM target; the
 # -fno-exceptions mode is the correct production configuration.
+#
+# -fpermissive: GCC 15+ libstdc++ calls __throw_length_error() and other
+# exception functions inside template bodies even when -fno-exceptions is used.
+# These functions are defined as weak symbols in cxx_stubs.cpp and resolved at
+# link time. -fpermissive allows undeclared names in template bodies.
 
-CXXFLAGS := $(filter-out -ffreestanding,$(CXXFLAGS))
-CXXFLAGS += -fno-exceptions -fno-rtti
+# Drop -ffreestanding from CFLAGS so hosted C++ headers can be included.
+# C++-only flags are saved in CPP_EXTRA_FLAGS and will be appended to CXXFLAGS
+# in sw/Makefile, so they don't contaminate C file compilation.
+CFLAGS := $(filter-out -ffreestanding,$(CFLAGS))
+CPP_EXTRA_FLAGS := -fno-exceptions -fno-rtti -fpermissive
+
+# Use magic backend for this test so RTL and ISS exit paths match.
+# The ISS implements RISC-V semihosting and exits via ebreak, while the RTL
+# doesn't and continues to the magic device exit. Using the magic backend
+# ensures both exit the same way for trace comparison.
+JV_IO_BACKEND := magic

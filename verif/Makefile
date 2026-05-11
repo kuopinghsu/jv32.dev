@@ -50,8 +50,8 @@ ARCH_TEST_IRAM_SIZE := 262144
 # arch-test-run overlays them into the submodule's tests/ before running ACT.
 ARCH_TEST_EXTRA := $(VERIF_DIR)arch-test-extra
 
-# ── Zcmp-specific ACT config (uses jv32sim as reference model) ───────────────
-# Sail v0.11 does not support Zcmp; jv32sim acts as the reference model instead.
+# ── Zcmp ACT config (jv32sim reference path) ─────────────────────────────────
+# Sail v0.11 does not support Zcmp; use jv32sim for Zcmp ELF generation.
 ZCMP_DUT_CONFIG       := $(VERIF_DIR)config/jv32-rv32imac-zcmp
 ARCH_TEST_ZCMP_CONFIG := $(WORKDIR)/test_config.zcmp.generated.yaml
 
@@ -158,9 +158,10 @@ arch-test-setup: $(ACT_SENTINEL)
 #   ExceptionsZc    — uses rv32ifdc march (F/D unimplemented); Sail segfaults on this config
 #   PMPSm/PMPZca/PMPmisaligned — PMP tests; JV32 has no PMP
 #   Sv/Svade/...    — virtual memory tests; JV32 has no MMU
-#   Zcmp            — Sail 0.11 does not implement Zcmp; enable once Sail adds support
+#   Zcmp            — Sail v0.11 does not implement Zcmp; generated in a
+#                     second pass below with jv32sim as reference model
 # ============================================================================
-arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
+arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_ZCMP_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@set -e; \
 	stty_state="$$(stty -g 2>/dev/null || true)"; \
 	restore_tty() { \
@@ -174,11 +175,11 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	mkdir -p "$(WORKDIR)"; \
 	echo "=========================================="; \
 	echo "[arch-test] Work directory: $(WORKDIR)"; \
-	echo "[arch-test] Phase 1/3: building RTL simulator"; \
+	echo "[arch-test] Phase 1/4: building RTL simulator"; \
 	echo "=========================================="; \
 	$(MAKE) -C $(JV32_ROOT) --no-print-directory IRAM_SIZE=$(ARCH_TEST_IRAM_SIZE) RV32B_EN=$(RV32B_EN) RAS_EN=$(RAS_EN) build-rtl; \
 	echo "=========================================="; \
-	echo "[arch-test] Phase 2/3: generating self-checking ELFs"; \
+	echo "[arch-test] Phase 2/4: generating self-checking ELFs (non-Zcmp via Sail)"; \
 	echo "=========================================="; \
 	if [ -d "$(ARCH_TEST_EXTRA)" ]; then \
 	  echo "[arch-test] Overlaying local tests from verif/arch-test-extra/..."; \
@@ -187,11 +188,20 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
 	    CONFIG_FILES=$(ARCH_TEST_CONFIG) \
 	    WORKDIR=$(WORKDIR) \
-            EXCLUDE_EXTENSIONS=Sm,S,ExceptionsSm,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zcmp \
+	    EXCLUDE_EXTENSIONS=Sm,S,ExceptionsSm,InterruptsSm,ExceptionsZalrsc,ExceptionsZaamo,ExceptionsZc,PMPSm,PMPZca,PMPmisaligned,Sv,Svade,Svadu,SvaduPMP,SvPMP,SvZicbo,SvPMPZicbo,Zcmp \
 	    $(if $(EXTENSIONS),EXTENSIONS=$(EXTENSIONS),) \
 	    --jobs $(ARCH_TEST_JOBS); \
+	echo "=========================================="; \
+	echo "[arch-test] Phase 3/4: generating Zcmp ELFs (jv32sim reference)"; \
+	echo "=========================================="; \
+	$(MAKE) -C $(JV32_ROOT) --no-print-directory sim-build; \
+	PATH="$(JV32_ROOT)/build:$$PATH" IN_UDB_CONTAINER=1 $(MAKE) -C $(ACT_DIR) \
+	    CONFIG_FILES=$(ARCH_TEST_ZCMP_CONFIG) \
+	    WORKDIR=$(WORKDIR) \
+	    EXTENSIONS=Zcmp \
+	    --jobs $(ARCH_TEST_JOBS); \
 	elf_count=$$(find "$(WORKDIR)/jv32-rv32imac/elfs" -name '*.elf' | wc -l | tr -d '[:space:]'); \
-	echo "[arch-test] Phase 3/3: running $$elf_count ELF tests on JV32 RTL"; \
+	echo "[arch-test] Phase 4/4: running $$elf_count ELF tests on JV32 RTL"; \
 	echo "[arch-test] Logs: $(WORKDIR)/jv32-rv32imac/logs"; \
 	echo "[arch-test] Summary: $(WORKDIR)/jv32-rv32imac/summary.log"; \
 	cd $(ACT_DIR) && $(ACT_VENV)/bin/python run_tests.py \
@@ -212,7 +222,7 @@ arch-test-run: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 #   4. Runs ALL ELFs in the elfs/ dir on jv32soc (combines Zcmp + prior tests)
 #      and writes a unified build/arch-test-work/jv32-rv32imac/summary.log
 #
-# Requires arch-test-run to have been run first so the non-Zcmp ELFs exist.
+# arch-test-run already includes this pass; use this target to rerun Zcmp only.
 # ============================================================================
 arch-test-zcmp: $(ACT_SENTINEL) $(ARCH_TEST_ZCMP_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 	@set -e; \

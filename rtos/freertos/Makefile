@@ -21,6 +21,8 @@ FREERTOS_SAMPLES = $(FREERTOS_DIR)/samples
 FREERTOS_SYS     = $(FREERTOS_DIR)/sys
 FREERTOS_PORT    = $(FREERTOS_DIR)/portable/RISC-V
 FREERTOS_INCLUDE = $(FREERTOS_DIR)/include
+JV_IO_BACKEND ?= semihost
+FREERTOS_IO_SRC = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
 
 FREERTOS_SOURCES = \
 	$(FREERTOS_DIR)/tasks.c \
@@ -98,6 +100,7 @@ build:
 		-Wl,-Map=$(BUILD_DIR)/freertos-$(TEST).map \
 		$(FREERTOS_SYS)/freertos_start.S \
 		$(FREERTOS_SYS)/freertos_syscall.c \
+		$(FREERTOS_IO_SRC) \
 		$(FREERTOS_SAMPLES)/$(TEST)/*.c \
 		$(FREERTOS_SOURCES) \
 		-o $(BUILD_DIR)/freertos-$(TEST).elf

@@ -313,6 +313,36 @@ make FAST_MUL=1 MUL_MC=0 rtl-hello # 1-cycle combinatorial multiplier
 
 > Full parameter reference (ISA flags, pipeline, multiplier guide, memory map, simulation): [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
+### Semihosting
+
+Bare-metal software uses a link-time selectable console/exit backend behind the same application API:
+`jv_putc()` and `jv_exit()`.
+
+- `JV_IO_BACKEND=semihost` — uses **RISC-V semihosting v1.0** (`slli x0,x0,0x1f` / `ebreak` / `srai x0,x0,7`) with magic-device fallback.
+- `JV_IO_BACKEND=magic` — uses the simulation magic device directly (`0x4000_0000` console, `0x4000_0004` exit).
+- `JV_IO_BACKEND=uart` — routes `jv_putc()` through the AXI UART and keeps `jv_exit()` local by printing an exit status and halting.
+
+Default bare-metal builds use `JV_IO_BACKEND=semihost`. This keeps normal software tests debugger/semihost-friendly while preserving the same source-level API.
+
+All three backends share the same application API (`jv_putc()` / `jv_exit()`) and are functionally valid for normal program execution. For instruction-trace comparison (`make compare-*`), backend choice can still affect determinism because the RTL simulator and ISS model peripheral/trap timing differently:
+
+- `magic` is usually the most deterministic for trace-compare (direct MMIO side effects).
+- `semihost` relies on the semihost marker trap sequence (`slli/ebreak/srai`) being handled identically in both models.
+- `uart` includes FIFO/interrupt/timing behavior and may require model synchronization hints.
+
+For this reason, some tests pin a backend in their local `makefile.mak` to keep RTL-vs-ISS traces stable while preserving the same source-level I/O API.
+
+CoreMark explicitly uses the magic backend in [sw/coremark/makefile.mak](sw/coremark/makefile.mak) so the reported whole-run CPI remains comparable to earlier measurements and is not inflated by semihost console/exit overhead.
+
+Examples:
+
+```bash
+make rtl-hello JV_IO_BACKEND=semihost
+make rtl-hello JV_IO_BACKEND=magic
+make -C fpga/tests build JV_IO_BACKEND=uart
+make rtl-coremark   # CoreMark forces JV_IO_BACKEND=magic via sw/coremark/makefile.mak
+```
+
 ## RTOS Support
 
 JV32 supports four RTOS environments. All run on the Verilator RTL simulator and are verified via RTL-vs-ISS trace comparison. All targets are included in `make all`.
@@ -362,7 +392,7 @@ JV32 supports four RTOS environments. All run on the Verilator RTL simulator and
 
 ### RISC-V Architectural Compliance Tests (`make arch-test-run`)
 
-Verified against ACT4 ([riscv-non-isa/riscv-arch-test](https://github.com/riscv-non-isa/riscv-arch-test)). Extensions: `I`, `M`, `Zaamo`, `Zalrsc`, `C/Zca`, `Zicsr`, `Zifencei`, `Zicntr`, `Zba/Zbb/Zbs`, `Sm`.
+Verified against ACT4 ([riscv-non-isa/riscv-arch-test](https://github.com/riscv-non-isa/riscv-arch-test)). Extensions: `I`, `M`, `Zaamo`, `Zalrsc`, `C/Zca`, `Zcmp`, `Zicsr`, `Zifencei`, `Zicntr`, `Zba/Zbb/Zbs`, `Sm`.
 
 ```bash
 make arch-test-setup   # first-time setup
@@ -446,6 +476,7 @@ Verilator line + branch + expression + toggle coverage over all `sw/` tests and 
 
 - Tool requirements: [TOOLS.md](TOOLS.md)
 - Core configuration reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- Semihosting / I/O backend selection: see [Semihosting](#semihosting) and [sw/coremark/makefile.mak](sw/coremark/makefile.mak)
 - Performance features (branch predictor, store buffer, multiplier modes, …): [Performance Features](#performance-features)
 - Pipeline visualization ([KonataViewer](https://github.com/kuopinghsu/KonataViewer), Kanata 0004 format): [Pipeline Visualization](#pipeline-visualization) — example: [docs/kanata.svg](docs/kanata.svg)
 - Datasheet source: `docs/jv32_soc_datasheet.adoc`

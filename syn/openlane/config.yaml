@@ -129,19 +129,19 @@ USE_SYNLIG: true
 # Absolute die sizing.
 #
 # sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
-# Macro placement (macro_placement.cfg) -- 2x2 with wider routing channels:
-#   row 0 (y=80):  DRAM0 x=180, IRAM0 x=860
-#   row 1 (y=620): DRAM1 x=180, IRAM1 x=860
+# Macro placement (macro_placement.cfg) -- 2x2 with extra-wide routing channels:
+#   row 0 (y=120): DRAM0 x=220, IRAM0 x=1020
+#   row 1 (y=760): DRAM1 x=220, IRAM1 x=1020
 #
-# Channels: horizontal ~=432 um, vertical ~=154 um
+# Channels: horizontal ~=552 um, vertical ~=254 um
 # This further relieves M2/M3/M4 choke points that can still trigger GRT-0118.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 1480 x 1080 = 1,598,400 um2 -> core util ~=24.0%
-#               die  = 1500 x 1100 = 1,650,000 um2
+#               core area = 1680 x 1280 = 2,150,400 um2 -> core util ~=17.8%
+#               die  = 1700 x 1300 = 2,210,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1500, 1100]
-CORE_AREA: [10, 10, 1490, 1090]
+DIE_AREA: [0, 0, 1700, 1300]
+CORE_AREA: [10, 10, 1690, 1290]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -163,9 +163,9 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY_PCT: 40
+PL_TARGET_DENSITY_PCT: 30
 PL_MAX_PHI_COEFFICIENT: 4.0
-PL_MACRO_CHANNEL: [40, 40]
+PL_MACRO_CHANNEL: [80, 80]
 
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
 # design to avoid terminating before the dominant SRAM-to-core paths are fixed.
@@ -201,11 +201,12 @@ RUN_CTS: true
 # ── Routing ───────────────────────────────────────────────────────────────────
 # Global routing: increase layer count for large die
 RT_MAX_LAYER: metal9
+# Ease global-router capacity derating on the enlarged floorplan.
+GRT_ADJUSTMENT: 0.15
 # Fail fast on severe congestion instead of spending hours in overflow retries.
 GRT_ALLOW_CONGESTION: false
-# Keep the overflow search short on this macro-heavy floorplan so a bad
-# placement does not burn a full run on the same global-routing failure.
-GRT_OVERFLOW_ITERS: 12
+# Give the global router enough iterations to converge after macro spreading.
+GRT_OVERFLOW_ITERS: 40
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
 # Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so

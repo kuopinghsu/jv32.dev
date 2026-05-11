@@ -64,25 +64,28 @@ static kernel_pid_t g_main_pid;
 static volatile uint32_t g_test_start;
 static volatile uint32_t g_test_total;
 static volatile uint32_t g_test_max;
+static volatile uint32_t g_test_min;
 
 /* Mutex for mutex test */
 static mutex_t g_mutex = MUTEX_INIT;
 
 /* ── Statistics helper ──────────────────────────────────────────────────── */
 
-typedef struct { uint32_t cnt; uint32_t sum; uint32_t max; } stats_t;
+typedef struct { uint32_t cnt; uint32_t sum; uint32_t min; uint32_t max; } stats_t;
 
-static void stats_reset(stats_t *s)  { s->cnt = s->sum = 0; s->max = 0; }
+static void stats_reset(stats_t *s)  { s->cnt = s->sum = 0; s->max = 0; s->min = UINT32_MAX; }
 static void stats_update(stats_t *s, uint32_t v)
 {
     s->cnt++;
     s->sum += v;
     if (v > s->max) s->max = v;
+    if (v < s->min) s->min = v;
 }
 static void stats_print(const char *label, const stats_t *s)
 {
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            label,
+           (unsigned long)s->min,
            (unsigned long)(s->cnt ? s->sum / s->cnt : 0u),
            (unsigned long)s->max);
 }
@@ -232,8 +235,10 @@ static void run_unsolicited_test(void)
     calib = get_cycles();
     calib = get_cycles() - calib;
 
-    printf("%-44s: avg %lu max %lu cycles [calib %lu]\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles [calib %lu]\n",
            "Unsolicited context switch time",
+           (unsigned long)(g_unsol_stats.min > calib
+               ? g_unsol_stats.min - calib : 0u),
            (unsigned long)(g_unsol_stats.cnt
                ? (g_unsol_stats.sum / g_unsol_stats.cnt) - calib : 0u),
            (unsigned long)(g_unsol_stats.max > calib
@@ -268,6 +273,7 @@ static void *sem_lo_helper_fn(void *arg)
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
+        if (delta < g_test_min) g_test_min = delta;
     }
     send_done();
     return NULL;
@@ -284,6 +290,7 @@ static void *sem_hi_helper_fn(void *arg)
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
+        if (delta < g_test_min) g_test_min = delta;
     }
     send_done();
     return NULL;
@@ -291,14 +298,14 @@ static void *sem_hi_helper_fn(void *arg)
 
 static void run_sem_test(void)
 {
-    uint32_t i, start, delta, total, max;
+    uint32_t i, start, delta, total, min, max;
     kernel_pid_t helper;
     msg_t m;
 
     printf("\nSemaphore timing test\n---------------------\n");
 
     /* -- Put with no wake (local queue, no other thread) -- */
-    total = max = 0;
+    total = max = 0; min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         /* We send to ourselves via the queue */
         start = get_cycles();
@@ -307,38 +314,40 @@ static void run_sem_test(void)
         delta = get_cycles() - start;
         total += delta;
         if (delta > max) max = delta;
+        if (delta < min) min = delta;
         msg_receive(&m);   /* drain */
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Semaphore put with no wake",
-           (unsigned long)total / TEST_ITER, (unsigned long)max);
+           (unsigned long)min, (unsigned long)total / TEST_ITER, (unsigned long)max);
 
     /* -- Get with no contention (already in queue) -- */
     for (i = 0; i < TEST_ITER; i++) {
         m.type = MSG_SEM; m.content.value = i;
         msg_send_to_self(&m);
     }
-    total = max = 0;
+    total = max = 0; min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         start = get_cycles();
         msg_receive(&m);
         delta = get_cycles() - start;
         total += delta;
         if (delta > max) max = delta;
+        if (delta < min) min = delta;
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Semaphore get with no contention",
-           (unsigned long)total / TEST_ITER, (unsigned long)max);
+           (unsigned long)min, (unsigned long)total / TEST_ITER, (unsigned long)max);
 
     /* -- Put with lower-priority wake -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     helper = thread_create(g_sem_stack, sizeof(g_sem_stack),
                            PRIO_LOWER(2),
                            THREAD_CREATE_WOUT_YIELD,
                            sem_lo_helper_fn, NULL, "sem_lo");
     thread_yield();   /* let helper reach msg_receive() */
 
-    total = max = 0;
+    total = max = 0; min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         thread_yield();   /* ensure helper is blocked */
         start = get_cycles();
@@ -347,14 +356,15 @@ static void run_sem_test(void)
         delta = get_cycles() - start;
         total += delta;
         if (delta > max) max = delta;
+        if (delta < min) min = delta;
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Semaphore put with thread wake",
-           (unsigned long)total / TEST_ITER, (unsigned long)max);
+           (unsigned long)min, (unsigned long)total / TEST_ITER, (unsigned long)max);
 
     /* -- Put with higher-priority wake + context switch -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     helper = thread_create(g_sem_stack2, sizeof(g_sem_stack2),
                            PRIO_HIGHER(2),
                            THREAD_CREATE_WOUT_YIELD,
@@ -368,9 +378,9 @@ static void run_sem_test(void)
         /* helper preempts us here and records delta */
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Semaphore put with context switch",
-           (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
+           (unsigned long)g_test_min, (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -390,6 +400,7 @@ static void *mutex_helper_fn(void *arg)
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
+        if (delta < g_test_min) g_test_min = delta;
         mutex_unlock(&g_mutex);
     }
     send_done();
@@ -398,41 +409,45 @@ static void *mutex_helper_fn(void *arg)
 
 static void run_mutex_test(void)
 {
-    uint32_t i, start, delta, lock_total, lock_max, unlock_total, unlock_max;
+    uint32_t i, start, delta, lock_total, lock_min, lock_max;
+    uint32_t unlock_total, unlock_min, unlock_max;
 
     printf("\nMutex timing test\n-----------------\n");
 
     /* -- Lock / unlock with no contention -- */
     lock_total = lock_max = unlock_total = unlock_max = 0;
+    lock_min = unlock_min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         start = get_cycles();
         mutex_lock(&g_mutex);
         delta = get_cycles() - start;
         lock_total += delta;
         if (delta > lock_max) lock_max = delta;
+        if (delta < lock_min) lock_min = delta;
 
         start = get_cycles();
         mutex_unlock(&g_mutex);
         delta = get_cycles() - start;
         unlock_total += delta;
         if (delta > unlock_max) unlock_max = delta;
+        if (delta < unlock_min) unlock_min = delta;
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Mutex lock with no contention",
-           (unsigned long)lock_total / TEST_ITER, (unsigned long)lock_max);
-    printf("%-44s: avg %lu max %lu cycles\n",
+           (unsigned long)lock_min, (unsigned long)lock_total / TEST_ITER, (unsigned long)lock_max);
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Mutex unlock with no contention",
-           (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
+           (unsigned long)unlock_min, (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
 
     /* -- Unlock with lower-priority wake -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     mutex_lock(&g_mutex);   /* take before creating helper */
     (void)thread_create(g_mutex_stack, sizeof(g_mutex_stack),
                         PRIO_LOWER(2),
                         THREAD_CREATE_WOUT_YIELD,
                         mutex_helper_fn, NULL, "mtx_lo");
 
-    unlock_total = unlock_max = 0;
+    unlock_total = unlock_max = 0; unlock_min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         thread_yield();   /* let helper block on mutex */
         start = get_cycles();
@@ -440,17 +455,18 @@ static void run_mutex_test(void)
         delta = get_cycles() - start;
         unlock_total += delta;
         if (delta > unlock_max) unlock_max = delta;
+        if (delta < unlock_min) unlock_min = delta;
         thread_yield();   /* let helper re-take and release mutex */
         mutex_lock(&g_mutex);
     }
     mutex_unlock(&g_mutex);
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Mutex unlock with thread wake",
-           (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
+           (unsigned long)unlock_min, (unsigned long)unlock_total / TEST_ITER, (unsigned long)unlock_max);
 
     /* -- Unlock with higher-priority wake + context switch -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     mutex_lock(&g_mutex);
     (void)thread_create(g_mutex_stack2, sizeof(g_mutex_stack2),
                         PRIO_HIGHER(2),
@@ -467,9 +483,9 @@ static void run_mutex_test(void)
     }
     mutex_unlock(&g_mutex);
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Mutex unlock with context switch",
-           (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
+           (unsigned long)g_test_min, (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -489,6 +505,7 @@ static void *event_helper_fn(void *arg)
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
+        if (delta < g_test_min) g_test_min = delta;
         thread_flags_clear(EV_FLAG);
     }
     send_done();
@@ -497,32 +514,33 @@ static void *event_helper_fn(void *arg)
 
 static void run_event_test(void)
 {
-    uint32_t i, start, delta, set_total, set_max;
+    uint32_t i, start, delta, set_total, set_min, set_max;
     kernel_pid_t helper;
 
     printf("\nEvent (thread flags) timing test\n--------------------------------\n");
 
     /* -- Set/clear flags with no wake (on ourselves) -- */
-    set_total = set_max = 0;
+    set_total = set_max = 0; set_min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         start = get_cycles();
         thread_flags_set(thread_get_active(), EV_FLAG);
         delta = get_cycles() - start;
         set_total += delta;
         if (delta > set_max) set_max = delta;
+        if (delta < set_min) set_min = delta;
 
         thread_flags_clear(EV_FLAG);
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Event set with no wake",
-           (unsigned long)set_total / TEST_ITER, (unsigned long)set_max);
+           (unsigned long)set_min, (unsigned long)set_total / TEST_ITER, (unsigned long)set_max);
 
     /* -- Set with lower-priority wake -- */
     /* ev_lo is at PRIO_LOWER(2): it won't run while main has higher priority.
      * We temporarily lower main's priority so ev_lo can run and block in
      * thread_flags_wait_any, then restore main's priority for measurements.
      * After each set, lower priority again to let ev_lo process the flag. */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     helper = thread_create(g_event_stack, sizeof(g_event_stack),
                            PRIO_LOWER(2),
                            THREAD_CREATE_WOUT_YIELD,
@@ -532,25 +550,26 @@ static void run_event_test(void)
     thread_yield();
     sched_change_priority(thread_get_active(), PERF_PRIO);
 
-    set_total = set_max = 0;
+    set_total = set_max = 0; set_min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         start = get_cycles();
         thread_flags_set(thread_get(helper), EV_FLAG);
         delta = get_cycles() - start;
         set_total += delta;
         if (delta > set_max) set_max = delta;
+        if (delta < set_min) set_min = delta;
         /* Let ev_lo process the flag before next iteration */
         sched_change_priority(thread_get_active(), PRIO_LOWER(4));
         thread_yield();
         sched_change_priority(thread_get_active(), PERF_PRIO);
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Event set with thread wake",
-           (unsigned long)set_total / TEST_ITER, (unsigned long)set_max);
+           (unsigned long)set_min, (unsigned long)set_total / TEST_ITER, (unsigned long)set_max);
 
     /* -- Set with higher-priority wake + context switch -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     helper = thread_create(g_event_stack2, sizeof(g_event_stack2),
                            PRIO_HIGHER(2),
                            THREAD_CREATE_WOUT_YIELD,
@@ -564,9 +583,9 @@ static void run_event_test(void)
         thread_yield();   /* allow helper to run next wait */
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Event set with context switch",
-           (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
+           (unsigned long)g_test_min, (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -588,6 +607,7 @@ static void *queue_helper_fn(void *arg)
         uint32_t delta = get_cycles() - g_test_start;
         g_test_total += delta;
         if (delta > g_test_max) g_test_max = delta;
+        if (delta < g_test_min) g_test_min = delta;
     }
     send_done();
     return NULL;
@@ -595,7 +615,7 @@ static void *queue_helper_fn(void *arg)
 
 static void run_queue_test(void)
 {
-    uint32_t i, start, delta, put_total, put_max, get_total, get_max;
+    uint32_t i, start, delta, put_total, put_min, put_max, get_total, get_min, get_max;
     kernel_pid_t helper;
     msg_t m;
 
@@ -604,7 +624,7 @@ static void run_queue_test(void)
     /* Use main thread's msg queue (already initialised in main) */
 
     /* -- Fill queue: put with no contention -- */
-    put_total = put_max = 0;
+    put_total = put_max = 0; put_min = UINT32_MAX;
     for (i = 0; i < Q_DEPTH; i++) {
         m.type = (uint16_t)i; m.content.value = i;
         start = get_cycles();
@@ -612,33 +632,35 @@ static void run_queue_test(void)
         delta = get_cycles() - start;
         put_total += delta;
         if (delta > put_max) put_max = delta;
+        if (delta < put_min) put_min = delta;
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Message put with no wake",
-           (unsigned long)put_total / Q_DEPTH, (unsigned long)put_max);
+           (unsigned long)put_min, (unsigned long)put_total / Q_DEPTH, (unsigned long)put_max);
 
     /* -- Drain queue: get with no contention -- */
-    get_total = get_max = 0;
+    get_total = get_max = 0; get_min = UINT32_MAX;
     for (i = 0; i < Q_DEPTH; i++) {
         start = get_cycles();
         msg_receive(&m);
         delta = get_cycles() - start;
         get_total += delta;
         if (delta > get_max) get_max = delta;
+        if (delta < get_min) get_min = delta;
     }
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Message get with no contention",
-           (unsigned long)get_total / Q_DEPTH, (unsigned long)get_max);
+           (unsigned long)get_min, (unsigned long)get_total / Q_DEPTH, (unsigned long)get_max);
 
     /* -- Send with lower-priority wake -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     helper = thread_create(g_queue_stack, sizeof(g_queue_stack),
                            PRIO_LOWER(2),
                            THREAD_CREATE_WOUT_YIELD,
                            queue_helper_fn, NULL, "q_lo");
     thread_yield();   /* let helper block on msg_receive */
 
-    put_total = put_max = 0;
+    put_total = put_max = 0; put_min = UINT32_MAX;
     for (i = 0; i < TEST_ITER; i++) {
         thread_yield();   /* ensure helper is blocked */
         start = get_cycles();
@@ -647,14 +669,15 @@ static void run_queue_test(void)
         delta = get_cycles() - start;
         put_total += delta;
         if (delta > put_max) put_max = delta;
+        if (delta < put_min) put_min = delta;
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Message put with thread wake",
-           (unsigned long)put_total / TEST_ITER, (unsigned long)put_max);
+           (unsigned long)put_min, (unsigned long)put_total / TEST_ITER, (unsigned long)put_max);
 
     /* -- Send with higher-priority wake + context switch -- */
-    g_test_total = g_test_max = 0;
+    g_test_total = g_test_max = 0; g_test_min = UINT32_MAX;
     /* Reuse stack */
     helper = thread_create(g_queue_stack, sizeof(g_queue_stack),
                            PRIO_HIGHER(2),
@@ -669,9 +692,9 @@ static void run_queue_test(void)
         /* helper preempts here */
     }
     wait_done();
-    printf("%-44s: avg %lu max %lu cycles\n",
+    printf("%-44s: min %lu avg %lu max %lu cycles\n",
            "Message put with context switch",
-           (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
+           (unsigned long)g_test_min, (unsigned long)g_test_total / TEST_ITER, (unsigned long)g_test_max);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -700,7 +723,7 @@ int main(void)
     run_event_test();
     run_queue_test();
 
-    printf("\n[PASS] RIOT perf test complete\n");
+    printf("\nTest PASSED\n");
     jv_exit(0);
     return 0;
 }

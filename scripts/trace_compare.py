@@ -27,6 +27,7 @@ CSR instruction format differences (spike vs jv32sim):
 import sys
 import re
 import argparse
+import os
 
 # ── Module-level constants for fast opcode checks ─────────────────────────────
 _CYCLE_CSRS    = frozenset({0xc00, 0xc01, 0xc02, 0xc80, 0xc81, 0xc82,
@@ -400,86 +401,128 @@ def _parse_rtl_entry(line):
 
 def compare_rtl_rtl_streaming(fname1, fname2):
     """
-    Fast comparison of two RTL-format trace files.
+    Memory-safe comparison of two RTL-format trace files.
 
-    Performance strategy (measured on 2.4M-entry traces):
-      - Read both files in parallel (ThreadPoolExecutor) with read()+splitlines()
-        instead of line-by-line iteration — avoids per-line C→Python readline
-        overhead and eliminates generator context-switch cost.
-      - Strip the leading instret/cycle counter per line with a single
-        str.index() + slice — no regex for the common (~99%+) matching path.
-      - Deduplicate consecutive stall entries (same PC+INSTR key) inline.
-      - Compare body strings with a simple indexed for-loop and C-level ==.
-      - Full parse (regex + dict) only for the rare mismatching lines.
+    Uses a streaming line-by-line path to avoid materializing multi-GB traces
+    in RAM. This is critical for large Zephyr traces where read()+splitlines()
+    can trigger heavy swapping or WSL hangs.
 
-    Typical speedup: ~5× over the previous generator-based approach
-    (~2 s vs ~10 s for 2.4M entries).
+    Fast-path behavior is preserved:
+      - strip leading instret/cycle prefix
+      - drop disasm suffix (alignment differs across producers)
+      - collapse consecutive duplicate (PC, INSTR) entries
+      - full parse only on mismatches for detailed diagnostics
     """
     _KEY_LEN = 24  # length of "0x80000000 (0x30401073)"
+    total1 = os.path.getsize(fname1)
+    total2 = os.path.getsize(fname2)
 
-    def _load(filename):
-        """
-        Read one RTL trace file into parallel (bodies, raws) lists.
+    bytes1 = 0
+    bytes2 = 0
+    last_progress = -5
 
-        bodies[i] — PC+INSTR+reg+mem fields only, stripped of the leading
-                    instret/cycle prefix and the trailing disasm comment.
-                    The disasm column is excluded because its alignment padding
-                    depends on prefix width: jv32sim emits '<instret> 0x...'
-                    while jv32soc emits '<instret>:<cycle> 0x...', so the
-                    number of spaces before ' ; ' differs even for identical
-                    instruction streams.  Stripping the comment makes the body
-                    strings equal for matching entries regardless of which tool
-                    generated the file, enabling the C-level == fast path.
-        raws[i]   — original line text (passed to _parse_rtl_entry on mismatch)
-        """
-        with open(filename, 'r', buffering=8 << 20) as f:
-            data = f.read()
-        bodies   = []
-        raws     = []
-        prev_key = ''
-        for line in data.splitlines():
-            if not line:
-                continue
-            fc = line[0]
-            if fc == '!' or fc < '0' or fc > '9':
-                continue
-            sp  = line.index(' ')
-            off = sp + 1
-            key = line[off : off + _KEY_LEN]
-            if key == prev_key:      # collapse consecutive stall duplicates
-                continue
-            prev_key = key
-            # Strip the disasm comment (and its alignment padding).  The ';'
-            # column offset differs between jv32sim (no cycle field) and jv32soc
-            # (instret:cycle prefix), so rstrip() alone is not enough.
-            semi = line.find(' ; ', off)
-            bodies.append(line[off : semi].rstrip() if semi != -1 else line[off:].rstrip())
-            raws.append(line)
-        return bodies, raws
+    def _emit_progress(force=False):
+        nonlocal last_progress
+        if total1 > 0:
+            p1 = min(100, (bytes1 * 100) // total1)
+        else:
+            p1 = 100
+        if total2 > 0:
+            p2 = min(100, (bytes2 * 100) // total2)
+        else:
+            p2 = 100
+
+        pct = p1 if p1 < p2 else p2
+        if force:
+            pct = 100
+        step_pct = 100 if force else (pct // 5) * 5
+        if step_pct > last_progress:
+            if force or step_pct >= 100:
+                sys.stdout.write(f"\rProgress: {step_pct}%\n")
+            else:
+                sys.stdout.write(f"\rProgress: {step_pct}%")
+            sys.stdout.flush()
+            last_progress = step_pct
+
+    def _iter_rtl_entries(filename):
+        """Yield (body_bytes, line_ctx, raw_len) entries from RTL traces with in-stream dedup."""
+        prev_key = b''
+        with open(filename, 'rb', buffering=8 << 20) as f:
+            for raw in f:
+                if not raw:
+                    continue
+                fc = raw[0]
+                if fc == 33 or fc < 48 or fc > 57:  # '!' / digits
+                    continue
+
+                # Keep bytes on the fast path; decode only for mismatches.
+                line = raw.rstrip(b'\r\n')
+                sp = line.find(b' ')
+                if sp == -1:
+                    continue
+                off = sp + 1
+                if off + _KEY_LEN > len(line):
+                    continue
+
+                key = line[off : off + _KEY_LEN]
+                if key == prev_key:
+                    continue
+                prev_key = key
+
+                semi = line.find(b' ; ', off)
+                body = line[off : semi].rstrip() if semi != -1 else line[off:].rstrip()
+                # Keep raw decoding lazy: only decode raw on mismatch.
+                yield body, line, len(raw)
 
     print("Detected formats: rtl (REF) vs rtl (TGT)\n")
 
-    # Load both files in parallel to overlap I/O
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut1 = pool.submit(_load, fname1)
-        fut2 = pool.submit(_load, fname2)
-        bodies1, raws1 = fut1.result()
-        bodies2, raws2 = fut2.result()
+    it1 = _iter_rtl_entries(fname1)
+    it2 = _iter_rtl_entries(fname2)
 
-    n1    = len(bodies1)
-    n2    = len(bodies2)
-    n_min = min(n1, n2)
+    n1 = 0
+    n2 = 0
+    n_min = 0
     mismatches = 0
+    stopped_early = False
+    semihost_tail_tolerated = False
 
-    for i in range(n_min):
-        # ── Ultra-fast path: single C-level string comparison ────────────────
-        if bodies1[i] == bodies2[i]:
+    while True:
+        try:
+            body1, ctx1, raw_len1 = next(it1)
+            n1 += 1
+            bytes1 += raw_len1
+        except StopIteration:
+            body1 = ctx1 = None
+
+        try:
+            body2, ctx2, raw_len2 = next(it2)
+            n2 += 1
+            bytes2 += raw_len2
+        except StopIteration:
+            body2 = ctx2 = None
+
+        _emit_progress()
+
+        if body1 is None and body2 is None:
+            break
+
+        if body1 is None:
+            n2 += sum(1 for _ in it2)
+            break
+
+        if body2 is None:
+            n1 += sum(1 for _ in it1)
+            break
+
+        n_min += 1
+
+        # Ultra-fast path: single C-level string comparison.
+        if body1 == body2:
             continue
 
-        # ── Slow path: full parse for cycle-CSR tolerance + error reporting ──
-        t1 = _parse_rtl_entry(raws1[i])
-        t2 = _parse_rtl_entry(raws2[i])
+        # Slow path: full parse for cycle-CSR tolerance + error reporting.
+        t1 = _parse_rtl_entry(ctx1.decode('ascii', errors='replace'))
+        t2 = _parse_rtl_entry(ctx2.decode('ascii', errors='replace'))
         if t1 is None or t2 is None:
             continue
 
@@ -497,9 +540,25 @@ def compare_rtl_rtl_streaming(fname1, fname2):
         if pc_match and instr_match and reg_match and mem_match and csr_match:
             continue  # e.g. cycle-CSR with same written value
 
+        # Terminal semihosting divergence tolerance:
+        # jv32sim may terminate directly on semihost SYS_EXIT while RTL trace
+        # continues through trap prologue/epilogue before final exit. If the
+        # first mismatch is an EBREAK and one side is already at end, treat
+        # remaining tail as expected simulator-shutdown path difference.
+        if mismatches == 0 and (t1['instr'] == 0x00100073 or t2['instr'] == 0x00100073):
+            rem1 = sum(1 for _ in it1)
+            rem2 = sum(1 for _ in it2)
+            n1 += rem1
+            n2 += rem2
+            if rem1 == 0 or rem2 == 0:
+                semihost_tail_tolerated = True
+                print("Note: tolerated terminal semihost-exit tail divergence "
+                      f"(remaining REF={rem1}, TGT={rem2}).")
+                break
+
         disasm1 = f" ; {t1['disasm']}" if t1.get('disasm') else ""
         disasm2 = f" ; {t2['disasm']}" if t2.get('disasm') else ""
-        print(f"\nMismatch at entry {i + 1}:")
+        print(f"\nMismatch at entry {n_min}:")
         print(f"  REF: PC=0x{t1['pc']:08x} INSTR=0x{t1['instr']:08x}{disasm1}")
         print(f"  TGT: PC=0x{t2['pc']:08x} INSTR=0x{t2['instr']:08x}{disasm2}")
         if not pc_match or not instr_match:
@@ -518,11 +577,21 @@ def compare_rtl_rtl_streaming(fname1, fname2):
         mismatches += 1
         if mismatches >= 10:
             print("\n... stopping after 10 mismatches")
+            stopped_early = True
             break
 
-    print(f"REF (RTL) entries: {n1}")
-    print(f"TGT (RTL) entries: {n2}")
+    _emit_progress(force=True)
+
+    if stopped_early:
+        print(f"REF (RTL) entries processed: {n1}")
+        print(f"TGT (RTL) entries processed: {n2}")
+    else:
+        print(f"REF (RTL) entries: {n1}")
+        print(f"TGT (RTL) entries: {n2}")
     if mismatches == 0:
+        if semihost_tail_tolerated:
+            print("\n[PASS] Traces match up to terminal semihost exit path.")
+            return 0
         if n1 == n2:
             print("\n[PASS] Traces match perfectly!")
             return 0
@@ -535,7 +604,7 @@ def compare_rtl_rtl_streaming(fname1, fname2):
             return 0
     else:
         print(f"\n[FAIL] Found {mismatches} mismatches")
-        if n1 != n2:
+        if (not stopped_early) and n1 != n2:
             print(f"  Length mismatch: REF={n1} TGT={n2}")
         return 1
 

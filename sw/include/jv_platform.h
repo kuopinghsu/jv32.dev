@@ -138,27 +138,55 @@
 #endif
 
 /* ============================================================================
- * Inline platform helpers
+ * RISC-V semihosting v1.0 markers and opcodes
  * ============================================================================ */
 
-#ifndef JV_PLATFORM_NO_INLINE_HELPERS
+#define JV_SEMIHOST_ENTRY_NOP 0x01F01013u  /**< slli x0, x0, 0x1f */
+#define JV_SEMIHOST_EBREAK    0x00100073u  /**< ebreak             */
+#define JV_SEMIHOST_EXIT_NOP  0x40705013u  /**< srai x0, x0, 7     */
+
+#define JV_SEMIHOST_SYS_WRITEC        0x03u
+#define JV_SEMIHOST_SYS_WRITE0        0x04u
+#define JV_SEMIHOST_SYS_WRITE         0x05u
+#define JV_SEMIHOST_SYS_READC         0x07u
+#define JV_SEMIHOST_SYS_EXIT          0x18u
+#define JV_SEMIHOST_SYS_EXIT_EXTENDED 0x20u
+
+#define JV_SEMIHOST_ADP_STOPPED_APP_EXIT       0x20026u
+#define JV_SEMIHOST_ADP_STOPPED_INTERNAL_ERROR 0x20023u
+
+/* ============================================================================
+ * Platform I/O interface
+ * ============================================================================ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Link-time selectable backend API: apps always call the same interface. */
+void jv_putc(char c);
+void jv_exit(int code) __attribute__((noreturn));
+
+#ifdef __cplusplus
+}
+#endif
 
 /**
- * Write one character to the simulation console (Magic device).
+ * Raw backend: write one character to the simulation console (Magic device).
  * @param c  Character to write.
  */
-static inline void jv_putc(char c)
+static inline void jv_putc_raw(char c)
 {
     JV_MAGIC_CONSOLE = (uint32_t)(unsigned char)c;
 }
 
 /**
- * Signal simulation exit.
+ * Raw backend: signal simulation exit via Magic device.
  * Encoding: pass (code==0) → write 1; fail (code≠0) → write (code<<1)|1.
  * This function never returns.
  * @param code  Exit code (0=PASS, non-zero=FAIL).
  */
-static inline void jv_exit(int code)
+static inline void jv_exit_raw(int code)
 {
     JV_MAGIC_EXIT = (code == 0) ? 1u : (((uint32_t)code << 1) | 1u);
     while (1) { __asm__ volatile("nop"); }
@@ -184,7 +212,5 @@ static inline void jv_puts(const char *s)
 {
     while (*s) jv_putc(*s++);
 }
-
-#endif /* JV_PLATFORM_NO_INLINE_HELPERS */
 
 #endif /* JV_PLATFORM_H */

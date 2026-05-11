@@ -8,10 +8,6 @@
 # The resulting ELF can be loaded onto the FPGA via OpenOCD:
 #   openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \
 #           -c "program build/fpga-stress.elf verify reset exit"
-#
-# UART output: 921600 8N1 on the on-board AXI UART.
-#   Linux:  stty -F /dev/ttyUSBx 921600 raw && cat /dev/ttyUSBx
-#   Win/Mac: PuTTY / CoolTerm at 921600 8N1
 
 -include ../../env.config
 
@@ -32,11 +28,14 @@ READELF = $(RISCV_PREFIX)readelf
 FREERTOS_DIR  = $(PROJECT_ROOT)/rtos/freertos
 FREERTOS_PORT = $(FREERTOS_DIR)/portable/RISC-V
 FREERTOS_SYS  = $(FREERTOS_DIR)/sys
+JV_IO_BACKEND ?= semihost
+FPGA_IO_SRC    = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
 
 # Source files: FreeRTOS kernel + port + sys stubs + this test
 SOURCES = \
 	$(FREERTOS_SYS)/freertos_start.S \
 	$(FREERTOS_SYS)/freertos_syscall.c \
+	$(FPGA_IO_SRC) \
 	fpga_stress.c \
 	$(FREERTOS_DIR)/tasks.c \
 	$(FREERTOS_DIR)/queue.c \
@@ -78,9 +77,8 @@ help:
 	@echo "Load on FPGA via OpenOCD (cJTAG):"
 	@echo '  openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \'
 	@echo '          -c "program build/fpga-stress.elf verify reset exit"'
-	@echo ""
-	@echo "Connect terminal at 921600 8N1:"
-	@echo '  stty -F /dev/ttyUSBx 921600 raw && cat /dev/ttyUSBx'
+	@echo '  # default runtime log output uses semihosting over the OpenOCD debug connection'
+	@echo '  # override with JV_IO_BACKEND=uart to route jv_putc() through the AXI UART'
 
 build: $(OUTPUT)
 

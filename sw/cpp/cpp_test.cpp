@@ -24,6 +24,15 @@
 //   than throwing std::bad_alloc; this is the standard embedded C++ mode.
 // ============================================================================
 
+// Forward declarations of exception support functions.
+// GCC 15+ libstdc++ calls these from template code even with -fno-exceptions.
+// Defined in cxx_stubs.cpp and resolved at link time.
+namespace std {
+  void __throw_bad_alloc();
+  void __throw_bad_array_new_length();
+  void __throw_length_error(const char *);
+}
+
 #include <algorithm>
 #include <array>
 #include <cstdio>

@@ -51,11 +51,6 @@ static uint32_t tests_skipped = 0;
 // Flag to detect if atomic operations are supported
 static int atomic_supported = -1;  // -1 = unknown, 0 = no, 1 = yes
 
-// Trap handler (required by start.S)
-void trap_handler(jv_trap_frame_t *frame) {
-    (void)frame;
-}
-
 // Detect if atomic operations are supported by checking for error pattern
 static int check_atomic_support(void) {
     if (atomic_supported != -1) {

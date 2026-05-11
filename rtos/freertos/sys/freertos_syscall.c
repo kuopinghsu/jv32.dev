@@ -72,8 +72,8 @@ int _write(int file, char *ptr, int len)
     UNUSED(file);
     for (int i = 0; i < len; i++) {
         if (ptr[i] == '\n')
-            jv_putc('\r');
-        jv_putc(ptr[i]);
+            jv_putc_raw('\r');
+        jv_putc_raw(ptr[i]);
     }
     return len;
 }
@@ -143,4 +143,37 @@ int _execve(const char *name, char *const *argv, char *const *env)
     UNUSED(name); UNUSED(argv); UNUSED(env);
     errno = ENOMEM;
     return -1;
+}
+/*
+ * FreeRTOS RISC-V port weak defaults in portASM.S trap forever for
+ * application exceptions/interrupts. Override them here so semihosting
+ * breakpoint traps used by jv_putc()/jv_exit() are tolerated.
+ *
+ * Call ABI from portASM.S:
+ *   a0 = mcause
+ *   a1 = mepc (already advanced by +4 for synchronous exceptions)
+ */
+void freertos_risc_v_application_exception_handler(uint32_t mcause, uint32_t mepc)
+{
+    UNUSED(mepc);
+
+    /* Breakpoint exception: used by semihosting ebreak sequence.
+     * Return so the trap epilogue resumes execution at the next instruction. */
+    if ((mcause & 0x7FFFFFFFu) == 3u) {
+        return;
+    }
+
+    /* Unexpected exception in FreeRTOS app context: fail fast. */
+    jv_putc_raw('\n');
+    jv_putc_raw('['); jv_putc_raw('F'); jv_putc_raw('R'); jv_putc_raw('T'); jv_putc_raw(']');
+    jv_putc_raw(' '); jv_putc_raw('E'); jv_putc_raw('X'); jv_putc_raw('C'); jv_putc_raw('\n');
+    jv_exit_raw(1);
+}
+
+void freertos_risc_v_application_interrupt_handler(uint32_t mcause, uint32_t mepc)
+{
+    UNUSED(mcause);
+    UNUSED(mepc);
+    /* Ignore unexpected non-timer interrupts by default.
+     * Dedicated timer IRQ path is handled elsewhere in portASM.S. */
 }

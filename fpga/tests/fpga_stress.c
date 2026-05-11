@@ -20,15 +20,14 @@
  *                                    under lock.
  *   F. Memory stress      (1 task)   Heap alloc → fill → verify → free at
  *                                    sizes 32 → 64 → 128 → 256 bytes, cycling.
- *   G. Heartbeat reporter (1 task)   Prints one status line via UART every
+ *   G. Heartbeat reporter (1 task)   Prints one status line via semihosting every
  *                                    HEARTBEAT_INTERVAL_S real seconds.
  *   H. Watchdog timer               30-second FreeRTOS auto-reload timer;
  *                                    each module must set its bit each period
  *                                    or a fault message is printed.
  *
- * UART output: 921600 8N1 on the on-chip AXI UART.
- *   Linux:  stty -F /dev/ttyUSBx 921600 raw && cat /dev/ttyUSBx
- *   Win:    PuTTY / TeraTerm at 921600 8N1
+ * Output is emitted through the shared jv_putc()/jv_exit() interface using
+ * the semihost backend, so it can be observed through the OpenOCD debug link.
  *
  * Output format (one line every 5 s):
  *   [HHH:MM:SS] A=<cpu_iters> B=<q_sent> C=<ev_rounds> D=<sem_rounds>
@@ -51,20 +50,10 @@
 #include "timers.h"
 
 #include "jv_platform.h"
-#include "jv_uart.h"
 
 /* =========================================================================
  * Hardware / timing constants
  * ========================================================================= */
-
-#define FPGA_CLK_HZ         50000000UL  /* 50 MHz FPGA system clock           */
-#define UART_BAUD           921600UL    /* Target baud — max reliable PC USB   */
-/*
- * CLKS_PER_BIT = 50 000 000 / 921 600 ≈ 54.25 → rounded to 54.
- * Actual baud  = 50 000 000 / 54 ≈ 925 926  (0.47 % error — within spec).
- * baud_div     = CLKS_PER_BIT - 1 = 53.
- */
-#define UART_BAUD_DIV       ((uint32_t)((FPGA_CLK_HZ / UART_BAUD) - 1U))  /* 53 */
 
 /*
  * FreeRTOS is configured for configCPU_CLOCK_HZ = 100 MHz, but the FPGA
@@ -116,7 +105,7 @@
  * Global synchronisation objects
  * ========================================================================= */
 
-static SemaphoreHandle_t  g_uart_mutex;     /* serialise all UART writes          */
+static SemaphoreHandle_t  g_log_mutex;      /* serialise all semihost writes      */
 static SemaphoreHandle_t  g_wdog_mutex;     /* protect g_wdog_mask                */
 static volatile uint32_t  g_wdog_mask;      /* bits set by live modules            */
 
@@ -169,19 +158,19 @@ static void wdog_pet(uint32_t bit)
 }
 
 /* =========================================================================
- * UART output helpers
+ * Log output helpers
  *
- * printf() is not used: _write() routes to the magic simulation device which
- * is not mapped on FPGA.  All output goes directly through the AXI UART.
+ * printf() is not used here; we emit characters directly through jv_putc()
+ * so the selected semihost backend carries them over the OpenOCD connection.
  *
- * The caller MUST hold g_uart_mutex before calling any up_* function.
- * Use the UART_LOG_BEGIN / UART_LOG_END macros to bracket a log entry.
+ * The caller MUST hold g_log_mutex before calling any up_* function.
+ * Use the LOG_BEGIN / LOG_END macros to bracket a log entry.
  * ========================================================================= */
 
-#define UART_LOG_BEGIN()   xSemaphoreTake(g_uart_mutex, portMAX_DELAY)
-#define UART_LOG_END()     xSemaphoreGive(g_uart_mutex)
+#define LOG_BEGIN()   xSemaphoreTake(g_log_mutex, portMAX_DELAY)
+#define LOG_END()     xSemaphoreGive(g_log_mutex)
 
-static void up_char(char c) { jv_uart_putc(c); }
+static void up_char(char c) { jv_putc(c); }
 static void up_str(const char *s) { while (*s) up_char(*s++); }
 static void up_crlf(void) { up_char('\r'); up_char('\n'); }
 
@@ -540,7 +529,7 @@ static void vWatchdogTimerCb(TimerHandle_t xTimer)
     g_wdog_mask   = 0u;
     xSemaphoreGive(g_wdog_mutex);
 
-    UART_LOG_BEGIN();
+    LOG_BEGIN();
     up_str("[WDOG] ");
     if (mask == WDOG_ALL_BITS) {
         up_str("OK mask=0x");
@@ -558,13 +547,13 @@ static void vWatchdogTimerCb(TimerHandle_t xTimer)
         up_hex8(mask);
     }
     up_crlf();
-    UART_LOG_END();
+    LOG_END();
 }
 
 /* =========================================================================
  * Module G: Heartbeat reporter  (lowest-priority worker task)
  *
- * Prints one status line to UART every HEARTBEAT_INTERVAL_S real seconds.
+ * Prints one status line through semihosting every HEARTBEAT_INTERVAL_S real seconds.
  * Uses xTaskDelayUntil() for drift-free periodic operation.
  * ========================================================================= */
 
@@ -584,7 +573,7 @@ static void vHeartbeat(void *pv)
             g_cpu_errors + g_queue_errors + g_event_errors +
             g_sem_errors  + g_mutex_errors + g_mem_errors;
 
-        UART_LOG_BEGIN();
+        LOG_BEGIN();
         up_timestamp(now);
         up_char(' ');
         up_kv("A", g_cpu_iters);
@@ -597,7 +586,7 @@ static void vHeartbeat(void *pv)
         up_kv("heap", (uint32_t)free_mem);
         up_kv("wdf", g_wdog_faults);
         up_crlf();
-        UART_LOG_END();
+        LOG_END();
     }
 }
 
@@ -613,10 +602,9 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
     (void)xTask;
     /*
      * Stack overflow is a fatal error — the task's context is corrupt.
-     * Print the offending task name and halt.  Do NOT call jv_exit(): the
-     * magic simulation device is not mapped on FPGA hardware.
+     * Print the offending task name and halt.
      */
-    if (xSemaphoreTake(g_uart_mutex, 0) == pdTRUE) {
+    if (xSemaphoreTake(g_log_mutex, 0) == pdTRUE) {
         up_str("\r\n[FATAL] Stack overflow: ");
         up_str(pcTaskName);
         up_crlf();
@@ -630,13 +618,13 @@ void vApplicationMallocFailedHook(void)
 {
     /*
      * Not fatal: the memory-stress task counts and recovers from allocation
-     * failures.  Log a warning if the UART mutex is immediately available
+     * failures.  Log a warning if the log mutex is immediately available
      * (non-blocking attempt avoids deadlock from ISR/timer context).
      */
-    if (xSemaphoreTake(g_uart_mutex, 0) == pdTRUE) {
+    if (xSemaphoreTake(g_log_mutex, 0) == pdTRUE) {
         up_str("[WARN] pvPortMalloc failed");
         up_crlf();
-        xSemaphoreGive(g_uart_mutex);
+        xSemaphoreGive(g_log_mutex);
     }
 }
 
@@ -646,26 +634,19 @@ void vApplicationMallocFailedHook(void)
 
 int main(void)
 {
-    /* ── 1. Initialise UART to maximum PC-compatible baud rate ─────────── */
-    jv_uart_set_baud(UART_BAUD_DIV);   /* 921 600 baud at 50 MHz FPGA clock */
-
-    /* Drain any stale bytes left in the RX FIFO from a previous run. */
-    while (jv_uart_rx_ready())
-        (void)jv_uart_getc();
-
     /* Print banner synchronously before the scheduler starts. */
-    jv_uart_puts("\r\n");
-    jv_uart_puts("============================================================\r\n");
-    jv_uart_puts("  JV32 FPGA FreeRTOS Long-Running Stability Stress Test\r\n");
-    jv_uart_puts("  UART 921600 8N1  |  CLK 50 MHz  |  baud_div=53\r\n");
-    jv_uart_puts("  Modules: A=CPU(x2) B=Queue(x2) C=Event(x4) D=Sem(x2)\r\n");
-    jv_uart_puts("           E=Mutex(x3) F=Mem(x1) G=HB(x1) H=Wdog(30s)\r\n");
-    jv_uart_puts("  Output:  [HHH:MM:SS] A= B= C= D= E= F= err= heap= wdf=\r\n");
-    jv_uart_puts("============================================================\r\n");
-    jv_uart_puts("Starting scheduler...\r\n\r\n");
+    jv_puts("\r\n");
+    jv_puts("============================================================\r\n");
+    jv_puts("  JV32 FPGA FreeRTOS Long-Running Stability Stress Test\r\n");
+    jv_puts("  Semihosting via OpenOCD  |  CLK 50 MHz\r\n");
+    jv_puts("  Modules: A=CPU(x2) B=Queue(x2) C=Event(x4) D=Sem(x2)\r\n");
+    jv_puts("           E=Mutex(x3) F=Mem(x1) G=HB(x1) H=Wdog(30s)\r\n");
+    jv_puts("  Output:  [HHH:MM:SS] A= B= C= D= E= F= err= heap= wdf=\r\n");
+    jv_puts("============================================================\r\n");
+    jv_puts("Starting scheduler...\r\n\r\n");
 
     /* ── 2. Create synchronisation objects ─────────────────────────────── */
-    g_uart_mutex = xSemaphoreCreateMutex();
+    g_log_mutex  = xSemaphoreCreateMutex();
     g_wdog_mutex = xSemaphoreCreateMutex();
     g_pipeline   = xQueueCreate((UBaseType_t)QUEUE_DEPTH, sizeof(QMsg_t));
     g_barrier    = xEventGroupCreate();
@@ -673,7 +654,7 @@ int main(void)
     g_sem_pong   = xSemaphoreCreateBinary();
     g_rmutex     = xSemaphoreCreateRecursiveMutex();
 
-    configASSERT(g_uart_mutex);
+    configASSERT(g_log_mutex);
     configASSERT(g_wdog_mutex);
     configASSERT(g_pipeline);
     configASSERT(g_barrier);
@@ -723,7 +704,7 @@ int main(void)
     xTaskCreate(vMemStress, "MemSt", configMINIMAL_STACK_SIZE,
                 NULL, PRIO_MEM, NULL);
 
-    /* Module G: Heartbeat reporter — larger stack for UART string formatting */
+    /* Module G: Heartbeat reporter — larger stack for status string formatting */
     xTaskCreate(vHeartbeat, "HB", configMINIMAL_STACK_SIZE * 2,
                 NULL, PRIO_HEARTBEAT, NULL);
 
@@ -740,7 +721,7 @@ int main(void)
     /* ── 5. Start the scheduler — never returns ─────────────────────────── */
     vTaskStartScheduler();
 
-    /* Unreachable: halt via UART if the scheduler unexpectedly returns. */
-    jv_uart_puts("[FATAL] Scheduler returned!\r\n");
+    /* Unreachable: halt after logging if the scheduler unexpectedly returns. */
+    jv_puts("[FATAL] Scheduler returned!\r\n");
     for (;;) { __asm__ volatile("nop"); }
 }
