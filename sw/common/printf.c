@@ -165,11 +165,11 @@ static char* uint_to_str(uint64_t value, char *buf, const int base, bool upperca
 
             // Optimized division by 10 using multiplication
             // q = (value * 0x1999999999999999ULL + value) >> 64;
-            // This works because 0x1999999999999999 ≈ 2^64 / 10
+            // This works because 0x1999999999999999 ~= 2^64 / 10
 
             // Alternative: use shift and subtract method
-            // q ≈ (value >> 1) + (value >> 2) + (value >> 5) + (value >> 6) + ...
-            // Simplified: q ≈ value * 0.1
+            // q ~= (value >> 1) + (value >> 2) + (value >> 5) + (value >> 6) + ...
+            // Simplified: q ~= value * 0.1
 
             // Method: q = ((value >> 1) + (value >> 2)) >> 2 for approximation
             q = value >> 1;           // value / 2

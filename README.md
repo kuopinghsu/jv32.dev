@@ -318,16 +318,16 @@ make FAST_MUL=1 MUL_MC=0 rtl-hello # 1-cycle combinatorial multiplier
 Bare-metal software uses a link-time selectable console/exit backend behind the same application API:
 `jv_putc()` and `jv_exit()`.
 
-- `JV_IO_BACKEND=semihost` — uses **RISC-V semihosting v1.0** (`slli x0,x0,0x1f` / `ebreak` / `srai x0,x0,7`) with magic-device fallback.
+- `JV_IO_BACKEND=semihost` — uses **RISC-V semihosting v1.0** (`slli x0,x0,0x1f` / `ebreak` / `srai x0,x0,7`) for OpenOCD / real-chip flows; software trap handling is side-effect-free (no magic MMIO, no UART).
 - `JV_IO_BACKEND=magic` — uses the simulation magic device directly (`0x4000_0000` console, `0x4000_0004` exit).
 - `JV_IO_BACKEND=uart` — routes `jv_putc()` through the AXI UART and keeps `jv_exit()` local by printing an exit status and halting.
 
-Default bare-metal builds use `JV_IO_BACKEND=semihost`. This keeps normal software tests debugger/semihost-friendly while preserving the same source-level API.
+Root simulation targets default to `JV_IO_BACKEND=semihost`.
 
 All three backends share the same application API (`jv_putc()` / `jv_exit()`) and are functionally valid for normal program execution. For instruction-trace comparison (`make compare-*`), backend choice can still affect determinism because the RTL simulator and ISS model peripheral/trap timing differently:
 
 - `magic` is usually the most deterministic for trace-compare (direct MMIO side effects).
-- `semihost` relies on the semihost marker trap sequence (`slli/ebreak/srai`) being handled identically in both models.
+- `semihost` is intended for debugger-connected targets where semihost requests are handled externally.
 - `uart` includes FIFO/interrupt/timing behavior and may require model synchronization hints.
 
 For this reason, some tests pin a backend in their local `makefile.mak` to keep RTL-vs-ISS traces stable while preserving the same source-level I/O API.

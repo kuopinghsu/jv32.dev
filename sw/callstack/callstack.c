@@ -14,9 +14,9 @@
 // Backtrace method:
 //   The RISC-V ABI -fno-omit-frame-pointer (or explicit asm) links each
 //   stack frame as:
-//       sp → [ra_prev] [fp_prev] [saved locals…]
+//       sp -> [ra_prev] [fp_prev] [saved locals...]
 //             fp ------^
-//   Walking: next_fp = *(fp - 8), next_ra = *(fp - 4)  (when fp ≠ 0)
+//   Walking: next_fp = *(fp - 8), next_ra = *(fp - 4)  (when fp != 0)
 //
 //   The test is compiled with -fno-omit-frame-pointer via makefile.mak so
 //   every non-inline function pushes an ABI-standard frame.
@@ -38,7 +38,7 @@
 #include "jv_irq.h"
 #include "csr.h"
 
-/* ── low-level helpers (no printf available inside trap) ─────────────── */
+/* -- low-level helpers (no printf available inside trap) --------------- */
 
 static void _puts_raw(const char *s)
 {
@@ -62,7 +62,7 @@ static void _putdec(int v)
     while (n--) jv_putc(buf[n]);
 }
 
-/* ── call-stack limits (guard against corrupt frames) ─────────────────── */
+/* -- call-stack limits (guard against corrupt frames) ------------------- */
 
 /* Stack grows down from __stack_top toward __stack_bottom.
  * We define guards: frame pointers must be on the stack (DRAM);
@@ -74,22 +74,22 @@ extern char _stack_top[];
 #define BT_RA_MAX   ((uintptr_t)_stack_top)
 #define BT_MAX_FRAMES 16
 
-/* ── flag so main() knows the trap fired ─────────────────────────────── */
+/* -- flag so main() knows the trap fired ------------------------------- */
 static volatile int g_fault_caught;
 
-/* ── illegal-instruction handler ─────────────────────────────────────── */
+/* -- illegal-instruction handler --------------------------------------- */
 /*
  * Print a backtrace by walking saved frame-pointer/return-address pairs.
  *
  * Standard RV32 ABI frame layout (with -fno-omit-frame-pointer):
  *
- *   high addr ──┐
- *                │  ...caller's frame...
- *   fp-8  ──── saved fp (caller's fp)
- *   fp-4  ──── saved ra (our return address into caller)
- *   fp     ──► frame pointer of this function
- *   sp     ──► top of this function's locals / saved regs
- *   low addr ──┘
+ *   high addr --+
+ *                |  ...caller's frame...
+ *   fp-8  ---- saved fp (caller's fp)
+ *   fp-4  ---- saved ra (our return address into caller)
+ *   fp     --> frame pointer of this function
+ *   sp     --> top of this function's locals / saved regs
+ *   low addr --+
  *
  * The s0/fp register in the trap frame holds the fp of trigger_fault().
  * From there we can unwind: next_fp = *(cur_fp - 8), next_ra = *(cur_fp - 4).
@@ -133,7 +133,7 @@ static void illegal_insn_handler(jv_trap_frame_t *frame)
     frame->mepc += 4;
 }
 
-/* ── deep call chain ─────────────────────────────────────────────────── */
+/* -- deep call chain --------------------------------------------------- */
 
 __attribute__((noinline))
 static void trigger_fault(void)
@@ -156,7 +156,7 @@ static void level2(void) { level3(); }
 __attribute__((noinline))
 static void level1(void) { level2(); }
 
-/* ── main ─────────────────────────────────────────────────────────────── */
+/* -- main --------------------------------------------------------------- */
 
 int main(void)
 {

@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 /* ============================================================================
- * Generic CSR access macros — use these for CSRs not listed below,
+ * Generic CSR access macros -- use these for CSRs not listed below,
  * or when the CSR name must be a compile-time string.
  *
  * Example:
@@ -46,7 +46,7 @@ static inline uint32_t read_csr_mhartid(void)   { return read_csr(mhartid);   }
  * Machine Trap Setup
  * ============================================================================ */
 
-/* mstatus — Machine Status Register */
+/* mstatus -- Machine Status Register */
 static inline uint32_t read_csr_mstatus(void)         { return read_csr(mstatus); }
 static inline void     write_csr_mstatus(uint32_t v)  { write_csr(mstatus, v); }
 
@@ -55,14 +55,14 @@ static inline void     write_csr_mstatus(uint32_t v)  { write_csr(mstatus, v); }
 #define MSTATUS_MPIE  (1u << 7)   /* Machine Previous Interrupt Enable */
 #define MSTATUS_MPP_M (3u << 11)  /* Machine Previous Privilege = M-mode */
 
-/* misa — ISA and Extensions (RO on jv32) */
+/* misa -- ISA and Extensions (RO on jv32) */
 static inline uint32_t read_csr_misa(void) { return read_csr(misa); }
 
-/* mie — Machine Interrupt Enable */
+/* mie -- Machine Interrupt Enable */
 static inline uint32_t read_csr_mie(void)        { return read_csr(mie); }
 static inline void     write_csr_mie(uint32_t v) { write_csr(mie, v); }
 
-/* mtvec — Machine Trap-Vector Base Address */
+/* mtvec -- Machine Trap-Vector Base Address */
 static inline uint32_t read_csr_mtvec(void)        { return read_csr(mtvec); }
 static inline void     write_csr_mtvec(uint32_t v) { write_csr(mtvec, v); }
 
@@ -78,19 +78,19 @@ static inline void     write_csr_mtvec(uint32_t v) { write_csr(mtvec, v); }
 static inline uint32_t read_csr_mscratch(void)        { return read_csr(mscratch); }
 static inline void     write_csr_mscratch(uint32_t v) { write_csr(mscratch, v); }
 
-/* mepc — Machine Exception Program Counter */
+/* mepc -- Machine Exception Program Counter */
 static inline uint32_t read_csr_mepc(void)        { return read_csr(mepc); }
 static inline void     write_csr_mepc(uint32_t v) { write_csr(mepc, v); }
 
-/* mcause — Machine Cause Register */
+/* mcause -- Machine Cause Register */
 static inline uint32_t read_csr_mcause(void)        { return read_csr(mcause); }
 static inline void     write_csr_mcause(uint32_t v) { write_csr(mcause, v); }
 
-/* mtval — Machine Trap Value */
+/* mtval -- Machine Trap Value */
 static inline uint32_t read_csr_mtval(void)        { return read_csr(mtval); }
 static inline void     write_csr_mtval(uint32_t v) { write_csr(mtval, v); }
 
-/* mip — Machine Interrupt Pending (mostly RO) */
+/* mip -- Machine Interrupt Pending (mostly RO) */
 static inline uint32_t read_csr_mip(void)        { return read_csr(mip); }
 static inline void     write_csr_mip(uint32_t v) { write_csr(mip, v); }
 
@@ -98,7 +98,7 @@ static inline void     write_csr_mip(uint32_t v) { write_csr(mip, v); }
  * Machine Counter/Timers
  * ============================================================================ */
 
-/* mcycle / mcycleh — lower and upper 32 bits of the cycle counter */
+/* mcycle / mcycleh -- lower and upper 32 bits of the cycle counter */
 static inline uint32_t read_csr_mcycle(void)  { return read_csr(mcycle);  }
 static inline uint32_t read_csr_mcycleh(void) { return read_csr(mcycleh); }
 
@@ -114,7 +114,7 @@ static inline uint64_t read_csr_mcycle64(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
-/* minstret / minstreth — instructions-retired counter */
+/* minstret / minstreth -- instructions-retired counter */
 static inline uint32_t read_csr_minstret(void)  { return read_csr(minstret);  }
 static inline uint32_t read_csr_minstreth(void) { return read_csr(minstreth); }
 
@@ -135,12 +135,12 @@ static inline uint64_t read_csr_cycle64(void)   { return read_csr_mcycle64();   
 static inline uint64_t read_csr_instret64(void) { return read_csr_minstret64(); }
 
 /* ============================================================================
- * Custom jv32 CSRs (0x7C0–0x7FF range reserved for custom M-mode)
+ * Custom jv32 CSRs (0x7C0-0x7FF range reserved for custom M-mode)
  *
- * 0x7C0  mintthresh  — CLIC interrupt threshold: block IRQs with level <= this
+ * 0x7C0  mintthresh  -- CLIC interrupt threshold: block IRQs with level <= this
  * ============================================================================ */
 
-#define CSR_MINTTHRESH  0x347   /* mclicbase region — CLIC interrupt threshold */
+#define CSR_MINTTHRESH  0x347   /* mclicbase region -- CLIC interrupt threshold */
 
 static inline uint32_t read_csr_mintthresh(void)
 {

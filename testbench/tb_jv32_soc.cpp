@@ -388,6 +388,7 @@ public:
 #define SEMIHOST_SYS_READC         0x07u
 #define SEMIHOST_SYS_EXIT          0x18u
 #define SEMIHOST_SYS_EXIT_EXTENDED 0x20u
+#define SEMIHOST_ADP_STOPPED_APP_EXIT 0x20026u
 
 static volatile sig_atomic_t g_sigint = 0;
 static void sig_handler(int) { g_sigint = 1; }
@@ -397,6 +398,65 @@ static int  g_exit_code      = 0;
 
 // DPI-C import: read a GPR by index from the running SV simulation
 extern "C" int get_gpr(int idx);
+extern "C" char mem_read_byte(int addr);
+extern "C" void sim_request_exit(int exit_code);
+
+static uint32_t semihost_rtl_u32(uint32_t addr) {
+    return (uint32_t)(uint8_t)mem_read_byte((int)(addr + 0)) |
+           ((uint32_t)(uint8_t)mem_read_byte((int)(addr + 1)) <<  8) |
+           ((uint32_t)(uint8_t)mem_read_byte((int)(addr + 2)) << 16) |
+           ((uint32_t)(uint8_t)mem_read_byte((int)(addr + 3)) << 24);
+}
+
+// Host-side semihost handler called at SEMIHOST_ENTRY_NOP retire.
+// a0=op (semihost op code), a1=param (argument / pointer).
+// Returns true if it was a write-class call (for stats).
+static bool semihost_rtl_handle(uint32_t op, uint32_t p) {
+    switch (op) {
+    case SEMIHOST_SYS_WRITEC: {
+        uint32_t ch = (p <= 0xFFu) ? p : (uint32_t)(uint8_t)mem_read_byte((int)p);
+        fputc((int)(ch & 0xFFu), stdout);
+        fflush(stdout);
+        return true;
+    }
+    case SEMIHOST_SYS_WRITE0: {
+        uint32_t addr = p;
+        while (true) {
+            uint8_t ch = (uint8_t)mem_read_byte((int)addr++);
+            if (ch == 0) break;
+            fputc((int)ch, stdout);
+        }
+        fflush(stdout);
+        return true;
+    }
+    case SEMIHOST_SYS_WRITE: {
+        uint32_t handle = semihost_rtl_u32(p + 0u);
+        uint32_t buf    = semihost_rtl_u32(p + 4u);
+        uint32_t len    = semihost_rtl_u32(p + 8u);
+        FILE* out = (handle == 2u) ? stderr : stdout;
+        for (uint32_t i = 0; i < len; i++)
+            fputc((int)(uint8_t)mem_read_byte((int)(buf + i)), out);
+        fflush(out);
+        return true;
+    }
+    case SEMIHOST_SYS_EXIT: {
+        int code = (p == SEMIHOST_ADP_STOPPED_APP_EXIT) ? 0 : 1;
+        sim_request_exit(code);
+        return false;
+    }
+    case SEMIHOST_SYS_EXIT_EXTENDED: {
+        uint32_t reason  = semihost_rtl_u32(p + 0u);
+        uint32_t subcode = semihost_rtl_u32(p + 4u);
+        int code = (reason == SEMIHOST_ADP_STOPPED_APP_EXIT)
+                   ? (int)subcode
+                   : (subcode ? (int)subcode : 1);
+        sim_request_exit(code);
+        return false;
+    }
+    default:
+        return false;
+    }
+}
 
 static const char* gpr_name(int i) {
     static const char* names[32] = {
@@ -700,10 +760,13 @@ int main(int argc, char** argv) {
             }
 
             if ((uint32_t)dut->trace_instr == SEMIHOST_ENTRY_NOP) {
-                // ebreak does not retire in this pipeline trace; count calls
-                // at the semihost marker entry instruction.
+                // RISC-V semihosting v1.0: handle at the host side at ENTRY_NOP
+                // retire time (a0/a1 are already loaded by the calling code).
+                // The SW trap handler runs next (ebreak → trap) but only
+                // advances mepc and sets the return value — no I/O there.
                 uint32_t op = (uint32_t)get_gpr(10); // a0 = semihost op id
-                if (op == SEMIHOST_SYS_WRITEC || op == SEMIHOST_SYS_WRITE0 || op == SEMIHOST_SYS_WRITE) {
+                uint32_t p  = (uint32_t)get_gpr(11); // a1 = parameter
+                if (semihost_rtl_handle(op, p)) {
                     io_semihost_write_calls++;
                 }
             }

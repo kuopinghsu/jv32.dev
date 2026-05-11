@@ -43,7 +43,7 @@ RIOT_IO_DEFS  =
 # RIOT's trap path (riscv_common/irq_arch.c) does not currently emulate the
 # RISC-V semihosting ebreak marker sequence, so using jv_io_semihost.c would
 # trap/hang before fallback can execute. Force raw backend behavior for RIOT.
-ifeq ($(JV_IO_BACKEND),semihost)
+ifneq ($(filter semihost,$(JV_IO_BACKEND)),)
 RIOT_IO_DEFS += -DJV_SEMIHOST_ENABLE=0
 endif
 

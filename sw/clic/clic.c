@@ -3,26 +3,26 @@
 // Project     : JV32 RISC-V Processor
 // Description : Comprehensive CLIC / CLINT test
 //
-//   Test 1  Software interrupt       (MSI — CLINT path)
-//   Test 2  Timer interrupt          (MTI — CLINT path)
+//   Test 1  Software interrupt       (MSI -- CLINT path)
+//   Test 2  Timer interrupt          (MTI -- CLINT path)
 //   Test 3  UART IRQ via CLIC        (MEI, standard vectored dispatch)
 //   Test 4  CLIC level field         (mintstatus.MIL tracks accepted level)
 //   Test 5  mintthresh filtering     (blocks IRQs below threshold)
-//   Test 6  CLIC Tail-chaining       (2 bytes → 2 handlers, 1 interrupt entry)
-//   Test 7  Fast vectored dispatch   (mtvt slot 0 → clic_fast_isr, no trap_entry)
+//   Test 6  CLIC Tail-chaining       (2 bytes -> 2 handlers, 1 interrupt entry)
+//   Test 7  Fast vectored dispatch   (mtvt slot 0 -> clic_fast_isr, no trap_entry)
 //
-// ── SoC wiring (rtl/jv32_soc.sv) ──────────────────────────────────────────
-//   UART irq output  →  ext_irq_i[0] | uart_irq  →  CLICINT[0]
-//   assign external_irq = clic_irq;          ← IMPORTANT: see note below
+// -- SoC wiring (rtl/jv32_soc.sv) ------------------------------------------
+//   UART irq output  ->  ext_irq_i[0] | uart_irq  ->  CLICINT[0]
+//   assign external_irq = clic_irq;          <- IMPORTANT: see note below
 //
-// ── CRITICAL: mtvt must be set before any CLIC external interrupt fires ─────
+// -- CRITICAL: mtvt must be set before any CLIC external interrupt fires -----
 //   jv32_csr.sv: when clic_irq fires, irq_pc = mtvt + clic_id * 4.
 //   jv32_soc.sv: external_irq = clic_irq, so mip[11] = clic_irq.
-//   If mtvt = 0 (reset value), irq_pc = 0x0000_0000 → instruction-access fault.
+//   If mtvt = 0 (reset value), irq_pc = 0x0000_0000 -> instruction-access fault.
 //   We therefore set mtvt to clic_std_table at the TOP of main() before
 //   enabling any CLIC external interrupt or global MIE.
 //
-// ── Tail-chain (rtl/jv32/core/jv32_csr.sv) ────────────────────────────────
+// -- Tail-chain (rtl/jv32/core/jv32_csr.sv) --------------------------------
 //   assign tail_chain_o = mret && clic_irq && (clic_level > mintthresh_reg);
 //   When tail_chain_o is asserted the CPU jumps to tail_chain_pc (= mtvt +
 //   clic_id*4) instead of returning to the preempted user code.  mepc is
@@ -40,7 +40,7 @@
 #include "jv_irq.h"
 #include "jv_uart.h"
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+// -- Configuration -------------------------------------------------------------
 #define UART_IRQ_LINE  0u       // UART ORed into ext_irq_i[0] in jv32_soc.sv
 #define TIMER_PERIOD   5000u    // MTI period in clock cycles
 
@@ -48,13 +48,13 @@
 // IRQ_LIMIT  : for interrupts that fire within a handful of cycles (MSI, MTI,
 //              and CLIC with bytes already in the RX FIFO).
 // UART_LIMIT : UART loopback byte arrives after ~6944 cycles at 115200 baud /
-//              80 MHz clock.  500000 gives a comfortable margin at CPI≈2.
+//              80 MHz clock.  500000 gives a comfortable margin at CPI~=2.
 #define IRQ_LIMIT   20000u
 #define UART_LIMIT  500000u
 
-// ── CLIC-specific CSR helpers ──────────────────────────────────────────────────
-// mtvt  (0x307) — CLIC vector-table base; hw zeroes bits[5:0] on write.
-// mintstatus (0xFB1) — [31:24]=MIL (current active interrupt level).
+// -- CLIC-specific CSR helpers --------------------------------------------------
+// mtvt  (0x307) -- CLIC vector-table base; hw zeroes bits[5:0] on write.
+// mintstatus (0xFB1) -- [31:24]=MIL (current active interrupt level).
 static inline void csr_write_mtvt(uint32_t v)
 {
     asm volatile("csrw 0x307, %0" :: "r"(v));
@@ -66,7 +66,7 @@ static inline uint32_t csr_read_mintstatus(void)
     return v;
 }
 
-// ── Pass / fail accounting ────────────────────────────────────────────────────
+// -- Pass / fail accounting ----------------------------------------------------
 static int g_pass, g_fail;
 
 static void check(const char *tag, int ok)
@@ -76,7 +76,7 @@ static void check(const char *tag, int ok)
     else    g_fail++;
 }
 
-// ── Bounded spin: wait until *cnt >= target or limit iterations ───────────────
+// -- Bounded spin: wait until *cnt >= target or limit iterations ---------------
 // The "memory" clobber prevents the compiler from hoisting *cnt out of the loop.
 static int wait_cnt(volatile uint32_t *cnt, uint32_t target, uint32_t limit)
 {
@@ -85,7 +85,7 @@ static int wait_cnt(volatile uint32_t *cnt, uint32_t target, uint32_t limit)
     return (*cnt >= target);
 }
 
-// ── UART helpers ──────────────────────────────────────────────────────────────
+// -- UART helpers --------------------------------------------------------------
 static void uart_drain(void)
 {
     for (uint32_t t = 0; jv_uart_rx_ready() && t < 1024u; t++)
@@ -119,14 +119,14 @@ static void uart_loopback_off(void)
 //   irq_pc = mtvt_reg + {clic_id, 2'b00}
 //
 // Each table entry is exactly 4 bytes (.option norvc forces 32-bit JAL).
-// 16 entries × 4 bytes = 64 bytes total → aligned(64) places the table at a
+// 16 entries x 4 bytes = 64 bytes total -> aligned(64) places the table at a
 // 64-byte boundary so mtvt CSR (which zeroes bits[5:0]) can address it exactly.
 //
 // Two tables are used:
-//   clic_std_table  — all 16 slots jump to trap_entry (standard dispatch)
-//                     used for Tests 3–6
-//   clic_fast_table — slot 0 jumps to clic_fast_isr  (fast ISR, Test 7)
-//                     slots 1–15 jump to trap_entry
+//   clic_std_table  -- all 16 slots jump to trap_entry (standard dispatch)
+//                     used for Tests 3-6
+//   clic_fast_table -- slot 0 jumps to clic_fast_isr  (fast ISR, Test 7)
+//                     slots 1-15 jump to trap_entry
 // =============================================================================
 extern void trap_entry(void);   // defined in common/startup.S
 
@@ -136,7 +136,7 @@ static void clic_std_table(void)
     asm volatile(
         ".option push\n\t"
         ".option norvc\n\t"         /* force 4-byte JAL for exact 4-byte slots */
-        "j trap_entry\n\t"          /* slot  0 — CLICINT[0]: UART              */
+        "j trap_entry\n\t"          /* slot  0 -- CLICINT[0]: UART              */
         "j trap_entry\n\t"          /* slot  1                                  */
         "j trap_entry\n\t"          /* slot  2                                  */
         "j trap_entry\n\t"          /* slot  3                                  */
@@ -158,7 +158,7 @@ static void clic_std_table(void)
 }
 
 // =============================================================================
-// Test 1 — Machine Software Interrupt (MSI, CLINT path)
+// Test 1 -- Machine Software Interrupt (MSI, CLINT path)
 // =============================================================================
 static volatile uint32_t msi_count;
 
@@ -170,7 +170,7 @@ static void msi_handler(uint32_t cause)
 }
 
 // =============================================================================
-// Test 2 — Machine Timer Interrupt (MTI, CLINT path)
+// Test 2 -- Machine Timer Interrupt (MTI, CLINT path)
 // =============================================================================
 static volatile uint32_t mti_count;
 
@@ -182,7 +182,7 @@ static void mti_handler(uint32_t cause)
 }
 
 // =============================================================================
-// Tests 3–5 — Machine External Interrupt (MEI, CLIC path)
+// Tests 3-5 -- Machine External Interrupt (MEI, CLIC path)
 //
 // When clic_irq fires the CPU jumps to clic_std_table[clic_id] = j trap_entry,
 // which saves context and calls jv_irq_dispatch(frame), which calls this handler
@@ -198,13 +198,13 @@ static void mei_handler(uint32_t cause)
     /* mintstatus[31:24] = MIL (current interrupt level); read before draining */
     mei_mil = (uint8_t)((csr_read_mintstatus() >> 24) & 0xFFu);
     (void)jv_uart_irq_status();     /* IS snapshot (level-triggered, no W1C effect) */
-    int c = jv_uart_getc();         /* drain one byte → deasserts uart_irq          */
+    int c = jv_uart_getc();         /* drain one byte -> deasserts uart_irq          */
     if (c >= 0) mei_rx = (uint8_t)c;
     mei_count++;
 }
 
 // =============================================================================
-// Test 6 — CLIC Tail-chain handler
+// Test 6 -- CLIC Tail-chain handler
 //
 // Drains EXACTLY ONE byte per invocation.  If the RX FIFO still contains data
 // after this handler's mret, uart_irq stays high, clic_irq stays high, and the
@@ -228,11 +228,11 @@ static void chain_handler(uint32_t cause)
 }
 
 // =============================================================================
-// Test 7 — Fast vectored ISR (entered directly via mtvt; bypasses trap_entry)
+// Test 7 -- Fast vectored ISR (entered directly via mtvt; bypasses trap_entry)
 //
 // __attribute__((interrupt("machine"))) instructs GCC to:
-//   • Generate a prologue that saves all caller-saved regs (and any others used)
-//   • Terminate the function with mret instead of ret
+//   * Generate a prologue that saves all caller-saved regs (and any others used)
+//   * Terminate the function with mret instead of ret
 // The CPU jumps here directly from mtvt + clic_id*4 (clic_fast_table slot 0).
 // trap_entry's full save/restore is completely bypassed.
 // =============================================================================
@@ -248,7 +248,7 @@ static void clic_fast_isr(void)
     fast_count++;
 }
 
-// Fast-dispatch table: slot 0 → clic_fast_isr, slots 1–15 → trap_entry.
+// Fast-dispatch table: slot 0 -> clic_fast_isr, slots 1-15 -> trap_entry.
 // clic_fast_isr must be defined before this table in the translation unit.
 __attribute__((naked, aligned(64), used))
 static void clic_fast_table(void)
@@ -256,8 +256,8 @@ static void clic_fast_table(void)
     asm volatile(
         ".option push\n\t"
         ".option norvc\n\t"
-        "j clic_fast_isr\n\t"       /* slot  0 — UART fast ISR                 */
-        "j trap_entry\n\t"          /* slot  1 – 15 fallback                   */
+        "j clic_fast_isr\n\t"       /* slot  0 -- UART fast ISR                 */
+        "j trap_entry\n\t"          /* slot  1 - 15 fallback                   */
         "j trap_entry\n\t"
         "j trap_entry\n\t"
         "j trap_entry\n\t"
@@ -282,26 +282,26 @@ static void clic_fast_table(void)
 // =============================================================================
 int main(void)
 {
-    // ── Global CLIC setup ──────────────────────────────────────────────────
+    // -- Global CLIC setup --------------------------------------------------
     // MUST be done before enabling any CLIC interrupt or global MIE.
     // jv32_soc.sv:  external_irq = clic_irq
     // jv32_csr.sv:  when clic_irq fires, irq_pc = mtvt + clic_id * 4
-    // Without a valid mtvt the CPU would jump to 0x0 → instruction-access fault.
+    // Without a valid mtvt the CPU would jump to 0x0 -> instruction-access fault.
     csr_write_mtvt((uint32_t)(uintptr_t)clic_std_table);
     write_csr_mintthresh(0x00u);    /* accept all CLIC levels initially */
 
     printf("============================================================\n");
     printf("  CLIC Comprehensive Test\n");
-    printf("  UART → CLICINT[0]  |  tail-chain + fast vectored dispatch\n");
+    printf("  UART -> CLICINT[0]  |  tail-chain + fast vectored dispatch\n");
     printf("============================================================\n\n");
 
-    // ── Test 1: Software Interrupt (MSI) ──────────────────────────────────
+    // -- Test 1: Software Interrupt (MSI) ----------------------------------
     printf("[Test 1] Software Interrupt (MSI)\n");
     {
         jv_irq_register(JV_CAUSE_MSI, msi_handler);
         jv_clic_msip_irq_enable();
         jv_clic_msip_set();             /* MSIP = 1 while MIE=0: no interrupt yet */
-        jv_irq_enable();                /* csrrsi mstatus,8 → MSI fires here (safe re-exec) */
+        jv_irq_enable();                /* csrrsi mstatus,8 -> MSI fires here (safe re-exec) */
         wait_cnt(&msi_count, 1, IRQ_LIMIT);
         jv_irq_disable();
         jv_clic_msip_irq_disable();
@@ -311,7 +311,7 @@ int main(void)
     }
     printf("\n");
 
-    // ── Test 2: Timer Interrupt (MTI) ─────────────────────────────────────
+    // -- Test 2: Timer Interrupt (MTI) -------------------------------------
     printf("[Test 2] Timer Interrupt (MTI)\n");
     {
         jv_irq_register(JV_CAUSE_MTI, mti_handler);
@@ -328,7 +328,7 @@ int main(void)
     }
     printf("\n");
 
-    // ── Test 3: UART IRQ via CLIC external line 0 (level = 0x80) ──────────
+    // -- Test 3: UART IRQ via CLIC external line 0 (level = 0x80) ----------
     printf("[Test 3] UART IRQ via CLIC external line %u (MEI, level=0x80)\n",
            UART_IRQ_LINE);
     {
@@ -347,7 +347,7 @@ int main(void)
     }
     printf("\n");
 
-    // ── Test 4: CLIC level field — mintstatus.MIL tracks accepted level ───
+    // -- Test 4: CLIC level field -- mintstatus.MIL tracks accepted level ---
     printf("[Test 4] CLIC level field (mintstatus.MIL, level=0x60)\n");
     {
         uint32_t before = mei_count;
@@ -366,18 +366,18 @@ int main(void)
     }
     printf("\n");
 
-    // ── Test 5: mintthresh filtering ──────────────────────────────────────
+    // -- Test 5: mintthresh filtering --------------------------------------
     printf("[Test 5] mintthresh filtering (CLICINT[0] level=0x40, threshold=0x80)\n");
     {
         uint32_t before = mei_count;
 
-        /* Part A — IRQ blocked: level 0x40 is NOT > mintthresh 0x80 */
+        /* Part A -- IRQ blocked: level 0x40 is NOT > mintthresh 0x80 */
         write_csr_mintthresh(0x80u);
         uart_loopback_on(0x40);
         jv_irq_enable();
         jv_uart_putc('C');
         /* Spin long enough for the UART byte to arrive in RX FIFO but NOT    *
-         * enough for the (blocked) interrupt to fire.  50 000 iterations ≈   *
+         * enough for the (blocked) interrupt to fire.  50 000 iterations ~=   *
          * 100 000 cycles >> 8680 cycles (one UART byte at 115200 / 100 MHz). */
         for (uint32_t t = 0; t < 50000u; t++)
             asm volatile("nop" ::: "memory");
@@ -391,7 +391,7 @@ int main(void)
         check("[5a] IRQ blocked (level 0x40 <= mintthresh 0x80)", blocked);
         check("[5b] CLICINT[0].ip set (IRQ pending in CLIC)",      ip_set);
 
-        /* Part B — lower threshold → pending IRQ fires immediately */
+        /* Part B -- lower threshold -> pending IRQ fires immediately */
         before = mei_count;
         write_csr_mintthresh(0x00u);
         jv_irq_enable();
@@ -399,28 +399,28 @@ int main(void)
         jv_irq_disable();
         uart_loopback_off();
 
-        printf("  mintthresh=0x00 → pending IRQ fires:\n");
+        printf("  mintthresh=0x00 -> pending IRQ fires:\n");
         printf("    mei_rx = '%c'  (expected 'C')\n", mei_rx);
         check("[5c] IRQ fires after mintthresh lowered",   mei_count == before + 1u);
         check("[5d] Pending byte 'C' received",            mei_rx == 'C');
     }
     printf("\n");
 
-    // ── Test 6: CLIC Tail-chaining ────────────────────────────────────────
-    printf("[Test 6] CLIC Tail-chaining (2 bytes → 1 interrupt entry → 2 handlers)\n");
+    // -- Test 6: CLIC Tail-chaining ----------------------------------------
+    printf("[Test 6] CLIC Tail-chaining (2 bytes -> 1 interrupt entry -> 2 handlers)\n");
     //
     // Tail-chain sequence:
     //   1. Both bytes sent to UART TX FIFO; loopback copies them to RX FIFO.
     //   2. Wait until RX FIFO holds 2 bytes (JV_UART_LEVEL[15:0] >= 2).
-    //   3. Enable CLICINT[0].ie → clic_irq immediately high.
-    //   4. Enable MIE → interrupt fires: chain_handler drains byte 0 ('E').
+    //   3. Enable CLICINT[0].ie -> clic_irq immediately high.
+    //   4. Enable MIE -> interrupt fires: chain_handler drains byte 0 ('E').
     //   5. mret: RX FIFO still has byte 1 ('F'), uart_irq = 1, clic_irq = 1.
     //      tail_chain_o = mret && clic_irq && clic_level(0x80) > mintthresh(0) = 1.
     //      Hardware jumps to tail_chain_pc = clic_std_table[0] = j trap_entry.
     //   6. chain_handler drains byte 1 ('F'), chain_count = 2.
-    //   7. mret: RX empty, clic_irq = 0, tail_chain_o = 0 → return to user code.
+    //   7. mret: RX empty, clic_irq = 0, tail_chain_o = 0 -> return to user code.
     //
-    // The user code was only interrupted ONCE (steps 4–7 appear atomic to it).
+    // The user code was only interrupted ONCE (steps 4-7 appear atomic to it).
     {
         chain_count = 0;
         chain_rx[0] = chain_rx[1] = '\0';
@@ -466,26 +466,26 @@ int main(void)
 
         printf("  chain_count  = %lu  (expected 2: two tail-chained invocations)\n",
                (unsigned long)chain_count);
-        printf("  chain_rx[0]  = '%c'  (expected 'E' — first  handler)\n", chain_rx[0]);
-        printf("  chain_rx[1]  = '%c'  (expected 'F' — tail-chained handler)\n",
+        printf("  chain_rx[0]  = '%c'  (expected 'E' -- first  handler)\n", chain_rx[0]);
+        printf("  chain_rx[1]  = '%c'  (expected 'F' -- tail-chained handler)\n",
                chain_rx[1]);
         check("[6a] chain_count == 2 (two handlers via tail-chain)",  chain_count == 2u);
-        check("[6b] First  byte 'E' — initial interrupt",             chain_rx[0] == 'E');
-        check("[6c] Second byte 'F' — delivered by tail-chain",       chain_rx[1] == 'F');
+        check("[6b] First  byte 'E' -- initial interrupt",             chain_rx[0] == 'E');
+        check("[6c] Second byte 'F' -- delivered by tail-chain",       chain_rx[1] == 'F');
 
         /* Restore standard MEI handler for Test 7 */
         jv_irq_register(JV_CAUSE_MEI, mei_handler);
     }
     printf("\n");
 
-    // ── Test 7: Fast vectored dispatch via mtvt ───────────────────────────
+    // -- Test 7: Fast vectored dispatch via mtvt ---------------------------
     printf("[Test 7] Fast vectored dispatch via mtvt (clic_fast_isr)\n");
     //
     // Switch mtvt to clic_fast_table where slot 0 jumps directly to
     // clic_fast_isr.  The GCC interrupt("machine") attribute gives clic_fast_isr
     // its own prologue/epilogue with mret; trap_entry is completely bypassed.
     // Verify by checking that mei_count (incremented only by mei_handler, which
-    // is only reachable through trap_entry → jv_irq_dispatch) did not change.
+    // is only reachable through trap_entry -> jv_irq_dispatch) did not change.
     {
         uint32_t mei_before = mei_count;
         uint32_t vt = (uint32_t)(uintptr_t)clic_fast_table;
@@ -510,7 +510,7 @@ int main(void)
     }
     printf("\n");
 
-    // ── Summary ───────────────────────────────────────────────────────────────
+    // -- Summary ---------------------------------------------------------------
     int total = g_pass + g_fail;
     printf("============================================================\n");
     printf("  %d / %d checks PASSED\n", g_pass, total);

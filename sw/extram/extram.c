@@ -88,7 +88,7 @@ int main(void)
     volatile int32_t   *ps32;
 
     /* ==================================================================
-     * 1. uint32_t (int) word R/W — 16 sequential words
+     * 1. uint32_t (int) word R/W -- 16 sequential words
      * ================================================================== */
     section("1. uint32 word R/W");
     pu32 = (volatile uint32_t *)(uintptr_t)SCRATCH;
@@ -99,7 +99,7 @@ int main(void)
     section_done();
 
     /* ==================================================================
-     * 2. uint8_t (unsigned char) byte R/W — byte lanes + word readback
+     * 2. uint8_t (unsigned char) byte R/W -- byte lanes + word readback
      * ================================================================== */
     section("2. uint8 byte R/W");
     pu8 = (volatile uint8_t *)(uintptr_t)(SCRATCH + 0x40u);
@@ -134,7 +134,7 @@ int main(void)
     section_done();
 
     /* ==================================================================
-     * 4. int8_t (signed char) R/W — LB sign extension
+     * 4. int8_t (signed char) R/W -- LB sign extension
      * ================================================================== */
     section("4. int8 signed char R/W (LB)");
     ps8 = (volatile int8_t *)(uintptr_t)(SCRATCH + 0x60u);
@@ -149,7 +149,7 @@ int main(void)
     section_done();
 
     /* ==================================================================
-     * 5. int16_t (signed short) R/W — LH sign extension
+     * 5. int16_t (signed short) R/W -- LH sign extension
      * ================================================================== */
     section("5. int16 signed short R/W (LH)");
     ps16 = (volatile int16_t *)(uintptr_t)(SCRATCH + 0x70u);
@@ -205,7 +205,7 @@ int main(void)
     section_done();
 
     /* ==================================================================
-     * 8. Read-Modify-Write — write word, overwrite individual bytes,
+     * 8. Read-Modify-Write -- write word, overwrite individual bytes,
      *    verify the full word is updated correctly
      * ================================================================== */
     section("8. read-modify-write (byte into word)");
@@ -231,7 +231,7 @@ int main(void)
     section_done();
 
     /* ==================================================================
-     * 9. Sequential fill — 256 words with incrementing pattern, then
+     * 9. Sequential fill -- 256 words with incrementing pattern, then
      *    verify all, then overwrite with inverted pattern and verify again
      * ================================================================== */
     section("9. sequential fill (256 words)");

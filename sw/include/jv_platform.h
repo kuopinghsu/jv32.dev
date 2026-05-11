@@ -66,9 +66,9 @@
 #define JV_UART_CAP_OFF     0x18U /**< Capability (RO): [31:16]=version,[15:8]=RX depth,[7:0]=TX depth */
 
 /* STATUS bits */
-#define JV_UART_ST_TX_BUSY    (1u << 0) /**< TX FIFO full — do not write          */
+#define JV_UART_ST_TX_BUSY    (1u << 0) /**< TX FIFO full -- do not write          */
 #define JV_UART_ST_TX_FULL    (1u << 1) /**< TX FIFO full (alias for TX_BUSY)     */
-#define JV_UART_ST_RX_READY   (1u << 2) /**< RX FIFO not empty — byte available   */
+#define JV_UART_ST_RX_READY   (1u << 2) /**< RX FIFO not empty -- byte available   */
 #define JV_UART_ST_RX_OVERRUN (1u << 3) /**< RX FIFO full (incoming bytes lost)   */
 
 /* IE / IS bits */
@@ -76,7 +76,7 @@
 #define JV_UART_IE_TX_EMPTY (1u << 1) /**< Interrupt on TX FIFO drained         */
 
 /* CTRL bits */
-#define JV_UART_CTRL_LOOPBACK (1u << 0) /**< Internal TX→RX loopback             */
+#define JV_UART_CTRL_LOOPBACK (1u << 0) /**< Internal TX->RX loopback             */
 
 /* Register accessors */
 #define JV_UART_DATA   JV_REG32(JV_UART_BASE, JV_UART_DATA_OFF)
@@ -105,7 +105,7 @@
 #define JV_CLIC_INT_OFF(n)        (0x1000U + (unsigned)(n) * 4U)
 
 /* CLICINT bit fields */
-#define JV_CLICINT_IP           (1u << 0)  /**< Interrupt pending (RO — mirrors ext_irq_i[n]) */
+#define JV_CLICINT_IP           (1u << 0)  /**< Interrupt pending (RO -- mirrors ext_irq_i[n]) */
 #define JV_CLICINT_IE           (1u << 1)  /**< Interrupt enable                              */
 #define JV_CLICINT_CTL_SHIFT    16         /**< Priority/level field shift                    */
 #define JV_CLICINT_CTL_MASK     (0xFFu << 16) /**< Priority/level field mask                 */
@@ -120,10 +120,10 @@
 #define JV_CLICINT(n)       JV_REG32(JV_CLIC_BASE, JV_CLIC_INT_OFF(n))
 
 /* ============================================================================
- * Magic device  (JV_MAGIC_BASE = 0x4000_0000)  — simulation only
+ * Magic device  (JV_MAGIC_BASE = 0x4000_0000)  -- simulation only
  * ============================================================================ */
 
-#define JV_MAGIC_CONSOLE_OFF  0x0000U /**< Write low byte → host stdout         */
+#define JV_MAGIC_CONSOLE_OFF  0x0000U /**< Write low byte -> host stdout         */
 #define JV_MAGIC_EXIT_OFF     0x0004U /**< Write to exit sim; 1=PASS, N=FAIL(N) */
 
 #define JV_MAGIC_CONSOLE  JV_REG32(JV_MAGIC_BASE, JV_MAGIC_CONSOLE_OFF)
@@ -182,7 +182,7 @@ static inline void jv_putc_raw(char c)
 
 /**
  * Raw backend: signal simulation exit via Magic device.
- * Encoding: pass (code==0) → write 1; fail (code≠0) → write (code<<1)|1.
+ * Encoding: pass (code==0) -> write 1; fail (code!=0) -> write (code<<1)|1.
  * This function never returns.
  * @param code  Exit code (0=PASS, non-zero=FAIL).
  */

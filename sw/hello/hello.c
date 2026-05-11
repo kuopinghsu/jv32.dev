@@ -1,7 +1,7 @@
 /* ============================================================================
  * File: sw/hello/hello.c
  * Project: JV32 RISC-V Processor
- * Description: Hello World test — uses JV SDK
+ * Description: Hello World test -- uses JV SDK
  * ============================================================================ */
 
 #include "jv_platform.h"

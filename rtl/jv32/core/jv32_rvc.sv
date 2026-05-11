@@ -112,7 +112,7 @@ module jv32_rvc #(
     logic [ 3:0] zcmp_det_total;    // total micro-ops for this instruction
 
     // Map 3-bit s-register encoding to 5-bit GPR number
-    // 0→s0(x8), 1→s1(x9), 2→s2(x18), 3→s3(x19), 4→s4(x20), 5→s5(x21), 6→s6(x22), 7→s7(x23)
+    // 0->s0(x8), 1->s1(x9), 2->s2(x18), 3->s3(x19), 4->s4(x20), 5->s5(x21), 6->s6(x22), 7->s7(x23)
     function automatic logic [4:0] zcmp_sreg_to_gpr(input logic [2:0] s);
         case (s)
             3'd0:    zcmp_sreg_to_gpr = 5'd8;   // s0
@@ -147,18 +147,18 @@ module jv32_rvc #(
     endfunction
 
     // Compute stack adjustment from rlist value (4-bit field from CI[7:4])
-    // rlist 4-7 → min=16, 8-11 → min=32, 12-14 → min=48, 15 → min=64
+    // rlist 4-7 -> min=16, 8-11 -> min=32, 12-14 -> min=48, 15 -> min=64
     function automatic logic [7:0] zcmp_min_stack(input logic [3:0] rlist);
         case (rlist[3:2])
             2'b01:   zcmp_min_stack = 8'd16;                             // rlist 4-7
             2'b10:   zcmp_min_stack = 8'd32;                             // rlist 8-11
-            2'b11:   zcmp_min_stack = (rlist == 4'd15) ? 8'd64 : 8'd48;  // 12-14 → 48, 15 → 64
+            2'b11:   zcmp_min_stack = (rlist == 4'd15) ? 8'd64 : 8'd48;  // 12-14 -> 48, 15 -> 64
             default: zcmp_min_stack = 8'd0;                              // rlist 0-3: reserved/invalid
         endcase
     endfunction
 
     // Compute number of registers from rlist (4-bit)
-    // rlist 4 → 1 reg, rlist r → r-3 regs; max rlist=15 → 12 regs
+    // rlist 4 -> 1 reg, rlist r -> r-3 regs; max rlist=15 -> 12 regs
     function automatic logic [3:0] zcmp_rcount_f(input logic [3:0] rlist);
         zcmp_rcount_f = (rlist < 4'd4) ? 4'd0 : (rlist - 4'd3);
     endfunction
@@ -412,7 +412,7 @@ module jv32_rvc #(
     // sp offset for save/restore index i (0=ra slot):  sp + (sadj - 4*(i+1))
     // The function returns the signed 12-bit immediate for the S/L instruction.
     function automatic logic [11:0] zcmp_sp_off(input logic [7:0] sadj, input logic [3:0] idx);
-        // sadj - 4*(idx+1); sadj is at most 64, idx at most 12 → always positive (≤60)
+        // sadj - 4*(idx+1); sadj is at most 64, idx at most 12 -> always positive (<=60)
         zcmp_sp_off = {4'b0, sadj} - 12'({4'b0, idx} + 12'd1) * 12'd4;
     endfunction
 
@@ -449,9 +449,9 @@ module jv32_rvc #(
 
     // Decode a Zcmp CI word into a 3-bit op code (same encoding as zcmp_op):
     //   push/pop variants (ci[12]=1):
-    //     ci[11:10]=10 (bits[15:10]=101110): ci[9:8]=00→push(000), ci[9:8]=10→pop(001)
-    //     ci[11:10]=11 (bits[15:10]=101111): ci[9:8]=00→popretz(011), ci[9:8]=10→popret(010)
-    //   mv variants (ci[12]=0): ci[11:10]=11, ci[6]=0→mvsa01(100), ci[6]=1→mva01s(101)
+    //     ci[11:10]=10 (bits[15:10]=101110): ci[9:8]=00->push(000), ci[9:8]=10->pop(001)
+    //     ci[11:10]=11 (bits[15:10]=101111): ci[9:8]=00->popretz(011), ci[9:8]=10->popret(010)
+    //   mv variants (ci[12]=0): ci[11:10]=11, ci[6]=0->mvsa01(100), ci[6]=1->mva01s(101)
     /* verilator lint_off UNUSEDSIGNAL */  // quadrant/funct3 bits validated by is_zcmp already
     function automatic logic [2:0] zcmp_decode_op(input logic [15:0] ci);
         if (ci[12]) begin
@@ -743,7 +743,7 @@ module jv32_rvc #(
                 zcmp_det_sreg2   = eff_data[4:2];
                 zcmp_det_pc      = eff_pc;
                 // After sequence, hold has eff_data[31:16] (parked next cycle).
-                // The hold path will then handle the next instr with hold_from_split=0 → mr=1.
+                // The hold path will then handle the next instr with hold_from_split=0 -> mr=1.
                 // So the Zcmp last micro-op: mem_ready=0, let hold take over.
                 // BUT if upper half is a split32 lower part ([17:16]==11), after the Zcmp
                 // sequence hold_valid=1 (split32 hold), and that will drive mem_ready=1 next.

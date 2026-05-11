@@ -8,7 +8,7 @@
 //   - MTI (Machine Timer Interrupt, cause=7):  outer, lower-priority
 //   - MSI (Machine Software Interrupt, cause=3): inner, higher-priority
 //
-// Nesting mechanism — WFI-based:
+// Nesting mechanism -- WFI-based:
 //   The MTI ISR re-arms the timer, disables MTIE (prevents re-entrant MTI),
 //   arms the software interrupt (MSIP=1), re-enables MIE, then executes WFI.
 //   Since MSI is already pending, the nested MSI ISR runs immediately and
@@ -19,14 +19,14 @@
 //   1. Re-arm timer (mtimecmp += TIMER0_PERIOD); t0_entry_count++
 //   2. Disable MTIE  (prevents a second timer interrupt from re-entering)
 //   3. Set MSIP=1    (arm the inner interrupt)
-//   4. Re-enable MIE → nested MSI fires immediately
+//   4. Re-enable MIE -> nested MSI fires immediately
 //   5. WFI           (acts as NOP since MSI is already pending/handled)
-//   6. csrrci mstatus,8  → close nesting window; t0_exit_count++
+//   6. csrrci mstatus,8  -> close nesting window; t0_exit_count++
 //   7. Re-enable MTIE for the next round
 //
 // MSI ISR path (inner, nested inside MTI):
 //   1. Clear MSIP; t1_count++
-//   2. If t0_entry_count > t0_exit_count → nested_count++
+//   2. If t0_entry_count > t0_exit_count -> nested_count++
 //
 // Pass criteria:
 //   - t1_count >= 4                                      (MSI fired several times)
@@ -41,20 +41,20 @@
 #include "jv_clic.h"
 #include "jv_irq.h"
 
-// ── Timer period ───────────────────────────────────────────────────────────
+// -- Timer period -----------------------------------------------------------
 // Must be large enough for the MTI ISR to complete (re-arm + nested MSI + cleanup).
 // In RTL simulation the startup.S trap handler saves/restores ~28 registers;
 // each register access is 1-2 cycles over TCM, so the combined handler overhead
 // is roughly 200-300 cycles.  5000 provides comfortable headroom.
 #define TIMER0_PERIOD  5000u
 
-// ── Shared state (touched by ISRs) ────────────────────────────────────────
+// -- Shared state (touched by ISRs) ----------------------------------------
 static volatile uint32_t t0_entry_count = 0;
 static volatile uint32_t t0_exit_count  = 0;
 static volatile uint32_t t1_count       = 0;
 static volatile uint32_t nested_count   = 0;
 
-// ── MTI handler (outer) ────────────────────────────────────────────────────
+// -- MTI handler (outer) ----------------------------------------------------
 static void mti_handler(uint32_t cause)
 {
     (void)cause;
@@ -87,7 +87,7 @@ static void mti_handler(uint32_t cause)
     jv_clic_timer_irq_enable();
 }
 
-// ── MSI handler (inner, nested inside MTI) ────────────────────────────────
+// -- MSI handler (inner, nested inside MTI) --------------------------------
 static void msi_handler(uint32_t cause)
 {
     (void)cause;
@@ -101,7 +101,7 @@ static void msi_handler(uint32_t cause)
         nested_count++;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────
+// -- Main ------------------------------------------------------------------
 int main(void)
 {
     int pass = 0, fail = 0;
@@ -112,9 +112,6 @@ int main(void)
     printf("  Inner: MSI (machine software interrupt)\n");
     printf("============================================================\n\n");
 
-    // Arm the timer for the first MTI.
-    jv_clic_timer_set_rel(TIMER0_PERIOD);
-
     // Register handlers.
     jv_irq_register(JV_CAUSE_MTI, mti_handler);
     jv_irq_register(JV_CAUSE_MSI, msi_handler);
@@ -122,18 +119,21 @@ int main(void)
     // Enable MTI and MSI sources in mie.
     jv_irq_source_enable(JV_IRQ_MTIE | JV_IRQ_MSIE);
 
+    // Arm the timer for the first MTI.
+    jv_clic_timer_set_rel(TIMER0_PERIOD);
+
+    // Keep all semihost/printf traffic out of the interrupt-active window.
+    // This makes the test behavior stable across magic and semihost backends.
+    printf("[TEST] Waiting for nested interrupts to occur...\n");
+
     // Enable global interrupts.
     jv_irq_enable();
 
-    printf("[TEST] Waiting for nested interrupts to occur...\n");
-
     // Wait until MTI has completed at least 4 times (and MSI at least 4 times),
-    // or a safety timeout expires.
-    // With TIMER0_PERIOD=5000 success arrives in ~20 000 cycles; 2 000 000
-    // nop iterations is a generous safety net that still keeps simulation short.
-    uint32_t timeout = 0;
-    while ((t0_exit_count < 4 || t1_count < 4) && timeout < 2000000u) {
-        timeout++;
+    // or a safety timeout (in hardware timer cycles) expires.
+    // Using mtime avoids backend-dependent instruction timing effects.
+    uint64_t deadline = jv_clic_mtime() + 2000000ull;
+    while ((t0_exit_count < 4 || t1_count < 4) && jv_clic_mtime() < deadline) {
         asm volatile("nop");
     }
 
@@ -198,8 +198,8 @@ int main(void)
 
     // Signal exit to simulator using proper HTIF encoding.
     // jv_exit() handles the encoding automatically:
-    //   code == 0 → write 1 (success)
-    //   code != 0 → write (code<<1)|1 (failure)
+    //   code == 0 -> write 1 (success)
+    //   code != 0 -> write (code<<1)|1 (failure)
     jv_exit(fail);
 }
 

@@ -385,7 +385,7 @@ def annotate(
     # ── Die outline ─────────────────────────────────────────────────────────
     tl = um_to_px(dx0, dy1)
     br = um_to_px(dx1, dy0)
-    draw.rectangle([tl, br], outline=(50, 50, 50), width=3)
+    draw.rectangle([tl, br], outline=(35, 95, 220), width=5)
 
     # ── Standard-cell row region: salmon background fill ────────────────────
     if def_data["rows"]:
@@ -404,35 +404,34 @@ def annotate(
         draw = ImageDraw.Draw(canvas)
 
     # ── SRAM macro boundaries ───────────────────────────────────────────────
-    SRAM_COLORS = {
-        "dram": (30, 100, 200),
-        "iram": (200, 110, 30),
-    }
-    SRAM_DEFAULT = (80, 80, 180)
+    SRAM_COLOR = (40, 170, 70)
+
+    missing = sorted(
+        cell for cell in {macro["cell"] for macro in def_data["macros"]}
+        if cell not in macro_sizes
+    )
+    if missing:
+        raise RuntimeError(
+            "Missing SRAM macro dimensions for: " + ", ".join(missing) +
+            ". Pass --lef-dir pointing to the OpenRAM/Nangate LEF directory."
+        )
 
     for macro in def_data["macros"]:
         cell = macro["cell"]
-        size = macro_sizes.get(cell)
-        if size is None:
-            # Default SRAM size for Nangate 45nm sram_1rw_2048x32 (from LEF: SIZE 192.825 BY 2830.945)
-            size = (192.825, 2830.945)
+        size = macro_sizes[cell]
         mw, mh = size
         mx0, my0 = macro["x"], macro["y"]
         mx1, my1 = mx0 + mw, my0 + mh
 
-        grp = "dram" if "dram" in macro["name"].lower() else \
-              "iram" if "iram" in macro["name"].lower() else "other"
-        color = SRAM_COLORS.get(grp, SRAM_DEFAULT)
-
         tl3 = um_to_px(mx0, my1)
         br3 = um_to_px(mx1, my0)
         # White fill (SRAM interior is blank — no routing through macros)
-        draw.rectangle([tl3, br3], fill=(255, 255, 255), outline=color, width=3)
+        draw.rectangle([tl3, br3], fill=(255, 255, 255), outline=SRAM_COLOR, width=5)
 
         # Label in centre
         cx_px, cy_px = um_to_px((mx0 + mx1) / 2, (my0 + my1) / 2)
-        lbl = grp.upper() if grp != "other" else cell[:10]
-        draw.text((cx_px, cy_px), lbl, fill=color, font=font_sm, anchor="mm" if font_sm else None)
+        lbl = "SRAM"
+        draw.text((cx_px, cy_px), lbl, fill=SRAM_COLOR, font=font_sm, anchor="mm" if font_sm else None)
 
     # ── Scale bar ───────────────────────────────────────────────────────────
     bar_um = 200.0  # 200 µm scale bar
@@ -477,10 +476,9 @@ def annotate(
                 break
 
         # SRAM legend entries
-        for grp, color in SRAM_COLORS.items():
-            draw.rectangle([lx, ly, lx + 18, ly + 14], outline=color, width=2)
-            draw.text((lx + 24, ly), grp.upper() + " SRAM", fill=(40, 40, 40), font=font_sm)
-            ly += 20
+        draw.rectangle([lx, ly, lx + 18, ly + 14], outline=SRAM_COLOR, width=2)
+        draw.text((lx + 24, ly), "SRAM macro", fill=(40, 40, 40), font=font_sm)
+        ly += 20
 
     return canvas
 

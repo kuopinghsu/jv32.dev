@@ -26,6 +26,8 @@ export RISCV_PREFIX
 export VERILATOR
 export VERIBLE
 export VERIBLE_FORMAT
+JV_IO_BACKEND ?= semihost
+export JV_IO_BACKEND
 export RV32E_EN
 export RV32M_EN
 export AMO_EN

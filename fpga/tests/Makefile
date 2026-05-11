@@ -77,8 +77,7 @@ help:
 	@echo "Load on FPGA via OpenOCD (cJTAG):"
 	@echo '  openocd -f fpga/jtag/jv32_fpga_cjtag.cfg \'
 	@echo '          -c "program build/fpga-stress.elf verify reset exit"'
-	@echo '  # default runtime log output uses semihosting over the OpenOCD debug connection'
-	@echo '  # override with JV_IO_BACKEND=uart to route jv_putc() through the AXI UART'
+	@echo '  # override with JV_IO_BACKEND=uart for a pure UART backend'
 
 build: $(OUTPUT)
 

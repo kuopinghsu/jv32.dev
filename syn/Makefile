@@ -269,6 +269,7 @@ TCM_PARAMS_YAML  := $(BUILD_DIR)/tcm_params.yaml
 SYNTH_LOCK_DIR   := $(BUILD_DIR)/.synth.lock
 RESUME           ?= 0
 OPENLANE_FROM    ?=
+MACRO_PLACEMENT_SRC := $(OPENLANE_DIR)/macro_placement.cfg
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -282,12 +283,17 @@ synth: check $(BUILD_DIR)
 	@echo "  PDK     : $(PDK) (Nangate 45nm)"
 	@echo "  PDK_ROOT: $(PDK_ROOT)"
 	@echo "  Config  : $(OPENLANE_DIR)/config.yaml"
+	@echo "  Macro placement file   : $(MACRO_PLACEMENT_SRC)"
 	@echo "  IRAM    : $(IRAM_BANKS) × 8 KB = $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) KB"
 	@echo "  DRAM    : $(DRAM_BANKS) × 8 KB = $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) KB"
 	@echo "========================================"
 	@if [ ! -f "$(SRAM_LEF)" ]; then \
 	    echo "ERROR: SRAM macro LEF not found: $(SRAM_LEF)"; \
 	    echo "       Run 'make gen-mem' before 'make synth'."; \
+	    exit 1; \
+	fi
+	@if [ ! -f "$(MACRO_PLACEMENT_SRC)" ]; then \
+	    echo "ERROR: macro placement file not found: $(MACRO_PLACEMENT_SRC)"; \
 	    exit 1; \
 	fi
 	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
@@ -298,7 +304,7 @@ synth: check $(BUILD_DIR)
 	@# Since tcm_params.yaml lives in BUILD_DIR, copy the path-referenced
 	@# files there so OpenLane finds them.
 	@cp $(OPENLANE_DIR)/jv32_soc_pnr.sdc  $(BUILD_DIR)/jv32_soc_pnr.sdc
-	@cp $(OPENLANE_DIR)/macro_placement.cfg $(BUILD_DIR)/macro_placement.cfg
+	@cp $(MACRO_PLACEMENT_SRC) $(BUILD_DIR)/macro_placement.cfg
 	@( \
 	    if ! mkdir $(SYNTH_LOCK_DIR) 2>/dev/null; then \
 	        echo "ERROR: another 'make synth' is already running (lock: $(SYNTH_LOCK_DIR))"; \

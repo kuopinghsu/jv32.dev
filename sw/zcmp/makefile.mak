@@ -4,3 +4,4 @@
 # .hword immediates, so GCC/GNU-as does not need to see _zcmp in -march
 # to assemble them.  This file is kept as a placeholder so the pattern is
 # consistent with other extension tests (e.g. sw/zb_ext/makefile.mak).
+

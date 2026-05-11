@@ -17,7 +17,7 @@ zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../sw/include)
 zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/../../sw/common/jv_io_${JV32_IO_BACKEND}.c)
 
 # Zephyr's default RISC-V trap path does not emulate semihost ebreak marker
-# calls; use raw magic behavior for semihost backend on this board.
+# calls; use raw magic behavior for semihost-like backends on this board.
 if(JV32_IO_BACKEND STREQUAL "semihost")
     zephyr_compile_definitions(JV_SEMIHOST_ENABLE=0)
 endif()

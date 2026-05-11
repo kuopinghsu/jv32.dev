@@ -1969,14 +1969,21 @@ static void step() {
             if      (sys_imm == 0x000) { // ECALL
                 exc_pending = true; exc_cause = CAUSE_ECALL_M; exc_tval = 0;
             } else if (sys_imm == 0x001) { // EBREAK
-                if (semihost_is_call_site(instr_pc) && !g_hints_loaded) {
-                    // RISC-V semihosting v1.0 call sequence:
-                    //   slli x0,x0,0x1f ; ebreak ; srai x0,x0,7
-                    // Treat as a host call instead of raising breakpoint trap.
-                    // In compare mode (RTL hints loaded), do NOT short-circuit
-                    // here: RTL takes the breakpoint trap path and executes the
-                    // software trap handler sequence before exit.
-                    (void)semihost_handle_call();
+                if (semihost_is_call_site(instr_pc)) {
+                    if (!g_hints_loaded) {
+                        // Pure SW-sim mode: handle semihost natively (no trap).
+                        (void)semihost_handle_call();
+                    } else {
+                        // Compare mode (RTL hints): raise the breakpoint trap so
+                        // the SW trap handler executes and the trace matches RTL.
+                        // For EXIT ops also handle here so the simulation stops
+                        // (the SW trap handler no longer writes to magic device).
+                        uint32_t op = regs[10]; // a0 = semihost op code
+                        if (op == SEMIHOST_SYS_EXIT || op == SEMIHOST_SYS_EXIT_EXTENDED) {
+                            (void)semihost_handle_call(); // sets running=false
+                        }
+                        exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
+                    }
                 } else {
                     exc_pending = true; exc_cause = CAUSE_BREAKPOINT; exc_tval = instr_pc;
                 }

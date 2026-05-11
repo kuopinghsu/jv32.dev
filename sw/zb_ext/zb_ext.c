@@ -15,7 +15,7 @@
 #include "jv_platform.h"
 #include <stdint.h>
 
-/* ── simple pass/fail counter ────────────────────────────────────────────── */
+/* -- simple pass/fail counter ---------------------------------------------- */
 static int g_fail = 0;
 
 #define CHECK(label, got, exp) do { \
@@ -25,7 +25,7 @@ static int g_fail = 0;
     } \
 } while (0)
 
-/* ── Zbb: count-leading/trailing zeros, popcount ─────────────────────────── */
+/* -- Zbb: count-leading/trailing zeros, popcount --------------------------- */
 static void test_count_ops(void)
 {
     uint32_t r;
@@ -43,7 +43,7 @@ static void test_count_ops(void)
     __asm__ volatile("cpop %0, %1" : "=r"(r) : "r"(0u));          CHECK("cpop_0",  r,  0);
 }
 
-/* ── Zbb: sign/zero extension ─────────────────────────────────────────────── */
+/* -- Zbb: sign/zero extension ----------------------------------------------- */
 static void test_ext_ops(void)
 {
     uint32_t r;
@@ -62,7 +62,7 @@ static void test_ext_ops(void)
     CHECK("zexth", r, 0x0000BEEFu);
 }
 
-/* ── Zbb: rotate ──────────────────────────────────────────────────────────── */
+/* -- Zbb: rotate ------------------------------------------------------------ */
 static void test_rotate_ops(void)
 {
     uint32_t r;
@@ -73,17 +73,17 @@ static void test_rotate_ops(void)
     __asm__ volatile("ror %0, %1, %2" : "=r"(r) : "r"(0x80000001u), "r"(1u));
     CHECK("ror", r, 0xC0000000u);
 
-    /* Rotate by 0 → no change */
+    /* Rotate by 0 -> no change */
     __asm__ volatile("rol %0, %1, %2" : "=r"(r) : "r"(0xDEADBEEFu), "r"(0u));
     CHECK("rol0", r, 0xDEADBEEFu);
 }
 
-/* ── Zbb: ORC.B and REV8 ─────────────────────────────────────────────────── */
+/* -- Zbb: ORC.B and REV8 --------------------------------------------------- */
 static void test_byte_ops(void)
 {
     uint32_t r;
 
-    /* ORC.B: each non-zero byte → 0xFF */
+    /* ORC.B: each non-zero byte -> 0xFF */
     __asm__ volatile("orc.b %0, %1" : "=r"(r) : "r"(0x01000100u));
     CHECK("orcb", r, 0xFF00FF00u);
 
@@ -98,7 +98,7 @@ static void test_byte_ops(void)
     CHECK("rev8", r, 0x78563412u);
 }
 
-/* ── Zbb: bitwise logic with complement ─────────────────────────────────── */
+/* -- Zbb: bitwise logic with complement ----------------------------------- */
 static void test_logic_ops(void)
 {
     uint32_t r;
@@ -116,7 +116,7 @@ static void test_logic_ops(void)
     CHECK("xnor_ff", r, 0x00000000u);
 }
 
-/* ── Zbs: single-bit set/clear/invert/extract ─────────────────────────────── */
+/* -- Zbs: single-bit set/clear/invert/extract ------------------------------- */
 static void test_bitmanip_ops(void)
 {
     uint32_t r;
@@ -129,7 +129,7 @@ static void test_bitmanip_ops(void)
     __asm__ volatile("bext %0, %1, %2" : "=r"(r) : "r"(0x80000000u),"r"(31u)); CHECK("bext31",r, 1u);
 }
 
-/* ── Zba: shifted-add ────────────────────────────────────────────────────── */
+/* -- Zba: shifted-add ------------------------------------------------------ */
 static void test_shadd_ops(void)
 {
     uint32_t r;
@@ -144,33 +144,33 @@ static void test_shadd_ops(void)
     __asm__ volatile("sh3add %0, %1, %2" : "=r"(r) : "r"(7u), "r"(0u)); CHECK("sh3add0", r, 56u);
 }
 
-/* ── RV32M multiply-high variants ────────────────────────────────────────── */
+/* -- RV32M multiply-high variants ------------------------------------------ */
 static void test_mulhigh_ops(void)
 {
     int32_t  r;
     uint32_t ur;
 
-    /* MULH: signed × signed → upper 32 bits */
+    /* MULH: signed x signed -> upper 32 bits */
     __asm__ volatile("mulh %0, %1, %2" : "=r"(r)  : "r"((int32_t) 0x7FFFFFFF), "r"((int32_t)2));
-    CHECK("mulh_pos", (uint32_t)r, 0u);  /* (2^31-1)*2 = 0xFFFFFFFE → upper=0 */
+    CHECK("mulh_pos", (uint32_t)r, 0u);  /* (2^31-1)*2 = 0xFFFFFFFE -> upper=0 */
 
     __asm__ volatile("mulh %0, %1, %2" : "=r"(r)  : "r"((int32_t)-1), "r"((int32_t)-1));
-    CHECK("mulh_neg", (uint32_t)r, 0u);  /* (-1)*(-1)=1 → upper=0 */
+    CHECK("mulh_neg", (uint32_t)r, 0u);  /* (-1)*(-1)=1 -> upper=0 */
 
     __asm__ volatile("mulh %0, %1, %2" : "=r"(r)  : "r"((int32_t)0x80000000), "r"((int32_t)2));
-    CHECK("mulh_ovf", (uint32_t)r, 0xFFFFFFFFu); /* -2^31*2 = -2^32 → upper=-1 */
+    CHECK("mulh_ovf", (uint32_t)r, 0xFFFFFFFFu); /* -2^31*2 = -2^32 -> upper=-1 */
 
-    /* MULHSU: signed × unsigned → upper 32 bits */
+    /* MULHSU: signed x unsigned -> upper 32 bits */
     __asm__ volatile("mulhsu %0, %1, %2" : "=r"(r) : "r"((int32_t)-1), "r"(0xFFFFFFFFu));
-    /* -1 × 0xFFFFFFFF = -(2^32-1); upper 32 bits = -1 = 0xFFFFFFFF */
+    /* -1 x 0xFFFFFFFF = -(2^32-1); upper 32 bits = -1 = 0xFFFFFFFF */
     CHECK("mulhsu", (uint32_t)r, 0xFFFFFFFFu);
 
-    /* MULHU: unsigned × unsigned → upper 32 bits */
+    /* MULHU: unsigned x unsigned -> upper 32 bits */
     __asm__ volatile("mulhu %0, %1, %2" : "=r"(ur) : "r"(0xFFFFFFFFu), "r"(0xFFFFFFFFu));
-    CHECK("mulhu", ur, 0xFFFFFFFEu);  /* (2^32-1)^2 = 2^64-2^33+1 → upper=2^32-2 */
+    CHECK("mulhu", ur, 0xFFFFFFFEu);  /* (2^32-1)^2 = 2^64-2^33+1 -> upper=2^32-2 */
 }
 
-/* ── RV32M remainder ─────────────────────────────────────────────────────── */
+/* -- RV32M remainder ------------------------------------------------------- */
 static void test_rem_ops(void)
 {
     int32_t  r;
@@ -186,29 +186,29 @@ static void test_rem_ops(void)
     __asm__ volatile("remu %0, %1, %2" : "=r"(ur) : "r"(0xFFFFFFFFu), "r"(2u)); CHECK("remu_big", ur, 1u);
 }
 
-/* ── RV32M: division/remainder by zero (RISC-V spec-defined results) ─────── */
+/* -- RV32M: division/remainder by zero (RISC-V spec-defined results) ------- */
 static void test_divzero_ops(void)
 {
     int32_t  r;
     uint32_t ur;
 
-    /* DIV by zero → -1 (all ones) per RISC-V spec */
+    /* DIV by zero -> -1 (all ones) per RISC-V spec */
     __asm__ volatile("div %0, %1, %2"  : "=r"(r)  : "r"(1), "r"(0)); CHECK("div0",  (uint32_t)r,  0xFFFFFFFFu);
-    /* DIVU by zero → 2^32-1 */
+    /* DIVU by zero -> 2^32-1 */
     __asm__ volatile("divu %0, %1, %2" : "=r"(ur) : "r"(1u), "r"(0u)); CHECK("divu0", ur, 0xFFFFFFFFu);
-    /* REM by zero → dividend */
+    /* REM by zero -> dividend */
     __asm__ volatile("rem %0, %1, %2"  : "=r"(r)  : "r"(5), "r"(0)); CHECK("rem0",  (uint32_t)r,  5u);
-    /* REMU by zero → dividend */
+    /* REMU by zero -> dividend */
     __asm__ volatile("remu %0, %1, %2" : "=r"(ur) : "r"(5u), "r"(0u)); CHECK("remu0", ur, 5u);
-    /* Signed overflow: INT_MIN / -1 → INT_MIN per spec */
+    /* Signed overflow: INT_MIN / -1 -> INT_MIN per spec */
     __asm__ volatile("div %0, %1, %2"  : "=r"(r)  : "r"((int32_t)0x80000000), "r"(-1));
     CHECK("div_ovf", (uint32_t)r, 0x80000000u);
-    /* Signed overflow: INT_MIN % -1 → 0 per spec */
+    /* Signed overflow: INT_MIN % -1 -> 0 per spec */
     __asm__ volatile("rem %0, %1, %2"  : "=r"(r)  : "r"((int32_t)0x80000000), "r"(-1));
     CHECK("rem_ovf", (uint32_t)r, 0u);
 }
 
-/* ── Base: SRA (arithmetic right shift, register form) ───────────────────── */
+/* -- Base: SRA (arithmetic right shift, register form) --------------------- */
 static void test_sra_op(void)
 {
     int32_t r;
@@ -223,7 +223,7 @@ static void test_sra_op(void)
     CHECK("sra_pos", (uint32_t)r, 0x3FFFFFFFu);
 }
 
-/* ── CSR: mscratch ───────────────────────────────────────────────────────── */
+/* -- CSR: mscratch --------------------------------------------------------- */
 static void test_mscratch(void)
 {
     uint32_t v;
@@ -232,7 +232,7 @@ static void test_mscratch(void)
     __asm__ volatile("csrr %0, mscratch"  : "=r"(v));
     CHECK("mscratch", v, 0xDEADBEEFu);
 
-    /* csrrw: swap — old value returned in v2 */
+    /* csrrw: swap -- old value returned in v2 */
     uint32_t v2;
     __asm__ volatile("csrrw %0, mscratch, %1" : "=r"(v2) : "r"(0x12345678u));
     CHECK("mscratch_swap_old", v2, 0xDEADBEEFu);
@@ -243,7 +243,7 @@ static void test_mscratch(void)
     __asm__ volatile("csrw mscratch, zero");
 }
 
-/* ── CSR: mcountinhibit + instret ────────────────────────────────────────── */
+/* -- CSR: mcountinhibit + instret ------------------------------------------ */
 static void test_counters(void)
 {
     uint32_t lo, hi, lo2;
@@ -251,7 +251,7 @@ static void test_counters(void)
     /* Read instret before */
     __asm__ volatile("csrr %0, instret"  : "=r"(lo));
     __asm__ volatile("csrr %0, instreth" : "=r"(hi));
-    /* hi might be 0 for short tests — just check it doesn't trap */
+    /* hi might be 0 for short tests -- just check it doesn't trap */
     (void)hi;
     (void)lo;
 
@@ -270,19 +270,19 @@ static void test_counters(void)
     /* Re-enable counter */
     __asm__ volatile("csrw mcountinhibit, zero");
 
-    /* Read instret again after re-enabling — must be ≥ lo+1 */
+    /* Read instret again after re-enabling -- must be >= lo+1 */
     uint32_t lo3;
     __asm__ volatile("csrr %0, instret" : "=r"(lo3));
-    if (lo3 == 0 && lo == 0) { /* both zero — valid on short run */ }
+    if (lo3 == 0 && lo == 0) { /* both zero -- valid on short run */ }
 
     /* Write minstret / minstreth then read back */
     __asm__ volatile("csrw minstret,  %0" : : "r"(0x1000u));
     __asm__ volatile("csrw minstreth, %0" : : "r"(0u));
     __asm__ volatile("csrr %0, minstret" : "=r"(lo));
-    /* Counter increments after write, so lo ≥ 0x1000 */
+    /* Counter increments after write, so lo >= 0x1000 */
 }
 
-/* ── Zbb: RORI (rotate right immediate) ──────────────────────────────────── */
+/* -- Zbb: RORI (rotate right immediate) ------------------------------------ */
 static void test_imm_rotate(void)
 {
     uint32_t r;
@@ -298,33 +298,33 @@ static void test_imm_rotate(void)
     CHECK("rori0", r, 0xDEADBEEFu);  /* rotate by 0 = identity */
 }
 
-/* ── Zbs: immediate single-bit ops ───────────────────────────────────────── */
+/* -- Zbs: immediate single-bit ops ----------------------------------------- */
 static void test_imm_bitops(void)
 {
     uint32_t r;
 
-    /* BSETI: set bit by immediate — decoder funct3=001 funct7=0x14 in OP-IMM */
+    /* BSETI: set bit by immediate -- decoder funct3=001 funct7=0x14 in OP-IMM */
     __asm__ volatile("bseti %0, %1, 7" : "=r"(r) : "r"(0u));
     CHECK("bseti7", r, 0x80u);
 
     __asm__ volatile("bseti %0, %1, 0" : "=r"(r) : "r"(0u));
     CHECK("bseti0", r, 1u);
 
-    /* BCLRI: clear bit by immediate — decoder funct3=001 funct7=0x24 in OP-IMM */
+    /* BCLRI: clear bit by immediate -- decoder funct3=001 funct7=0x24 in OP-IMM */
     __asm__ volatile("bclri %0, %1, 3" : "=r"(r) : "r"(0xFFu));
     CHECK("bclri3", r, 0xF7u);
 
     __asm__ volatile("bclri %0, %1, 31" : "=r"(r) : "r"(0x80000000u));
     CHECK("bclri31", r, 0u);
 
-    /* BINVI: invert bit by immediate — decoder funct3=001 funct7=0x34 in OP-IMM */
+    /* BINVI: invert bit by immediate -- decoder funct3=001 funct7=0x34 in OP-IMM */
     __asm__ volatile("binvi %0, %1, 5" : "=r"(r) : "r"(0u));
     CHECK("binvi5", r, 0x20u);
 
     __asm__ volatile("binvi %0, %1, 5" : "=r"(r) : "r"(0x20u));
     CHECK("binvi5_tog", r, 0u);
 
-    /* BEXTI: extract bit by immediate — decoder funct3=101 funct7=0x24 in OP-IMM */
+    /* BEXTI: extract bit by immediate -- decoder funct3=101 funct7=0x24 in OP-IMM */
     __asm__ volatile("bexti %0, %1, 5" : "=r"(r) : "r"(0xA5u));
     CHECK("bexti5_1", r, 1u);  /* bit 5 of 0xA5 (10100101) = 1 */
 
@@ -335,7 +335,7 @@ static void test_imm_bitops(void)
     CHECK("bexti31", r, 1u);
 }
 
-/* ── Zbb: min/max (signed and unsigned) ──────────────────────────────────── */
+/* -- Zbb: min/max (signed and unsigned) ------------------------------------ */
 static void test_minmax_ops(void)
 {
     int32_t  r;
@@ -373,7 +373,7 @@ static void test_minmax_ops(void)
     CHECK("maxu_0", ur, 1u);
 }
 
-/* ── main ─────────────────────────────────────────────────────────────────── */
+/* -- main ------------------------------------------------------------------- */
 int main(void)
 {
     jv_puts("zb_ext: Zba/Zbb/Zbs + M-ext + CSR coverage test\n");

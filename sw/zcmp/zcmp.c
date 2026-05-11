@@ -5,31 +5,31 @@
  *
  * Exercises all six Zcmp instruction classes:
  *
- *   cm.push  {rlist}, -sadj  — adjust sp, store callee-save regs to stack
- *   cm.pop   {rlist},  sadj  — restore callee-save regs from stack, adjust sp
- *   cm.popret  {rlist}, sadj — cm.pop + jalr x0,0(ra)
- *   cm.popretz {rlist}, sadj — cm.pop + addi a0,x0,0 + jalr x0,0(ra)
- *   cm.mvsa01 sreg1, sreg2  — s[sreg1]=a0,  s[sreg2]=a1
- *   cm.mva01s sreg1, sreg2  — a0=s[sreg1],  a1=s[sreg2]
+ *   cm.push  {rlist}, -sadj  -- adjust sp, store callee-save regs to stack
+ *   cm.pop   {rlist},  sadj  -- restore callee-save regs from stack, adjust sp
+ *   cm.popret  {rlist}, sadj -- cm.pop + jalr x0,0(ra)
+ *   cm.popretz {rlist}, sadj -- cm.pop + addi a0,x0,0 + jalr x0,0(ra)
+ *   cm.mvsa01 sreg1, sreg2  -- s[sreg1]=a0,  s[sreg2]=a1
+ *   cm.mva01s sreg1, sreg2  -- a0=s[sreg1],  a1=s[sreg2]
  *
  * All instructions are emitted as raw 16-bit .hword encodings so they
  * assemble correctly regardless of the -march string passed to GCC.
  *
- * Encoding reference (RTL implementation — Q2=ci[1:0]=10, funct3=5=ci[15:13]=101):
+ * Encoding reference (RTL implementation -- Q2=ci[1:0]=10, funct3=5=ci[15:13]=101):
  *
  *   Push/pop group (ci[12]=1):
  *     ci[11:10]=10: push (ci[9:8]=00) / pop  (ci[9:8]=10)
  *     ci[11:10]=11: popretz (ci[9:8]=00) / popret (ci[9:8]=10)
  *     ci[7:4]=rlist, ci[3:2]=spimm_extra
  *
- *   sadj = min_stack(rlist) + spimm_extra × 16
- *     rlist 4–7  → min_stack=16;  rlist 8–11 → min_stack=32
- *     rlist 12–14 → min_stack=48; rlist 15   → min_stack=64
+ *   sadj = min_stack(rlist) + spimm_extra x 16
+ *     rlist 4-7  -> min_stack=16;  rlist 8-11 -> min_stack=32
+ *     rlist 12-14 -> min_stack=48; rlist 15   -> min_stack=64
  *
  *   Mv group (ci[12]=0, ci[11:10]=11):
- *     ci[6]=0 → cm.mvsa01;  ci[6]=1 → cm.mva01s
+ *     ci[6]=0 -> cm.mvsa01;  ci[6]=1 -> cm.mva01s
  *     ci[9:7]=sreg1, ci[4:2]=sreg2
- *     s-reg mapping: 0→s0(x8), 1→s1(x9), 2→s2(x18), …, 7→s7(x23)
+ *     s-reg mapping: 0->s0(x8), 1->s1(x9), 2->s2(x18), ..., 7->s7(x23)
  *
  *   Instruction                    rlist  sadj  .hword
  *   cm.push  {ra,s0},   -16         5     16    0xB852
@@ -63,9 +63,9 @@ static int g_fail = 0;
  *   1. Saves the caller's s-registers to temporaries (t0, t1) so the
  *      function is callee-save correct regardless of what it pushes.
  *   2. Loads the test sentinel into an s-register.
- *   3. cm.push — saves ra (= return address) and the s-register(s).
+ *   3. cm.push -- saves ra (= return address) and the s-register(s).
  *   4. Corrupts the s-register(s) with a distinctive pattern.
- *   5. cm.pop  — restores ra and s-register(s) from the stack frame.
+ *   5. cm.pop  -- restores ra and s-register(s) from the stack frame.
  *   6. Moves the restored s-register value into a0 (return value).
  *   7. Restores the caller's original s-register value from the temporary.
  *   8. ret (jalr x0, 0(ra)).
@@ -73,7 +73,7 @@ static int g_fail = 0;
  * After a correct push/pop round-trip, the returned value equals sentinel.
  * ============================================================================ */
 
-/* rlist=5 ({ra,s0}), sadj=16 — single s-register save/restore. */
+/* rlist=5 ({ra,s0}), sadj=16 -- single s-register save/restore. */
 __attribute__((naked, noinline))
 static uint32_t do_push_pop_rlist5(uint32_t sentinel __attribute__((unused)))
 {
@@ -89,7 +89,7 @@ static uint32_t do_push_pop_rlist5(uint32_t sentinel __attribute__((unused)))
     );
 }
 
-/* rlist=5 ({ra,s0}), sadj=32 (spimm_extra=1) — non-minimal stack adj. */
+/* rlist=5 ({ra,s0}), sadj=32 (spimm_extra=1) -- non-minimal stack adj. */
 __attribute__((naked, noinline))
 static uint32_t do_push_pop_rlist5_spimm1(uint32_t sentinel __attribute__((unused)))
 {
@@ -105,7 +105,7 @@ static uint32_t do_push_pop_rlist5_spimm1(uint32_t sentinel __attribute__((unuse
     );
 }
 
-/* rlist=6 ({ra,s0,s1}), sadj=16 — two s-registers; returns restored s1. */
+/* rlist=6 ({ra,s0,s1}), sadj=16 -- two s-registers; returns restored s1. */
 __attribute__((naked, noinline))
 static uint32_t do_push_pop_rlist6(uint32_t sentinel __attribute__((unused)))
 {
@@ -126,7 +126,7 @@ static uint32_t do_push_pop_rlist6(uint32_t sentinel __attribute__((unused)))
 }
 
 /* ============================================================================
- * cm.popret — pop registers, then jalr x0,0(ra)
+ * cm.popret -- pop registers, then jalr x0,0(ra)
  *
  * The cm.push at the start of this function pushes:
  *   - ra (= the return address of this function's caller) at sp+12
@@ -141,13 +141,13 @@ static uint32_t do_popret(uint32_t sentinel __attribute__((unused)))
     __asm__(
         ".hword 0xB852\n"         /* cm.push {ra,s0}, -16  (a0=sentinel) */
         /* a0 is still = sentinel; s0 = caller's original s0              */
-        ".hword 0xBE52\n"         /* cm.popret {ra,s0}, 16 — returns     */
-                                  /* with a0 = sentinel (popret ≠ popretz)*/
+        ".hword 0xBE52\n"         /* cm.popret {ra,s0}, 16 -- returns     */
+                                  /* with a0 = sentinel (popret != popretz)*/
     );
 }
 
 /* ============================================================================
- * cm.popretz — pop registers, set a0=0, then jalr x0,0(ra)
+ * cm.popretz -- pop registers, set a0=0, then jalr x0,0(ra)
  *
  * Regardless of the argument, the caller receives 0 in a0.
  * ============================================================================ */
@@ -157,12 +157,12 @@ static uint32_t do_popretz(uint32_t sentinel)
     (void)sentinel;
     __asm__(
         ".hword 0xB852\n"         /* cm.push {ra,s0}, -16               */
-        ".hword 0xBC52\n"         /* cm.popretz {ra,s0}, 16 — a0=0, ret */
+        ".hword 0xBC52\n"         /* cm.popretz {ra,s0}, 16 -- a0=0, ret */
     );
 }
 
 /* ============================================================================
- * cm.mvsa01 / cm.mva01s — register moves between a0/a1 and s-registers
+ * cm.mvsa01 / cm.mva01s -- register moves between a0/a1 and s-registers
  *
  * cm.mvsa01 (sreg1=0=s0, sreg2=1=s1):  s0=a0,  s1=a1   encoding: 0xAC26
  * cm.mva01s (sreg1=0=s0, sreg2=1=s1):  a0=s0,  a1=s1   encoding: 0xAC66
@@ -177,7 +177,7 @@ static void test_mv_variants(void)
     register uint32_t rs0 asm("s0");
     register uint32_t rs1 asm("s1");
 
-    /* cm.mvsa01 (sreg1=0→s0, sreg2=1→s1): s0=a0, s1=a1 */
+    /* cm.mvsa01 (sreg1=0->s0, sreg2=1->s1): s0=a0, s1=a1 */
     ra0 = 0x12345678u;
     ra1 = 0x9ABCDEF0u;
     __asm__ volatile(
@@ -188,7 +188,7 @@ static void test_mv_variants(void)
     CHECK("cm.mvsa01 s0=a0", rs0, 0x12345678u);
     CHECK("cm.mvsa01 s1=a1", rs1, 0x9ABCDEF0u);
 
-    /* cm.mva01s (sreg1=0→s0, sreg2=1→s1): a0=s0, a1=s1 */
+    /* cm.mva01s (sreg1=0->s0, sreg2=1->s1): a0=s0, a1=s1 */
     rs0 = 0xABCD1234u;
     rs1 = 0xEF012345u;
     __asm__ volatile(
@@ -209,7 +209,7 @@ int main(void)
 
     jv_puts("zcmp: Zcmp compressed instruction coverage test\n");
 
-    /* ── cm.push / cm.pop round-trip ─────────────────────────────────────── */
+    /* -- cm.push / cm.pop round-trip --------------------------------------- */
     v = do_push_pop_rlist5(0xCAFEBABEu);
     CHECK("cm.push/pop rlist5 s0",        v, 0xCAFEBABEu);
 
@@ -219,14 +219,14 @@ int main(void)
     v = do_push_pop_rlist6(0xA5A5A5A5u);
     CHECK("cm.push/pop rlist6 s1",        v, 0xA5A5A5A5u);
 
-    /* ── cm.popret / cm.popretz ───────────────────────────────────────────── */
+    /* -- cm.popret / cm.popretz --------------------------------------------- */
     v = do_popret(0x12345678u);
     CHECK("cm.popret  a0=sentinel",        v, 0x12345678u);
 
     v = do_popretz(0xDEADBEEFu);
     CHECK("cm.popretz a0=0",               v, 0u);
 
-    /* ── cm.mvsa01 / cm.mva01s ────────────────────────────────────────────── */
+    /* -- cm.mvsa01 / cm.mva01s ---------------------------------------------- */
     test_mv_variants();
 
     if (g_fail == 0)

@@ -1,14 +1,14 @@
 // ============================================================================
 // File        : jv32_dtm.sv
 // Project     : JV32 RISC-V Processor
-// Description : RISC-V Debug Module (DM) — pure CLK domain
+// Description : RISC-V Debug Module (DM) -- pure CLK domain
 //
 // This module is PURE CLK domain.  All TCK-domain logic (TAP state machine,
 // shift registers, DMI register bank) lives in jtag_tap.sv.
 //
 // The interface to jtag_tap uses toggle-sync pairs:
-//   TCK→CLK: toggle input + stable payload input (jtag_tap holds payload)
-//   CLK→TCK: result output + valid flag (jtag_tap syncs these into TCK domain)
+//   TCK->CLK: toggle input + stable payload input (jtag_tap holds payload)
+//   CLK->TCK: result output + valid flag (jtag_tap syncs these into TCK domain)
 //
 // Reset: rst_n = soc_rst_n, async active-low.
 //
@@ -21,11 +21,11 @@
 module jv32_dtm #(
     parameter int N_TRIGGERS = 2
 ) (
-    // ── Core clock / reset ─────────────────────────────────────────────────
+    // -- Core clock / reset -------------------------------------------------
     input logic clk,
     input logic rst_n, // soc_rst_n (async active-low)
 
-    // ── TCK→CLK: command dispatch (toggle + stable payload) ────────────────
+    // -- TCK->CLK: command dispatch (toggle + stable payload) ----------------
     // jtag_tap holds all payloads stable until the next toggle.
     input logic        cmd_wr_toggle_i,  // Toggles each time a new COMMAND is dispatched
     input logic [31:0] command_reg_i,    // DMI COMMAND register (stable)
@@ -40,7 +40,7 @@ module jv32_dtm #(
     input logic        ndmreset_i,       // DMI DMCONTROL.ndmreset (level)
     input logic        any_noexist_i,    // No hart selected (level)
 
-    // ── TCK→CLK: SBA triggers + payload ────────────────────────────────────
+    // -- TCK->CLK: SBA triggers + payload ------------------------------------
     input logic        sba_wr_toggle_i,  // Toggles each time SBDATA0 is written
     input logic        sba_rd_toggle_i,  // Toggles for each SBA read trigger
     input logic [31:0] sbaddress0_i,     // SBADDRESS0 (stable, held by jtag_tap)
@@ -48,18 +48,18 @@ module jv32_dtm #(
     input logic [ 2:0] sb_access_i,      // SBCS.sbaccess (stable)
     input logic        sb_autoincr_i,    // SBCS.sbautoincrement (stable)
 
-    // ── TCK→CLK: W1C clear toggles ─────────────────────────────────────────
+    // -- TCK->CLK: W1C clear toggles -----------------------------------------
     input logic       cmderr_clr_tog_i,   // Toggles to clear cmderr bits
     input logic [2:0] cmderr_clr_mask_i,  // Mask of bits to W1C
     input logic       sb_err_clr_tog_i,   // Toggles to clear sb_err bits
     input logic [2:0] sb_err_clr_mask_i,  // Mask of bits to W1C
 
-    // ── TCK→CLK: result-valid clear toggles ────────────────────────────────
+    // -- TCK->CLK: result-valid clear toggles --------------------------------
     input logic sbdata0_clr_tog_i,     // Toggles to clear sbdata0_result_valid
     input logic sbaddress0_clr_tog_i,  // Toggles to clear sbaddress0_result_valid
     input logic data1_clr_tog_i,       // Toggles to clear data1_result_valid
 
-    // ── CLK→TCK: status outputs (synced by jtag_tap) ───────────────────────
+    // -- CLK->TCK: status outputs (synced by jtag_tap) -----------------------
     output logic        cmd_busy_o,
     output logic        sba_busy_o,
     output logic [ 2:0] cmderr_o,
@@ -73,7 +73,7 @@ module jv32_dtm #(
     output logic [31:0] sbaddress0_clk_o,
     output logic        sbaddress0_result_valid_o,
 
-    // ── CPU debug interface (all CLK domain) ───────────────────────────────
+    // -- CPU debug interface (all CLK domain) -------------------------------
     output logic halt_req_o,
     input  logic halted_i,
     output logic resume_req_o,
@@ -158,7 +158,7 @@ module jv32_dtm #(
 
     // No payload sync chains needed: payloads are guaranteed stable in TCK domain
     // by the toggle-sync handshake.  Data is latched directly on the toggle edge
-    // (safe: by the time toggle_sync[1] propagates, payload has been stable ≥4 CLK cycles).
+    // (safe: by the time toggle_sync[1] propagates, payload has been stable >=4 CLK cycles).
 
     // =========================================================================
     // CLK-domain working registers
@@ -264,7 +264,7 @@ module jv32_dtm #(
     assign cmd_regno    = command_reg_sys[15:0];
 
     // =========================================================================
-    // Halt/resume sync (TCK→CLK for haltreq/resumereq level signals)
+    // Halt/resume sync (TCK->CLK for haltreq/resumereq level signals)
     // =========================================================================
     (* ASYNC_REG = "TRUE" *)logic [1:0] halt_req_sync_chain;
     (* ASYNC_REG = "TRUE" *)logic [1:0] resume_req_sync_chain;
@@ -502,7 +502,7 @@ module jv32_dtm #(
 
             // Payloads (command_reg_i, data0_i, data1_i, sbaddress0_i, sb_access_i,
             // sb_autoincr_i) are held stable in the TCK domain by the toggle-sync handshake.
-            // No continuous sync chains needed — they are latched directly on the toggle edge.
+            // No continuous sync chains needed -- they are latched directly on the toggle edge.
 
             // SBA write/read toggle syncs
             sba_wr_toggle_sync <= {sba_wr_toggle_sync[0], sba_wr_toggle_i};

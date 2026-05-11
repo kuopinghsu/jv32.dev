@@ -12,9 +12,9 @@
 //  CLK domain : None in this file.  jv32_dtm owns all CLK-domain logic.
 //
 //  CDC boundary (this file)
-//    TCK→CLK : toggle-sync for command dispatch, SBA triggers, W1C clears.
+//    TCK->CLK : toggle-sync for command dispatch, SBA triggers, W1C clears.
 //              Payload held stable in TCK domain until toggle propagates.
-//    CLK→TCK : 2-stage synchronisers for result signals (cmderr, data0/1
+//    CLK->TCK : 2-stage synchronisers for result signals (cmderr, data0/1
 //              results, SBA data/address results, cmd_busy, sba_busy,
 //              halted, resumeack, sb_err).
 //              All CDC FFs reset by soc_rst_n (async active-low) so that
@@ -31,19 +31,19 @@ module jtag_tap #(
     parameter int unsigned        IR_LEN     = 5,
     parameter int                 N_TRIGGERS = 2
 ) (
-    // ── JTAG interface (TCK domain) ─────────────────────────────────────────
+    // -- JTAG interface (TCK domain) -----------------------------------------
     input  logic tck_i,
     input  logic tms_i,
     input  logic tdi_i,
     output logic tdo_o,
     input  logic ntrst_i, // Optional async JTAG reset (active-low)
 
-    // ── Core clock domain ───────────────────────────────────────────────────
+    // -- Core clock domain ---------------------------------------------------
     input logic clk,    // Core system clock (feeds jv32_dtm)
-    input logic rst_n,  // SoC async reset — CDC FFs in this module and
+    input logic rst_n,  // SoC async reset -- CDC FFs in this module and
                        // all FFs in jv32_dtm reset by this signal
 
-    // ── Debug interface to CPU (all CLK domain, driven through jv32_dtm) ───
+    // -- Debug interface to CPU (all CLK domain, driven through jv32_dtm) ---
     output logic halt_req_o,
     input  logic halted_i,
     output logic resume_req_o,
@@ -88,7 +88,7 @@ module jtag_tap #(
     localparam logic [IR_LEN-1:0] IR_BYPASS = 5'h1F;
 
     // =========================================================================
-    // TAP state machine — TCK domain, reset by ntrst_i
+    // TAP state machine -- TCK domain, reset by ntrst_i
     // =========================================================================
     typedef enum logic [3:0] {
         TEST_LOGIC_RESET = 4'h0,
@@ -143,7 +143,7 @@ module jtag_tap #(
     wire               update_dr = (state == UPDATE_DR);
 
     // =========================================================================
-    // Instruction Register — TCK domain
+    // Instruction Register -- TCK domain
     // =========================================================================
     logic [IR_LEN-1:0] ir_reg;
     logic [IR_LEN-1:0] ir_shift;
@@ -165,7 +165,7 @@ module jtag_tap #(
     end
 
     // =========================================================================
-    // BYPASS register — TCK domain
+    // BYPASS register -- TCK domain
     // =========================================================================
     logic bypass_reg;
 
@@ -181,7 +181,7 @@ module jtag_tap #(
     end
 
     // =========================================================================
-    // IDCODE shift register — TCK domain
+    // IDCODE shift register -- TCK domain
     // =========================================================================
     logic [31:0] idcode_shift;
 
@@ -197,7 +197,7 @@ module jtag_tap #(
     end
 
     // =========================================================================
-    // DTMCS shift register — TCK domain
+    // DTMCS shift register -- TCK domain
     // abits=7, version=1 (DTM 0.13), idle=0, dmistat=0 (constant read-only)
     // =========================================================================
     localparam [31:0] DTMCS_VALUE = {14'b0, 1'b0, 1'b0, 1'b0, 3'd0, 2'b00, 6'd7, 4'd1};
@@ -259,7 +259,7 @@ module jtag_tap #(
     logic [ 6:0] dmi_address;
 
     // =========================================================================
-    // CLK→TCK synchronised status (sync FFs reset by rst_n)
+    // CLK->TCK synchronised status (sync FFs reset by rst_n)
     // =========================================================================
     // cmd_busy
     logic        cmd_busy_clk;  // driven by dtm
@@ -277,12 +277,12 @@ module jtag_tap #(
     (* ASYNC_REG = "TRUE" *) logic [1:0] halted_tck_chain, resumeack_tck_chain;
     logic halted_tck, resumeack_tck;
 
-    // cmderr (CLK→TCK)
+    // cmderr (CLK->TCK)
     logic [2:0] cmderr_clk;  // driven by dtm
     (* ASYNC_REG = "TRUE" *) logic [2:0] cmderr_sync[1:0];
     logic [2:0] cmderr_tck;  // TCK-stable copy
 
-    // sb_err (CLK→TCK)
+    // sb_err (CLK->TCK)
     logic [2:0] sb_err_clk;  // driven by dtm
     (* ASYNC_REG = "TRUE" *) logic [2:0] sb_err_tck_chain[1:0];
     logic [2:0] sb_err_tck;
@@ -293,7 +293,7 @@ module jtag_tap #(
     // data0 requires a 2-stage sync for the 32-bit data because data0 is dual-role:
     // OpenOCD can write it (input) AND dtm can produce a result into it (output).
     // A level-based combinational mux (valid ? sync[1] : data0) is the only correct
-    // approach — edge-detect or continuous-sample both corrupt the input side.
+    // approach -- edge-detect or continuous-sample both corrupt the input side.
     (* ASYNC_REG = "TRUE" *) logic [31:0] data0_result_sync[1:0];
     (* ASYNC_REG = "TRUE" *) logic data0_result_valid_sync[1:0];
 
@@ -326,7 +326,7 @@ module jtag_tap #(
     wire all_resumeack = any_noexist ? 1'b0 : resumeack_tck;
 
     // =========================================================================
-    // TCK→CLK toggle/payload signals
+    // TCK->CLK toggle/payload signals
     // =========================================================================
     logic cmd_wr_toggle_tck;
     logic cmd_wr_toggle_tck_nx;
@@ -343,7 +343,7 @@ module jtag_tap #(
     logic sb_busyerr_nx;
 
     // =========================================================================
-    // DMI register read mux — combinational
+    // DMI register read mux -- combinational
     // =========================================================================
     wire [31:0] dmcontrol_rdata = {1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, hartsello, 10'b0, 4'b0, ndmreset, dmactive};
 
@@ -428,7 +428,7 @@ module jtag_tap #(
     end
 
     // =========================================================================
-    // DMI shift register — TCK domain
+    // DMI shift register -- TCK domain
     // =========================================================================
     logic [40:0] dmi_shift;
 
@@ -441,7 +441,7 @@ module jtag_tap #(
     end
 
     // =========================================================================
-    // cmd_wr_toggle / sba_rd_toggle / sb_busyerr next-value logic — comb
+    // cmd_wr_toggle / sba_rd_toggle / sb_busyerr next-value logic -- comb
     // =========================================================================
     always_comb begin
         cmd_wr_toggle_tck_nx = cmd_wr_toggle_tck;
@@ -521,10 +521,10 @@ module jtag_tap #(
             data1_clr_toggle_tck      <= 1'b0;
         end
         else begin
-            // ── Sync cmderr from CLK domain ───────────────────────────────
+            // -- Sync cmderr from CLK domain -------------------------------
             cmderr_tck <= cmderr_sync[1];
 
-            // ── CLK→TCK result writebacks ─────────────────────────────────
+            // -- CLK->TCK result writebacks ---------------------------------
             // data0 uses the 2-stage sync + level mux (see declaration comment).
             // data1/sbdata0/sbaddress0 use direct latch on valid rising edge:
             // safe because CLK >> TCK and their valid is toggle-cleared (single producer).
@@ -544,7 +544,7 @@ module jtag_tap #(
                 sbdata0_clr_toggle_tck <= ~sbdata0_clr_toggle_tck;
             end
 
-            // ── Toggle/nx latching ────────────────────────────────────────
+            // -- Toggle/nx latching ----------------------------------------
             cmd_wr_toggle_tck <= cmd_wr_toggle_tck_nx;
             sb_busyerr        <= sb_busyerr_nx;
             sba_rd_toggle_tck <= sba_rd_toggle_tck_nx;
@@ -559,7 +559,7 @@ module jtag_tap #(
                 if (cmd_busy_holdoff_tck == 2'd0 && !busy_tck) cmd_busy_tck_pending <= 1'b0;
             end
 
-            // ── DTMCS write handling ───────────────────────────────────────
+            // -- DTMCS write handling ---------------------------------------
             if (update_dr && ir_reg == IR_DTMCS && dmi_shift[17]) begin
                 // dmihardreset: wipe TCK-domain soft state
                 dmi_address   <= 7'b0;
@@ -573,7 +573,7 @@ module jtag_tap #(
                 sbdata0       <= 32'b0;
             end
 
-            // ── UPDATE_DR DMI write processing ─────────────────────────────
+            // -- UPDATE_DR DMI write processing -----------------------------
             if (update_dr && ir_reg == IR_DMI) begin
                 dmi_address <= dmi_shift[40:34];
 
@@ -595,7 +595,7 @@ module jtag_tap #(
 
                         DMI_ABSTRACTCS: begin
                             if (dmi_shift[12:10] != 3'b0) begin
-                                // W1C cmderr — also clear local shadow
+                                // W1C cmderr -- also clear local shadow
                                 cmderr_tck         <= cmderr_tck & ~dmi_shift[12:10];
                                 cmderr_clr_tck     <= dmi_shift[12:10];
                                 cmderr_clr_tog_tck <= ~cmderr_clr_tog_tck;
@@ -647,7 +647,7 @@ module jtag_tap #(
     end  // always_ff TCK
 
     // =========================================================================
-    // CLK→TCK synchronisers — reset by rst_n (core async reset)
+    // CLK->TCK synchronisers -- reset by rst_n (core async reset)
     // =========================================================================
     always_ff @(posedge tck_i or negedge rst_n) begin
         if (!rst_n) begin
@@ -700,7 +700,7 @@ module jtag_tap #(
             sb_err_tck_chain[1]             <= sb_err_tck_chain[0];
             sb_err_tck                      <= sb_err_tck_chain[1];
 
-            // data0 result — 2-stage sync needed (dual input/output role, level-based mux)
+            // data0 result -- 2-stage sync needed (dual input/output role, level-based mux)
             data0_result_sync[0]            <= data0_result_clk;
             data0_result_sync[1]            <= data0_result_sync[0];
             data0_result_valid_sync[0]      <= data0_result_valid_clk;
@@ -733,7 +733,7 @@ module jtag_tap #(
         .clk  (clk),
         .rst_n(rst_n),
 
-        // ── TCK→CLK: command dispatch (toggle + payload) ──────────────────
+        // -- TCK->CLK: command dispatch (toggle + payload) ------------------
         .cmd_wr_toggle_i(cmd_wr_toggle_tck),
         .command_reg_i  (command_reg),
         .data0_i        (data0),
@@ -747,7 +747,7 @@ module jtag_tap #(
         .ndmreset_i     (ndmreset),
         .any_noexist_i  (any_noexist),
 
-        // ── TCK→CLK: SBA triggers + payload ──────────────────────────────
+        // -- TCK->CLK: SBA triggers + payload ------------------------------
         .sba_wr_toggle_i(sba_wr_toggle_tck),
         .sba_rd_toggle_i(sba_rd_toggle_tck),
 
@@ -756,18 +756,18 @@ module jtag_tap #(
         .sb_access_i  (sb_access),
         .sb_autoincr_i(sb_autoincr),
 
-        // ── TCK→CLK: W1C clear toggles ────────────────────────────────────
+        // -- TCK->CLK: W1C clear toggles ------------------------------------
         .cmderr_clr_tog_i (cmderr_clr_tog_tck),
         .cmderr_clr_mask_i(cmderr_clr_tck),
         .sb_err_clr_tog_i (sb_err_clr_tog_tck),
         .sb_err_clr_mask_i(sb_err_clr_tck),
 
-        // ── TCK→CLK: result clear toggles ─────────────────────────────────
+        // -- TCK->CLK: result clear toggles ---------------------------------
         .sbdata0_clr_tog_i   (sbdata0_clr_toggle_tck),
         .sbaddress0_clr_tog_i(sbaddress0_clr_toggle_tck),
         .data1_clr_tog_i     (data1_clr_toggle_tck),
 
-        // ── CLK→TCK: status outputs ───────────────────────────────────────
+        // -- CLK->TCK: status outputs ---------------------------------------
         .cmd_busy_o               (cmd_busy_clk),
         .sba_busy_o               (sba_busy_clk),
         .cmderr_o                 (cmderr_clk),
@@ -781,7 +781,7 @@ module jtag_tap #(
         .sbaddress0_clk_o         (sbaddress0_clk),
         .sbaddress0_result_valid_o(sbaddress0_result_valid_clk),
 
-        // ── CPU debug interface (CLK domain) ─────────────────────────────
+        // -- CPU debug interface (CLK domain) -----------------------------
         .halt_req_o      (halt_req_o),
         .halted_i        (halted_i),
         .resume_req_o    (resume_req_o),
@@ -813,7 +813,7 @@ module jtag_tap #(
     );
 
     // =========================================================================
-    // TDO output — TCK domain, registered on negedge for glitch-free output
+    // TDO output -- TCK domain, registered on negedge for glitch-free output
     // =========================================================================
     logic tdo_comb;
 

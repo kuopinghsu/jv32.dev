@@ -429,7 +429,7 @@ static uint32_t popcount_shift(uint32_t v) {
     return n;
 }
 
-/* Method 2: Wegner / Brian Kernighan — clear lowest set bit per step */
+/* Method 2: Wegner / Brian Kernighan -- clear lowest set bit per step */
 static uint32_t popcount_wegner(uint32_t v) {
     uint32_t n = 0;
     while (v) { v &= v - 1u; n++; }

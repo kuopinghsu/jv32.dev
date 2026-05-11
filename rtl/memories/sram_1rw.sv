@@ -4,36 +4,36 @@
 // Description : Single-Port 1R/1W SRAM Macro Wrapper
 //
 // Interface
-//   clk   – rising-edge clock
-//   ce    – chip enable (active-high).  All inputs are ignored when low.
-//   we    – write enable (active-high).
-//             we=1 → write wdata to mem[addr] on the rising edge
-//             we=0 → read  mem[addr]; output registered on the same edge
-//   addr  – word address, $clog2(DEPTH) bits wide
-//   wdata – write data
-//   rdata – read data (registered, valid one cycle after ce=1, we=0)
+//   clk   - rising-edge clock
+//   ce    - chip enable (active-high).  All inputs are ignored when low.
+//   we    - write enable (active-high).
+//             we=1 -> write wdata to mem[addr] on the rising edge
+//             we=0 -> read  mem[addr]; output registered on the same edge
+//   addr  - word address, $clog2(DEPTH) bits wide
+//   wdata - write data
+//   rdata - read data (registered, valid one cycle after ce=1, we=0)
 //
 // Read-during-write behaviour
 //   Simulation / ASIC  : rdata is 'x on a write cycle (undefined / no-change).
-//   Xilinx FPGA        : NO_CHANGE mode – rdata is not updated on write cycles.
+//   Xilinx FPGA        : NO_CHANGE mode - rdata is not updated on write cycles.
 //                        This gives the best timing and lowest power for BRAM.
 //
 // Target selection (define exactly one before including this file,
 // or pass it on the command line):
 //
-//   `define XILINX_URAM   – Xilinx UltraScale+ (e.g. XCKU5P / XCZU*)
+//   `define XILINX_URAM   - Xilinx UltraScale+ (e.g. XCKU5P / XCZU*)
 //                           Infers UltraRAM (URAM288) via ram_style="ultra".
 //                           Best choice for large memories on KU5P.
 //
-//   `define XILINX_FPGA   – Xilinx 7-series / UltraScale / UltraScale+
+//   `define XILINX_FPGA   - Xilinx 7-series / UltraScale / UltraScale+
 //                           Infers Block RAM (RAMB36/RAMB18) in NO_CHANGE mode.
 //                           (* ram_style = "block" *) forces BRAM (not LUTRAM).
 //
-//   `define INTEL_FPGA    – Intel (Altera) Cyclone / Arria / Stratix
+//   `define INTEL_FPGA    - Intel (Altera) Cyclone / Arria / Stratix
 //                           Instantiates altsyncram configured as M20K/MLAB
 //                           single-port RAM in NO_CHANGE read-during-write mode.
 //
-//   (default)             – Behavioural model for simulation.
+//   (default)             - Behavioural model for simulation.
 //                           For ASIC tapeout replace the translate_off/on body
 //                           with the foundry memory-compiler macro.  Four
 //                           example templates are provided in the comments.
@@ -76,11 +76,11 @@ module sram_1rw #(
 `ifdef XILINX_URAM
 
     // =========================================================================
-    // Xilinx UltraScale+ – UltraRAM inference
+    // Xilinx UltraScale+ - UltraRAM inference
     //
     // (* ram_style = "ultra" *) targets the UltraRAM (URAM288) hard macros
     // available on UltraScale+ devices (e.g. XCKU5P).  Each URAM288 provides
-    // 288 Kb (4096 × 72-bit) organised as 8-bit bytes, read-first behaviour.
+    // 288 Kb (4096 x 72-bit) organised as 8-bit bytes, read-first behaviour.
     //
     // UltraRAM requirements:
     //   - Output must be registered (one-cycle read latency, same as BRAM).
@@ -113,10 +113,10 @@ module sram_1rw #(
 `elsif XILINX_FPGA
 
     // =========================================================================
-    // Xilinx FPGA – Block RAM inference
+    // Xilinx FPGA - Block RAM inference
     //
     // Coding style follows Xilinx UG901 (Vivado Design Suite: HDL Coding
-    // Guidelines) §"Single-Port Block RAM with No-Change Read-During-Write".
+    // Guidelines) S"Single-Port Block RAM with No-Change Read-During-Write".
     //
     // (* ram_style = "block" *) forces Vivado to map to RAMB36/RAMB18 hard
     // macros rather than distributed (LUT) RAM.  Remove the attribute to
@@ -152,7 +152,7 @@ module sram_1rw #(
 `elsif INTEL_FPGA
 
     // =========================================================================
-    // Intel FPGA – altsyncram (Cyclone IV/V/10, Arria, Stratix)
+    // Intel FPGA - altsyncram (Cyclone IV/V/10, Arria, Stratix)
     //
     // altsyncram is the portable MegaCore for all Intel FPGA on-chip memories.
     // OPERATION_MODE = "SINGLE_PORT" maps to M20K (Cyclone V+) or MLAB.
@@ -160,7 +160,7 @@ module sram_1rw #(
     // use "NEW_DATA_NO_NBE_READ" for Stratix 10 NO_CHANGE equivalence.
     //
     // Quartus Pro / Standard both accept this instantiation.  The MegaWizard
-    // GUI generates equivalent code – this hand-instantiation avoids the .qip
+    // GUI generates equivalent code - this hand-instantiation avoids the .qip
     // dependency and is portable across Quartus versions.
     // =========================================================================
 
@@ -192,22 +192,22 @@ module sram_1rw #(
 `else
 
     // =========================================================================
-    // Default – behavioural model (simulation) / ASIC hard-macro placeholder
+    // Default - behavioural model (simulation) / ASIC hard-macro placeholder
     //
     // This block is used for Verilator / functional simulation as-is.
     //
-    // ── ASIC tapeout – how to swap in a memory-compiler macro ────────────────
+    // -- ASIC tapeout - how to swap in a memory-compiler macro ----------------
     //
     // 1. Remove the two "synthesis translate_off/on" pragmas and the
     //    behavioural logic between them.
     //
     // 2. Instantiate the foundry SRAM macro in their place, mapping:
-    //      clk   → clock pin
-    //      ce    → chip-enable pin  (active-high)
-    //      we    → write-enable pin (active-high)
-    //      addr  → address bus      ($clog2(DEPTH) bits)
-    //      wdata → data-in bus      (WIDTH bits)
-    //      rdata → data-out bus     (WIDTH bits, registered)
+    //      clk   -> clock pin
+    //      ce    -> chip-enable pin  (active-high)
+    //      we    -> write-enable pin (active-high)
+    //      addr  -> address bus      ($clog2(DEPTH) bits)
+    //      wdata -> data-in bus      (WIDTH bits)
+    //      rdata -> data-out bus     (WIDTH bits, registered)
     //
     // 3. Keep the module port list and parameter declarations unchanged so
     //    the icache wrapper requires no edits.
@@ -216,14 +216,14 @@ module sram_1rw #(
     // cache configurations produced by icache.sv.  Un-comment the relevant
     // block and delete the behavioural section.
     //
-    // ── TCM SRAM dimensions (jv32_top) ──────────────────────────────────────
+    // -- TCM SRAM dimensions (jv32_top) --------------------------------------
     //
     //  Instance | DEPTH | WIDTH | wbe bits
-    //  ─────────┼───────┼───────┼──────────────
+    //  ---------+-------+-------+--------------
     //  u_iram   | 2048  |  32   | 4 (byte mask)
     //  u_dram   | 2048  |  32   | 4 (byte mask)
     //
-    //  Total memory: 2048 × 32 bits = 8 KB per TCM (IRAM + DRAM = 16 KB)
+    //  Total memory: 2048 x 32 bits = 8 KB per TCM (IRAM + DRAM = 16 KB)
     //
     // =========================================================================
 
@@ -244,7 +244,7 @@ module sram_1rw #(
     // synthesis translate_on
 
     // =========================================================================
-    // Example A – ARM Artisan / Synopsys DesignWare generic SRAM
+    // Example A - ARM Artisan / Synopsys DesignWare generic SRAM
     //
     // Most foundry-licensed Artisan SRAMs follow this port convention.
     // The macro name encodes geometry: SP = single-port, HD = high-density.
@@ -269,7 +269,7 @@ module sram_1rw #(
     // `endif
 
     // =========================================================================
-    // Example B – TSMC standard-cell memory compiler (e.g. tcbn28hpcp)
+    // Example B - TSMC standard-cell memory compiler (e.g. tcbn28hpcp)
     //
     // TSMC 28 nm HPC+ SP SRAM port map.  Timing derating and power domains
     // are handled in the Liberty (.lib) and LEF files supplied by TSMC.
@@ -287,13 +287,13 @@ module sram_1rw #(
     //     .A     (addr),
     //     .D     (wdata),
     //     .Q     (rdata),
-    //     .RTSEL (2'b01),        // read timing select – set per PVT corner
+    //     .RTSEL (2'b01),        // read timing select - set per PVT corner
     //     .WTSEL (2'b01)         // write timing select
     // );
     // `endif
 
     // =========================================================================
-    // Example C – Samsung / GF / SMIC generic compiler (CE-active-high style)
+    // Example C - Samsung / GF / SMIC generic compiler (CE-active-high style)
     //
     // Many SMIC and GF memory compilers use active-high CE/WE matching this
     // wrapper's convention directly, making the mapping one-to-one.
@@ -313,7 +313,7 @@ module sram_1rw #(
     // `endif
 
     // =========================================================================
-    // Example D – Intel / Lattice ECP5 – manually instantiated EBR
+    // Example D - Intel / Lattice ECP5 - manually instantiated EBR
     //             (fallback when altsyncram / `INTEL_FPGA is not available)
     //
     // Lattice EBR (Embedded Block RAM) on ECP5/ECP5-5G uses PDPW16KD or

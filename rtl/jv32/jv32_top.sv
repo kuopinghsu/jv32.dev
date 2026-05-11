@@ -443,7 +443,7 @@ module jv32_top #(
     // The IBUF with 2 slots can overshoot up to ~5 words past the last progbuf
     // EBREAK before a halt stops it.  Using bits[31:6] (64-byte window) ensures
     // all overshoot fetches are served as EBREAK internally rather than escaping
-    // to external AXI (which returns DECERR → instruction-access-fault loop).
+    // to external AXI (which returns DECERR -> instruction-access-fault loop).
     assign core_if_dbgrom = imem_req_valid && (imem_req_addr[31:6] == DEBUG_ROM_BASE[31:6]);
     assign core_if_iram   = imem_req_valid && in_iram(imem_req_addr);
     assign core_if_axi    = imem_req_valid && !core_if_dbgrom && !core_if_iram;

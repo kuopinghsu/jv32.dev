@@ -1,6 +1,6 @@
 /**
  * @file jv_uart.h
- * @brief JV32 AXI UART driver — polling and interrupt-driven modes.
+ * @brief JV32 AXI UART driver -- polling and interrupt-driven modes.
  *
  * Header-only inline driver for the JV32 UART peripheral at JV_UART_BASE.
  * The baud rate is fixed at SoC synthesis time (CLK_FREQ/BAUD_RATE divisor
@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include "jv_platform.h"
 
-/* ── status queries ──────────────────────────────────────────────────────── */
+/* -- status queries -------------------------------------------------------- */
 
 /** Return non-zero if the TX FIFO is full (do not write right now). */
 static inline int jv_uart_tx_busy(void)
@@ -30,13 +30,13 @@ static inline int jv_uart_rx_ready(void)
     return (JV_UART_STATUS & JV_UART_ST_RX_READY) != 0;
 }
 
-/* ── baud rate ───────────────────────────────────────────────────────────── */
+/* -- baud rate ------------------------------------------------------------- */
 
 /**
  * Set the baud-rate divisor at run-time.
- * @param baud_div  CLKS_PER_BIT − 1.  Examples at 80 MHz:
- *                  baud_div = 694  → 115200 baud
- *                  baud_div = 24   → 3.2 Mbaud
+ * @param baud_div  CLKS_PER_BIT - 1.  Examples at 80 MHz:
+ *                  baud_div = 694  -> 115200 baud
+ *                  baud_div = 24   -> 3.2 Mbaud
  *
  * The peripheral latches the new divisor immediately.  Any byte currently
  * in flight will be corrupted; flush the TX FIFO first if needed.
@@ -46,7 +46,7 @@ static inline void jv_uart_set_baud(uint32_t baud_div)
     JV_UART_LEVEL = baud_div & 0xFFFFu;
 }
 
-/* ── polling TX ──────────────────────────────────────────────────────────── */
+/* -- polling TX ------------------------------------------------------------ */
 
 /**
  * Block until the TX FIFO has room, then transmit one byte.
@@ -106,11 +106,11 @@ static inline void jv_uart_putu32(uint32_t v)
     jv_uart_puts(&buf[pos]);
 }
 
-/* ── polling RX ──────────────────────────────────────────────────────────── */
+/* -- polling RX ------------------------------------------------------------ */
 
 /**
  * Return the next byte from the RX FIFO, or -1 if empty.
- * @return  Received byte (0–255) or -1 when the FIFO is empty.
+ * @return  Received byte (0-255) or -1 when the FIFO is empty.
  */
 static inline int jv_uart_getc(void)
 {
@@ -120,7 +120,7 @@ static inline int jv_uart_getc(void)
 
 /**
  * Block until a byte is received, then return it.
- * @return  Received byte (0–255).
+ * @return  Received byte (0-255).
  */
 static inline uint8_t jv_uart_getc_blocking(void)
 {
@@ -128,7 +128,7 @@ static inline uint8_t jv_uart_getc_blocking(void)
     return (uint8_t)(JV_UART_DATA & 0xFFu);
 }
 
-/* ── interrupt control ───────────────────────────────────────────────────── */
+/* -- interrupt control ----------------------------------------------------- */
 
 /**
  * Enable one or more UART interrupt sources.
@@ -150,7 +150,7 @@ static inline void jv_uart_irq_disable(uint32_t mask)
 
 /**
  * Read the interrupt status register (IS is level-triggered; it clears
- * automatically when the FIFO condition resolves — no explicit write-clear
+ * automatically when the FIFO condition resolves -- no explicit write-clear
  * is needed or supported by the hardware).
  * @return  Current value of IS: bit[0]=rx_ready, bit[1]=tx_empty.
  */
@@ -159,15 +159,15 @@ static inline uint32_t jv_uart_irq_status(void)
     return JV_UART_IS;
 }
 
-/* ── loopback ────────────────────────────────────────────────────────────── */
+/* -- loopback -------------------------------------------------------------- */
 
-/** Enable internal TX→RX loopback; uart_rx external pin is ignored. */
+/** Enable internal TX->RX loopback; uart_rx external pin is ignored. */
 static inline void jv_uart_loopback_enable(void)  { JV_UART_CTRL |=  JV_UART_CTRL_LOOPBACK; }
 
 /** Disable loopback; RX reads from the external uart_rx pin. */
 static inline void jv_uart_loopback_disable(void) { JV_UART_CTRL &= ~JV_UART_CTRL_LOOPBACK; }
 
-/* ── capability ──────────────────────────────────────────────────────────── */
+/* -- capability ------------------------------------------------------------ */
 
 /** Return the raw CAPABILITY register value ([31:16]=version,[15:8]=RX_depth,[7:0]=TX_depth). */
 static inline uint32_t jv_uart_capability(void)     { return JV_UART_CAP; }

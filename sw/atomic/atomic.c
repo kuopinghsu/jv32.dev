@@ -40,7 +40,7 @@ int main(void) {
     printf("[RESULT] SKIPPED\n");
     return 0;
 }
-#else /* __riscv_a defined — full test below */
+#else /* __riscv_a defined -- full test below */
 
 // Counters for test statistics
 static uint32_t tests_run = 0;
@@ -441,7 +441,7 @@ static int test_aqrl_ordering(void) {
 // ============================================================================
 // Arch-Test Pattern Replication (riscv-arch-test rv32i_m/A)
 // ============================================================================
-// These functions replicate the exact "sw → AMO" sequence emitted by the
+// These functions replicate the exact "sw -> AMO" sequence emitted by the
 // TEST_AMO_OP macro in the RISC-V architectural compliance tests.
 //
 // The inline asm block stores origval to memory with `sw`, then executes the
@@ -450,7 +450,7 @@ static int test_aqrl_ordering(void) {
 // the store-buffer RAW (Read-After-Write) path in the RTL.
 //
 // For every case:
-//   rd   must equal ARCH_ORIGVAL (0xf7ffffff) – the original memory value.
+//   rd   must equal ARCH_ORIGVAL (0xf7ffffff) - the original memory value.
 //   *mem must equal the result of (ARCH_ORIGVAL OP operand) after the AMO.
 //
 // Operand set mirrors the first ~10 vectors from each *.w-01.S arch test:
@@ -459,7 +459,7 @@ static int test_aqrl_ordering(void) {
 // ============================================================================
 
 // Store origval to *mem_ptr, then execute the named AMO instruction
-// immediately after – all in one asm block so the two instructions are
+// immediately after - all in one asm block so the two instructions are
 // adjacent in the pipeline.  This mirrors the RVTEST_SIGUPD sw + inst pair
 // in the arch-test TEST_AMO_OP macro.
 // Mimics the exact instruction sequence produced by TEST_AMO_OP in the

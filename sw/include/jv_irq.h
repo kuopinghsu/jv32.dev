@@ -5,7 +5,7 @@
  * Provides:
  *  - mie bit-field constants (JV_IRQ_MSIE / MTIE / MEIE)
  *  - mcause interrupt and exception code constants
- *  - Trap frame struct (jv_trap_frame_t) — mirrors startup.S register save layout
+ *  - Trap frame struct (jv_trap_frame_t) -- mirrors startup.S register save layout
  *  - Global interrupt enable/disable helpers (including jv_wfi())
  *  - Per-source mie bit control helpers
  *  - Handler typedefs for the dispatch table (jv_irq.c)
@@ -16,7 +16,7 @@
  * Tests that override trap_handler() entirely bypass the table.
  *
  * Startup integration
- * ───────────────────
+ * -------------------
  * startup.S calls:
  *   void trap_handler(jv_trap_frame_t *frame);
  *
@@ -118,7 +118,7 @@ static inline void jv_irq_source_disable(uint32_t mask)
 }
 
 /* ============================================================================
- * Trap frame — mirrors the register save layout in startup.S
+ * Trap frame -- mirrors the register save layout in startup.S
  *
  * RV32I: startup.S allocates 144 bytes on entry (addi sp, sp, -144):
  * RV32E: startup.S allocates  80 bytes on entry (addi sp, sp, -80);
@@ -165,7 +165,7 @@ static inline void jv_irq_source_disable(uint32_t mask)
  *
  * Exception handlers receive a pointer to this struct and may:
  *   - Set frame->mepc to redirect the return PC (e.g. skip a faulting insn).
- *   - Modify frame->mstatus bits (e.g. clear MIE/MPIE) — changes are applied
+ *   - Modify frame->mstatus bits (e.g. clear MIE/MPIE) -- changes are applied
  *     via csrw before mret so they survive the MRET mstatus restore.
  * ============================================================================ */
 typedef struct jv_trap_frame {
@@ -217,9 +217,9 @@ typedef struct jv_trap_frame {
 /* ============================================================================
  * Handler typedefs
  *
- * jv_irq_handler_t  — called for async interrupts; receives the cause code
+ * jv_irq_handler_t  -- called for async interrupts; receives the cause code
  *                     (MSB already stripped from mcause).
- * jv_exc_handler_t  — called for synchronous exceptions; receives a pointer
+ * jv_exc_handler_t  -- called for synchronous exceptions; receives a pointer
  *                     to the full saved register frame.  Set frame->mepc to
  *                     redirect the return PC (e.g. skip the faulting insn).
  * ============================================================================ */
@@ -238,14 +238,14 @@ typedef void (*jv_exc_handler_t)(jv_trap_frame_t *frame);
 /**
  * Register an interrupt handler for the given mcause interrupt code.
  * @param cause    Interrupt cause code (MSB stripped): JV_CAUSE_MSI / MTI / MEI
- *                 or any other code 0–15.
+ *                 or any other code 0-15.
  * @param handler  Handler function; NULL clears the entry (falls back to default).
  */
 void jv_irq_register(uint32_t cause, jv_irq_handler_t handler);
 
 /**
  * Register an exception handler for the given mcause exception code.
- * @param cause    Exception cause code 0–31.
+ * @param cause    Exception cause code 0-31.
  * @param handler  Handler function; NULL clears the entry (falls back to default).
  *                 Set frame->mepc inside the handler to redirect the return PC.
  */
@@ -259,7 +259,7 @@ void jv_exc_register(uint32_t cause, jv_exc_handler_t handler);
 void jv_irq_dispatch(jv_trap_frame_t *frame);
 
 /**
- * Top-level trap handler — called from trap_entry in startup.S with a pointer
+ * Top-level trap handler -- called from trap_entry in startup.S with a pointer
  * to the full saved register frame.  Weak symbol; individual tests may override.
  * Exception handlers communicate the return PC via frame->mepc rather than a
  * direct csrw; the startup.S epilogue restores mepc from frame->mepc before mret.

@@ -4,18 +4,18 @@
 // Brief  : C++ / newlib integration test.
 //
 // Verified features:
-//   1.  Global constructors        – sequenced before main() via .init_array
-//   2.  std::vector<int>           – heap alloc via _sbrk → malloc/new
-//   3.  std::array<int,N>          – stack-allocated fixed-size container
-//   4.  std::sort / is_sorted      – introsort on dynamic and static ranges
-//   5.  std::find / find_if        – linear search with lambda predicate
-//   6.  std::fill / iota           – range mutation
-//   7.  std::accumulate            – fold / reduce
-//   8.  std::min_element / max     – range extrema
-//   9.  std::transform             – element-wise lambda
-//  10.  operator new / delete      – linked-list heap allocation
-//  11.  Placement new              – in-place construction into char buffer
-//  12.  Move semantics             – std::move, move constructor, vector<T&&>
+//   1.  Global constructors        - sequenced before main() via .init_array
+//   2.  std::vector<int>           - heap alloc via _sbrk -> malloc/new
+//   3.  std::array<int,N>          - stack-allocated fixed-size container
+//   4.  std::sort / is_sorted      - introsort on dynamic and static ranges
+//   5.  std::find / find_if        - linear search with lambda predicate
+//   6.  std::fill / iota           - range mutation
+//   7.  std::accumulate            - fold / reduce
+//   8.  std::min_element / max     - range extrema
+//   9.  std::transform             - element-wise lambda
+//  10.  operator new / delete      - linked-list heap allocation
+//  11.  Placement new              - in-place construction into char buffer
+//  12.  Move semantics             - std::move, move constructor, vector<T&&>
 //
 // Compile flags: -fno-exceptions -fno-rtti
 //   Full exception unwinding requires keeping .eh_frame in link.ld plus a
@@ -55,7 +55,7 @@ static void check(const char *name, bool ok)
 }
 
 // ---------------------------------------------------------------------------
-// 1. Global constructors – record order of construction before main()
+// 1. Global constructors - record order of construction before main()
 // ---------------------------------------------------------------------------
 static int g_ctor_order[4];
 static int g_ctor_next;
@@ -72,7 +72,7 @@ static OrderTracker g_b(2);
 static OrderTracker g_c(3);
 
 // ---------------------------------------------------------------------------
-// 10. operator new / delete – singly-linked list on heap
+// 10. operator new / delete - singly-linked list on heap
 // ---------------------------------------------------------------------------
 struct HeapNode {
     int       val;
@@ -81,7 +81,7 @@ struct HeapNode {
 };
 
 // ---------------------------------------------------------------------------
-// 12. Move semantics – non-copyable resource wrapper
+// 12. Move semantics - non-copyable resource wrapper
 // ---------------------------------------------------------------------------
 struct MoveOnly {
     int *data;

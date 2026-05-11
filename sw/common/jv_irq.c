@@ -4,10 +4,10 @@
 // Description: Machine-mode IRQ / exception dispatch table implementation.
 //
 // Provides:
-//   - jv_irq_register()  — register an interrupt handler for a given cause
-//   - jv_exc_register()  — register an exception handler for a given cause
-//   - jv_irq_dispatch()  — route mcause (via frame) to the correct handler
-//   - trap_handler()     — WEAK bridge from startup.S trap entry to the
+//   - jv_irq_register()  -- register an interrupt handler for a given cause
+//   - jv_exc_register()  -- register an exception handler for a given cause
+//   - jv_irq_dispatch()  -- route mcause (via frame) to the correct handler
+//   - trap_handler()     -- WEAK bridge from startup.S trap entry to the
 //                          dispatch table (tests may override this directly)
 //
 // startup.S contract:
@@ -22,8 +22,9 @@
 extern "C" {
 #endif
 
-/* ── default handlers ─────────────────────────────────────────────────────── */
+/* -- default handlers ------------------------------------------------------- */
 
+/* Exception diagnostic output via magic console (simulation only). */
 static void _puts(const char *s) { while (*s) jv_putc_raw(*s++); }
 
 static inline uint8_t _u8_at(uint32_t addr)
@@ -49,56 +50,35 @@ static int _semihost_try_handle(jv_trap_frame_t *frame)
     if (_u32_at(mepc + 4u) != JV_SEMIHOST_EXIT_NOP)  return 0;
 
     switch (frame->a0) {
-    case JV_SEMIHOST_SYS_WRITEC: {
-        uint8_t ch = (frame->a1 <= 0xFFu) ? (uint8_t)frame->a1
-                                          : _u8_at(frame->a1);
-        jv_putc_raw((char)ch);
+    /* Console and exit operations: I/O is handled at the simulator/debugger
+     * level (tb_jv32_soc.cpp for RTL sim, jv32sim.cpp for SW sim, OpenOCD
+     * for FPGA/chip).  The trap handler only advances mepc and sets the
+     * return value so execution resumes correctly after mret. */
+    case JV_SEMIHOST_SYS_WRITEC:
+    case JV_SEMIHOST_SYS_WRITE0:
         frame->a0 = 0u;
         frame->mepc = mepc + 4u;
         return 1;
-    }
-    case JV_SEMIHOST_SYS_WRITE0: {
-        uint32_t p = frame->a1;
-        while (_u8_at(p) != 0u) jv_putc_raw((char)_u8_at(p++));
-        frame->a0 = 0u;
-        frame->mepc = mepc + 4u;
-        return 1;
-    }
     case JV_SEMIHOST_SYS_WRITE: {
-        uint32_t p = frame->a1;
-        uint32_t handle = _u32_at(p + 0u);
-        uint32_t buf    = _u32_at(p + 4u);
-        uint32_t len    = _u32_at(p + 8u);
-        if (handle == 1u || handle == 2u) {
-            for (uint32_t i = 0; i < len; i++) jv_putc_raw((char)_u8_at(buf + i));
-            frame->a0 = 0u;  // bytes not written
-        } else {
-            frame->a0 = len; // unsupported handle: all bytes unwritten
-        }
+        uint32_t p   = frame->a1;
+        uint32_t len = _u32_at(p + 8u);
+        /* Report 0 bytes not-written for stdout/stderr handles, len otherwise. */
+        frame->a0 = (_u32_at(p + 0u) <= 2u) ? 0u : len;
         frame->mepc = mepc + 4u;
         return 1;
     }
     case JV_SEMIHOST_SYS_READC:
-        frame->a0 = 0xFFFFFFFFu;  // EOF / no input in this environment
+        frame->a0 = 0xFFFFFFFFu;  /* EOF / no console input */
         frame->mepc = mepc + 4u;
         return 1;
-    case JV_SEMIHOST_SYS_EXIT: {
-        uint32_t reason = frame->a1;
-        int code = (reason == JV_SEMIHOST_ADP_STOPPED_APP_EXIT) ? 0 : 1;
-        jv_exit_raw(code);
+    case JV_SEMIHOST_SYS_EXIT:
+    case JV_SEMIHOST_SYS_EXIT_EXTENDED:
+        /* Return value is irrelevant; simulator terminates on its own. */
+        frame->a0 = 0u;
+        frame->mepc = mepc + 4u;
         return 1;
-    }
-    case JV_SEMIHOST_SYS_EXIT_EXTENDED: {
-        uint32_t p = frame->a1;
-        uint32_t reason = _u32_at(p + 0u);
-        uint32_t subcode = _u32_at(p + 4u);
-        int code = (reason == JV_SEMIHOST_ADP_STOPPED_APP_EXIT) ? (int)subcode
-                                                                 : (subcode ? (int)subcode : 1);
-        jv_exit_raw(code);
-        return 1;
-    }
     default:
-        frame->a0 = 0xFFFFFFFFu;  // unsupported op
+        frame->a0 = 0xFFFFFFFFu;  /* unsupported op */
         frame->mepc = mepc + 4u;
         return 1;
     }
@@ -109,7 +89,7 @@ static void _puthex(uint32_t v)
     static const char h[] = "0123456789abcdef";
     _puts("0x");
     for (int i = 7; i >= 0; i--)
-        jv_putc_raw(h[(v >> (i * 4)) & 0xfu]);
+    jv_putc_raw(h[(v >> (i * 4)) & 0xfu]);
 }
 
 static void _default_irq(uint32_t cause)
@@ -138,7 +118,7 @@ static void _default_exc(jv_trap_frame_t *frame)
             frame->mepc = mepc + insn_len;
             return;
         }
-        /* Data-access fault — leave mepc unchanged (retry). */
+        /* Data-access fault -- leave mepc unchanged (retry). */
         return;
     }
 
@@ -158,7 +138,7 @@ static void _default_exc(jv_trap_frame_t *frame)
     while (1) {}
 }
 
-/* ── dispatch tables ──────────────────────────────────────────────────────── */
+/* -- dispatch tables -------------------------------------------------------- */
 
 #define _IRQ_MAX 16u
 #define _EXC_MAX 32u
@@ -166,7 +146,7 @@ static void _default_exc(jv_trap_frame_t *frame)
 static jv_irq_handler_t _irq_table[_IRQ_MAX];
 static jv_exc_handler_t _exc_table[_EXC_MAX];
 
-/* ── registration ─────────────────────────────────────────────────────────── */
+/* -- registration ----------------------------------------------------------- */
 
 void jv_irq_register(uint32_t cause, jv_irq_handler_t handler)
 {
@@ -180,7 +160,7 @@ void jv_exc_register(uint32_t cause, jv_exc_handler_t handler)
         _exc_table[cause] = handler;
 }
 
-/* ── dispatcher ───────────────────────────────────────────────────────────── */
+/* -- dispatcher ------------------------------------------------------------- */
 
 void jv_irq_dispatch(jv_trap_frame_t *frame)
 {
@@ -195,6 +175,14 @@ void jv_irq_dispatch(jv_trap_frame_t *frame)
     } else {
         /* Synchronous exception */
         uint32_t code = mcause & 0x7FFFFFFFu;
+
+        /* Semihost marker ebreak must be handled before per-test breakpoint
+         * handlers; otherwise jv_exit()/jv_putc() semihost calls can be
+         * mistaken for plain breakpoint exceptions and never complete. */
+        if (code == JV_EXC_BREAKPOINT) {
+            if (_semihost_try_handle(frame)) return;
+        }
+
         if (code < _EXC_MAX && _exc_table[code])
             _exc_table[code](frame);
         else
@@ -202,7 +190,7 @@ void jv_irq_dispatch(jv_trap_frame_t *frame)
     }
 }
 
-/* ── bridge from startup.S ────────────────────────────────────────────────── */
+/* -- bridge from startup.S -------------------------------------------------- */
 
 /**
  * Default weak trap_handler(): routes to the jv_irq dispatch tables.

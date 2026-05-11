@@ -451,15 +451,15 @@ module jv32_core #(
     // as trace_retire fires, because that is the only cycle where ex_wb_r
     // reliably holds the retiring instruction.  trace_valid_r is the registered
     // version (one cycle later); by then ex_wb_r may be a bubble or the next
-    // instruction, giving a wrong DPC (e.g. 0+2 = 0x2 → instruction-access fault).
+    // instruction, giving a wrong DPC (e.g. 0+2 = 0x2 -> instruction-access fault).
     //
     // step_dpc_latch is loaded at the posedge where trace_retire=1 (same posedge
     // that sets trace_valid_r<=1).  The halt actually fires one cycle later (when
     // trace_valid_r=1), so dbg_halt_pc_r picks up step_dpc_latch which is stable.
     //
-    // ex_wb_r.step_redirect: set for JAL, JALR, taken-branch, fence.i — any case
+    // ex_wb_r.step_redirect: set for JAL, JALR, taken-branch, fence.i -- any case
     // where the sequential PC+size is not the correct next instruction.
-    logic        trace_retire;  // one-cycle retire pulse — assign near trace logic block
+    logic        trace_retire;  // one-cycle retire pulse -- assign near trace logic block
     logic [31:0] step_dpc_latch;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) step_dpc_latch <= BOOT_ADDR;
@@ -604,7 +604,7 @@ module jv32_core #(
 
     // Pop: JALR that reads a link register and does not write one (return).
     // Guard with ras_not_empty: do not redirect (and do not pop) when the RAS
-    // has no entries — the hardware init value (0x0) would cause a spurious
+    // has no entries -- the hardware init value (0x0) would cause a spurious
     // I-fetch to address 0 that the stale-fetch suppressor cannot always catch.
     // Also gated by !dbg_halted_r to prevent stale-IBUF RAS corruption during halts.
     assign bp_ras_pop  = BP_EN && RAS_ACTIVE && rvc_instr_valid && !if_stall && !if_flush
@@ -1825,7 +1825,7 @@ module jv32_core #(
                 ex_wb_r.redirect_pc   <= redirect_pc_ex;
                 // step_redirect: tell single-step DPC logic to use redirect_pc
                 // instead of sequential PC+size.  True for:
-                //   JAL/JALR   (always — redirect_pc is the jump/return target)
+                //   JAL/JALR   (always -- redirect_pc is the jump/return target)
                 //   taken branch (redirect_pc = branch target)
                 //   fence.i    (redirect_pc = PC+4, same as PC+size but explicit)
                 ex_wb_r.step_redirect <= dec_jal || dec_jalr || (dec_branch && branch_taken) || dec_is_fence_i;

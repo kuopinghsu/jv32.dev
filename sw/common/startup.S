@@ -87,18 +87,27 @@ _spin:
 #define JV_STARTUP_USE_SEMIHOST 1
 #endif
 
+#ifndef JV_SEMIHOST_TRAP_MAGIC_IO
+#define JV_SEMIHOST_TRAP_MAGIC_IO 1
+#endif
+
 /* ============================================================================
- * _exit: optional semihosting exit, always with magic-device fallback
+ * _exit: issue a RISC-V semihosting SYS_EXIT_EXTENDED call, then spin.
+ *
+ * The ebreak is intercepted by:
+ *   - jv32sim.cpp  (software simulation, before trap fires)
+ *   - tb_jv32_soc.cpp (RTL simulation, host-side at ENTRY_NOP retire)
+ *   - OpenOCD (FPGA / real chip, via JTAG halt)
+ * No magic-device write; the trap handler in jv_irq.c is I/O-free.
  * ============================================================================ */
     .section .text, "ax", @progbits
     .global  _exit
     .type    _exit, @function
 _exit:
-#if JV_STARTUP_USE_SEMIHOST
-    /* Try semihosting SYS_EXIT_EXTENDED first:
+    /* SYS_EXIT_EXTENDED (0x20):
      *   a0 = 0x20
      *   a1 = &{ reason=0x20026 (ADP_Stopped_ApplicationExit), subcode=code }
-     * sequence marker: slli x0,x0,0x1f ; ebreak ; srai x0,x0,7 */
+     * Sequence: slli x0,x0,0x1f ; ebreak ; srai x0,x0,7 */
     addi    sp, sp, -16
     sw      a0, 0(sp)
     li      t0, 0x20026
@@ -107,26 +116,17 @@ _exit:
     sw      t1, 8(sp)
     li      a0, 0x20
     addi    a1, sp, 4
+    .option push
+    .option norvc
+    .balign 4
     .word   0x01F01013
     .word   0x00100073
     .word   0x40705013
+    .option pop
     lw      a0, 0(sp)
     addi    sp, sp, 16
-#endif
-
-    /* Fallback: magic peripheral EXIT register at 0x4000_0004:
-     *   encoding: PASS (code=0) → write 1; FAIL (code≠0) → write (code<<1)|1
-     *   write non-zero value triggers sim_request_exit(value>>1) DPI-C call */
-    li      t0, 0x40000004
-    beqz    a0, .Lexit_pass
-    slli    a0, a0, 1
-    ori     a0, a0, 1
-    j       .Lexit_write
-.Lexit_pass:
-    li      a0, 1
-.Lexit_write:
-    sw      a0, 0(t0)
-    j       _spin             /* should not reach here; DPI exits sim */
+    /* Simulator/debugger should have terminated; spin as safe fallback. */
+    j       _spin
     .size _exit, . - _exit
 
 /* ============================================================================
@@ -213,7 +213,7 @@ trap_entry:
     mv      a0, sp
     call    trap_handler
 
-    /* Restore mstatus and mepc from frame (authoritative — handlers may have
+    /* Restore mstatus and mepc from frame (authoritative -- handlers may have
      * modified them to redirect return PC or update interrupt-enable state). */
     lw      x1, TRAP_MSTAT_OFF(sp)
     csrw    mstatus, x1

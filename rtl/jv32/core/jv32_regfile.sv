@@ -60,7 +60,7 @@ module jv32_regfile #(
     logic [31:0] regs[NREGS-1:1];  // x0 is hardwired to 0
 
     // Read mux: explicit loop over valid indices [1..NREGS-1] with a constant index.
-    // Yosys treats regs[constant] as a direct wire — no variable-index mux tree is
+    // Yosys treats regs[constant] as a direct wire -- no variable-index mux tree is
     // generated, so index 0 (absent from regs[NREGS-1:1]) is never referenced and
     // the Yosys CHECK pass reports no undriven-wire errors.
     logic [31:0] rs1_mux, rs2_mux, dbg_mux;

@@ -1,6 +1,6 @@
 /**
  * @file jv_clic.h
- * @brief JV32 CLIC driver — mtime, mtimecmp, MSIP, and external interrupt control.
+ * @brief JV32 CLIC driver -- mtime, mtimecmp, MSIP, and external interrupt control.
  *
  * Header-only inline driver for the JV32 CLIC peripheral at JV_CLIC_BASE.
  * The CLIC exposes a CLINT-compatible mtime/mtimecmp/msip block at the
@@ -17,7 +17,7 @@
 #include "jv_platform.h"
 #include "jv_irq.h"
 
-/* ── mtime ───────────────────────────────────────────────────────────────── */
+/* -- mtime ----------------------------------------------------------------- */
 
 /**
  * Read the 64-bit hardware timer, safe against carry-over of the high word.
@@ -34,7 +34,7 @@ static inline uint64_t jv_clic_mtime(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
-/* ── mtimecmp ────────────────────────────────────────────────────────────── */
+/* -- mtimecmp -------------------------------------------------------------- */
 
 /**
  * Write a new 64-bit compare value.
@@ -93,7 +93,7 @@ static inline void jv_clic_timer_irq_disable(void)
     jv_irq_source_disable(JV_IRQ_MTIE);
 }
 
-/* ── software interrupt (MSIP) ───────────────────────────────────────────── */
+/* -- software interrupt (MSIP) --------------------------------------------- */
 
 /** Trigger a machine software interrupt by setting MSIP[0]. */
 static inline void jv_clic_msip_set(void)
@@ -123,11 +123,11 @@ static inline void jv_clic_msip_irq_disable(void)
     jv_irq_source_disable(JV_IRQ_MSIE);
 }
 
-/* ── external interrupt lines (CLICINT[n]) ───────────────────────────────── */
+/* -- external interrupt lines (CLICINT[n]) --------------------------------- */
 
 /**
  * Enable external interrupt line @p n.
- * @param n  Line index (0–15).
+ * @param n  Line index (0-15).
  */
 static inline void jv_clic_ext_irq_enable(unsigned n)
 {
@@ -136,7 +136,7 @@ static inline void jv_clic_ext_irq_enable(unsigned n)
 
 /**
  * Disable external interrupt line @p n.
- * @param n  Line index (0–15).
+ * @param n  Line index (0-15).
  */
 static inline void jv_clic_ext_irq_disable(unsigned n)
 {
@@ -145,7 +145,7 @@ static inline void jv_clic_ext_irq_disable(unsigned n)
 
 /**
  * Return non-zero if external interrupt line @p n is pending.
- * @param n  Line index (0–15).
+ * @param n  Line index (0-15).
  */
 static inline int jv_clic_ext_irq_pending(unsigned n)
 {
@@ -154,7 +154,7 @@ static inline int jv_clic_ext_irq_pending(unsigned n)
 
 /**
  * Set the priority/level of external interrupt line @p n.
- * @param n      Line index (0–15).
+ * @param n      Line index (0-15).
  * @param level  8-bit level value; higher = more urgent.
  */
 static inline void jv_clic_ext_irq_set_level(unsigned n, uint8_t level)

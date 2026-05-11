@@ -5,8 +5,8 @@
  *
  * Overrides the Linux-ecall-based stubs that newlib ships by default.
  * _write routes characters through jv_putc(), which uses semihosting v1.0
- * by default (with raw magic-device fallback), so puts()/printf() work
- * without Linux ecall handling.
+ * by default without touching the simulator-only magic device, so
+ * puts()/printf() work without Linux ecall handling.
  * ============================================================================ */
 
 #include <sys/stat.h>
@@ -18,7 +18,7 @@
 #undef errno
 extern int errno;
 
-/* Heap for dynamic allocation (_sbrk) — symbols from link.ld */
+/* Heap for dynamic allocation (_sbrk) -- symbols from link.ld */
 extern char __heap_start[];
 extern char __heap_end[];
 static char *_heap_ptr = NULL;
