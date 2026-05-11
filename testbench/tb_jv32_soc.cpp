@@ -375,6 +375,20 @@ public:
 // Magic exit address
 #define MAGIC_EXIT_ADDR  0x40000000U
 
+// MMIO addresses used for runtime I/O stats
+#define MAGIC_CONSOLE_ADDR 0x40000000U
+#define UART_DATA_ADDR     0x20010000U
+
+// RISC-V semihosting v1.0 marker sequence/opcodes (for trace-side stats)
+#define SEMIHOST_ENTRY_NOP 0x01F01013u  // slli x0, x0, 0x1f
+#define SEMIHOST_EBREAK    0x00100073u  // ebreak
+#define SEMIHOST_SYS_WRITEC        0x03u
+#define SEMIHOST_SYS_WRITE0        0x04u
+#define SEMIHOST_SYS_WRITE         0x05u
+#define SEMIHOST_SYS_READC         0x07u
+#define SEMIHOST_SYS_EXIT          0x18u
+#define SEMIHOST_SYS_EXIT_EXTENDED 0x20u
+
 static volatile sig_atomic_t g_sigint = 0;
 static void sig_handler(int) { g_sigint = 1; }
 
@@ -621,6 +635,11 @@ int main(int argc, char** argv) {
     uint64_t bp_jal_miss  = 0;   // JALs not pre-decoded (caused EX redirect)
     uint64_t bp_jalr      = 0;   // JALR instructions (always cause EX redirect)
 
+    // I/O statistics (runtime-observed activity in RTL simulation)
+    uint64_t io_magic_console_writes = 0;
+    uint64_t io_uart_tx_writes       = 0;
+    uint64_t io_semihost_write_calls = 0;
+
     while (!g_sigint && !g_exit_requested && !ctx->gotFinish() &&
            (max_cycles == 0 || cycle < max_cycles)) {
         if (g_sigint) break;
@@ -671,6 +690,24 @@ int main(int argc, char** argv) {
         // Count and emit every retired instruction.
         if (dut->trace_valid) {
             instret++;
+            if (dut->trace_mem_we) {
+                uint32_t waddr = (uint32_t)dut->trace_mem_addr;
+                uint32_t waddr_word = waddr & ~3u;
+                if (waddr_word == MAGIC_CONSOLE_ADDR) {
+                    io_magic_console_writes++;
+                }
+                else if (waddr_word == UART_DATA_ADDR) io_uart_tx_writes++;
+            }
+
+            if ((uint32_t)dut->trace_instr == SEMIHOST_ENTRY_NOP) {
+                // ebreak does not retire in this pipeline trace; count calls
+                // at the semihost marker entry instruction.
+                uint32_t op = (uint32_t)get_gpr(10); // a0 = semihost op id
+                if (op == SEMIHOST_SYS_WRITEC || op == SEMIHOST_SYS_WRITE0 || op == SEMIHOST_SYS_WRITE) {
+                    io_semihost_write_calls++;
+                }
+            }
+
             if (rtl_tfp) {
                 emit_rtl_trace(rtl_tfp, instret, cycle,
                                dut->trace_pc, dut->trace_instr,
@@ -776,6 +813,18 @@ int main(int argc, char** argv) {
          (unsigned long long)cycle,
          eff_mhz,
          cpi);
+
+    fprintf(stderr, "[RTL-SIM] I/O statistics:\n");
+        uint64_t io_magic_out_count =
+        (io_magic_console_writes > io_semihost_write_calls)
+            ? (io_magic_console_writes - io_semihost_write_calls)
+            : 0;
+        fprintf(stderr, "[RTL-SIM]   magic out count    : %llu\n",
+            (unsigned long long)io_magic_out_count);
+        fprintf(stderr, "[RTL-SIM]   Semihost out count : %llu\n",
+            (unsigned long long)io_semihost_write_calls);
+        fprintf(stderr, "[RTL-SIM]   UART out count     : %llu\n",
+            (unsigned long long)io_uart_tx_writes);
 
     kanata.finish();
     dut->final();

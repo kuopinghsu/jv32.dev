@@ -82,17 +82,9 @@ module axi_magic (
     write_state_t        write_state;
     logic         [31:0] write_addr_reg;
 
-    // State machine for read transactions
-    typedef enum logic [1:0] {
-        READ_IDLE,
-        READ_RESP
-    } read_state_t;
-
-    read_state_t       read_state;
-
     // Write data extraction variables
-    logic              is_byte_write;
-    logic        [7:0] write_byte;
+    logic                is_byte_write;
+    logic         [ 7:0] write_byte;
 
     // Combinational logic to extract write byte based on strobe
     always_comb begin
@@ -201,41 +193,30 @@ module axi_magic (
     end
 
     // Read channel handling (return 0 for all reads)
+    // Keep ARREADY asserted so software that pulses ARVALID for one cycle
+    // cannot deadlock on this simulation-only peripheral.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            read_state  <= READ_IDLE;
-            axi_arready <= 1'b0;
+            axi_arready <= 1'b1;
             axi_rdata   <= 32'h0;
             axi_rresp   <= 2'b00;
             axi_rvalid  <= 1'b0;
         end
         else begin
-            case (read_state)
-                READ_IDLE: begin
-                    axi_arready <= 1'b1;
-                    axi_rvalid  <= 1'b0;
+            // Response consumed.
+            if (axi_rvalid && axi_rready) begin
+                axi_rvalid <= 1'b0;
+            end
 
-                    if (axi_arvalid && axi_arready) begin
-                        axi_arready <= 1'b0;
-                        axi_rdata <= 32'h0;
-                        // Respond OKAY for recognised addresses; SLVERR otherwise
-                        axi_rresp  <= ((axi_araddr & ~32'h3) == EXIT_MAGIC_ADDR ||
-                                       (axi_araddr & ~32'h3) == CONSOLE_MAGIC_ADDR)
-                                      ? 2'b00 : 2'b10;  // OKAY or SLVERR
-                        axi_rvalid <= 1'b1;
-                        read_state <= READ_RESP;
-                    end
-                end
-
-                READ_RESP: begin
-                    if (axi_rvalid && axi_rready) begin
-                        axi_rvalid <= 1'b0;
-                        read_state <= READ_IDLE;
-                    end
-                end
-
-                default: read_state <= READ_IDLE;
-            endcase
+            // Accept and respond to any read address.
+            if (axi_arvalid && axi_arready) begin
+                axi_rdata <= 32'h0;
+                // Respond OKAY for recognised addresses; SLVERR otherwise
+                axi_rresp  <= ((axi_araddr & ~32'h3) == EXIT_MAGIC_ADDR ||
+                               (axi_araddr & ~32'h3) == CONSOLE_MAGIC_ADDR)
+                              ? 2'b00 : 2'b10;  // OKAY or SLVERR
+                axi_rvalid <= 1'b1;
+            end
         end
     end
 

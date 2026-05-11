@@ -135,11 +135,17 @@ if {[catch {estimate_parasitics -global_routing} err]} {
 # PL_RESIZER_HOLD_SLACK_MARGIN / GRT_RESIZER_HOLD_SLACK_MARGIN (config.yaml).
 ###############################################################################
 puts "\n===================================================="
-puts " \[4b/5\] Repairing hold violations (slack margin 0.03 ns)"
+puts " \[4b/5\] Repairing hold violations (hold margin 0.12 ns)"
 puts "====================================================\n"
 
 if {[catch {
-    repair_timing -hold -slack_margin 0.03 -max_buffer_percent 20
+    # Filled designs frequently fail legalization during hold repair.
+    # Remove fillers first so repair_timing can legally insert buffers.
+    if {![catch {remove_fillers}]} {
+        puts "  Removed filler cells before hold repair."
+    }
+
+    repair_timing -hold -hold_margin 0.12 -max_buffer_percent 20
     # Re-estimate parasitics so subsequent reports see the repaired topology.
     if {[catch {estimate_parasitics -global_routing} err]} {
         estimate_parasitics -placement

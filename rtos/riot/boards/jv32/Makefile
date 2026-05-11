@@ -38,6 +38,14 @@ RIOT_COMMON  = $(RIOT_DIR)/cpu/riscv_common
 SW_INCLUDE   = $(PROJECT_ROOT)/sw/include
 JV_IO_BACKEND ?= semihost
 RIOT_IO_SRC   = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
+RIOT_IO_DEFS  =
+
+# RIOT's trap path (riscv_common/irq_arch.c) does not currently emulate the
+# RISC-V semihosting ebreak marker sequence, so using jv_io_semihost.c would
+# trap/hang before fallback can execute. Force raw backend behavior for RIOT.
+ifeq ($(JV_IO_BACKEND),semihost)
+RIOT_IO_DEFS += -DJV_SEMIHOST_ENABLE=0
+endif
 
 # ── RIOT source files (minimal kernel — no module system required) ────
 #
@@ -140,6 +148,7 @@ RIOT_CFLAGS += $(RIOT_MODULES)
 RIOT_CFLAGS += $(RIOT_KERNEL_DEFS)
 RIOT_CFLAGS += $(RIOT_BOARD_DEFS)
 RIOT_CFLAGS += $(RIOT_DEBUG_DEFS)
+RIOT_CFLAGS += $(RIOT_IO_DEFS)
 # Suppress warnings from upstream RIOT code that we cannot modify
 RIOT_CFLAGS += -Wno-pedantic -Wno-cast-align -Wno-unused-parameter
 
