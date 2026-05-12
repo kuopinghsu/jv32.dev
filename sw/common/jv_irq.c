@@ -60,10 +60,10 @@ static int _semihost_try_handle(jv_trap_frame_t *frame)
         frame->mepc = mepc + 4u;
         return 1;
     case JV_SEMIHOST_SYS_WRITE: {
-        uint32_t p   = frame->a1;
-        uint32_t len = _u32_at(p + 8u);
-        /* Report 0 bytes not-written for stdout/stderr handles, len otherwise. */
-        frame->a0 = (_u32_at(p + 0u) <= 2u) ? 0u : len;
+        /* The host-side semihost handler already emits WRITE payload bytes for
+         * this project. Report success (0 bytes not-written) to prevent upper
+         * layers from retrying writes forever on non-stdio handles. */
+        frame->a0 = 0u;
         frame->mepc = mepc + 4u;
         return 1;
     }

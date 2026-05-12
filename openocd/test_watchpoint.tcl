@@ -88,41 +88,40 @@ if {$dcsr_cause != 2} {
 puts "write watchpoint hit on [format 0x%08x $wp_store_addr] dcsr.cause=$dcsr_cause OK"
 
 # ── subtest: read watchpoint ──────────────────────────────────────────────────
-# Use an IRAM address that the spin-loop code passes through; we write the
-# value first via debug so it is not zero, then watch it for a load-triggered
-# halt.  The hart will continuously read from its own code stream (instruction
-# fetch via IRAM), so a load-watchpoint on a code-fetch address fires instantly.
-# Strategy: halt the spinning hart, place a read watchpoint on its current PC
-# (an instruction-fetch load), resume, and expect immediate halt.
+# Use a controlled debug progbuf load (lw) from the watched address so the test
+# is deterministic and independent of OpenOCD halt-request timing.
 puts "\[SUBTEST\] read watchpoint"
 halt
 if {[catch {wait_halt 1000}]} {
     error "hart did not halt for read wp test"
 }
-set rwp_addr [reg_val pc]
+set rwp_addr $wp_store_addr
 
 set trig_load_cfg 0x08001041
 reg tselect 0x1
 reg tdata1 $trig_load_cfg
 reg tdata2 $rwp_addr
-if {[catch {resume} resume_err2]} {
-    error "resume failed for read wp: $resume_err2"
+
+# Execute one explicit load instruction via progbuf:
+#   lw x12, 0(x10)
+# with x10=rwp_addr.
+write_gpr 10 $rwp_addr
+riscv dmi_write 0x20 0x00052603   ;# lw x12,0(x10)
+riscv dmi_write 0x21 0x00100073   ;# ebreak
+
+riscv dmi_write 0x17 [expr {(2 << 20) | (1 << 18)}]
+after 50
+check_cmderr "read watchpoint postexec" 0
+
+# Disable trigger 1 after the hit.
+reg tselect 0x1
+reg tdata1 0x0
+
+set dcsr2 [reg_val dcsr]
+set cause2 [expr {($dcsr2 >> 6) & 0x7}]
+if {$cause2 != 2} {
+    error "read wp: DCSR.cause expected 2 (trigger) got $cause2"
 }
-if {[catch {wait_halt 1000}]} {
-    catch {halt}
-    catch {wait_halt 1000}
-    catch {reg tselect 0x1}
-    catch {reg tdata1 0x0}
-    puts "read watchpoint: hart did not halt (instruction fetch may not count as a data load)"
-} else {
-    catch {reg tselect 0x1}
-    catch {reg tdata1 0x0}
-    set dcsr2 [reg_val dcsr]
-    set cause2 [expr {($dcsr2 >> 6) & 0x7}]
-    if {$cause2 != 2} {
-        error "read wp: DCSR.cause expected 2 (trigger) got $cause2"
-    }
-    puts "read watchpoint hit at [format 0x%08x $rwp_addr] dcsr.cause=$cause2 OK"
-}
+puts "read watchpoint hit at [format 0x%08x $rwp_addr] dcsr.cause=$cause2 OK"
 
 puts "\[PASS\] watchpoint"

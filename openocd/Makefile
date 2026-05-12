@@ -43,6 +43,7 @@
 #   VPI_PORT     — TCP port for VPI server   (default: 5555)
 #   GDB_PORT     — TCP port for GDB server   (default: 3333)
 #   BOOT_ELF     — ELF loaded into the SoC  (default: build/hello.elf)
+#   BOOT_IO_BACKEND — I/O backend for boot ELF build (default: magic)
 #   WAVE=1|fst   — dump FST waveform to build/<type>_<name>.fst
 #   WAVE=vcd     — dump VCD waveform to build/<type>_<name>.vcd
 # ============================================================================
@@ -70,6 +71,7 @@ VPI_CJTAG := $(BUILD_DIR)/jv32vpi_cjtag
 # With sim_request_exit() ignored by the VPI testbench, the hart stays
 # alive in that spin loop so OpenOCD can halt/resume/examine it at will.
 BOOT_ELF ?= $(BUILD_DIR)/hello.elf
+BOOT_IO_BACKEND ?= magic
 
 # ── VPI TCP port ──────────────────────────────────────────────────────────────
 VPI_PORT ?= 5555
@@ -119,8 +121,8 @@ all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello gdb-zcm
 # ─────────────────────────────────────────────────────────────────────────────
 # Build prerequisites
 # ─────────────────────────────────────────────────────────────────────────────
-$(BOOT_ELF):
-	$(MAKE) -C $(ROOT_DIR) sw-hello BUILD_DIR=$(BUILD_DIR)
+$(BOOT_ELF): FORCE
+	$(MAKE) -C $(ROOT_DIR) sw-hello BUILD_DIR=$(BUILD_DIR) JV_IO_BACKEND=$(BOOT_IO_BACKEND)
 
 $(VPI_JTAG): FORCE
 	$(MAKE) -C $(ROOT_DIR) build-vpi-jtag WAVE=$(WAVE)

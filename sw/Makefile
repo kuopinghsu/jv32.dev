@@ -78,6 +78,7 @@ BUILD_DIR ?= $(abspath $(SW_DIR)/../build)
 OBJ_DIR   := $(BUILD_DIR)/obj
 JV_IO_SRC := common/jv_io_$(JV_IO_BACKEND).c
 JV_IO_LIB := $(OBJ_DIR)/libjv_io_$(JV_IO_BACKEND).a
+BACKEND_STAMP := $(OBJ_DIR)/.backend_current
 
 # Linker script
 COMMON_LINK := common/link.ld
@@ -122,11 +123,20 @@ build-all:
 
 FORCE:
 
+# Backend stamp participates in ELF dependencies so changing JV_IO_BACKEND
+# (while keeping the same output filename) triggers a rebuild.
+$(BACKEND_STAMP): FORCE
+	@mkdir -p $(OBJ_DIR)
+	@if [ ! -f "$@" ] || [ "$$(cat "$@")" != "$(JV_IO_BACKEND)" ]; then \
+		printf "%s\n" "$(JV_IO_BACKEND)" > "$@"; \
+	fi
+
 # Generic pattern rule: ELF is rebuilt when common sources, linker script,
 # or any source/header under the test directory changes.
 .SECONDEXPANSION:
 $(BUILD_DIR)/%.elf: $(COMMON_SRCS) $(COMMON_LINK) \
 					$(JV_IO_SRC) \
+					$(BACKEND_STAMP) \
 					$$(wildcard $(SW_DIR)/$$*/*.c $(SW_DIR)/$$*/*.S $(SW_DIR)/$$*/*.cpp $(SW_DIR)/$$*/*.h $(SW_DIR)/$$*/makefile.mak)
 	@$(MAKE) --no-print-directory __build-test TEST=$* OUT=$@
 

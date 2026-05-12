@@ -21,6 +21,9 @@ ZEPHYR_BUILD_DIR   = $(ZEPHYR_BUILD_ROOT).$(TEST)
 ZEPHYR_TOOLCHAIN_VARIANT ?= cross-compile
 CROSS_COMPILE ?= $(RISCV_PREFIX)
 JV_IO_BACKEND ?= semihost
+# Zephyr on JV32 runs reliably in RTL with magic backend semantics.
+# Keep command-line overrides, but map semihost -> magic for this framework.
+JV32_IO_BACKEND_EFFECTIVE := $(if $(filter semihost,$(JV_IO_BACKEND)),magic,$(JV_IO_BACKEND))
 
 SAMPLE_DIRS  = $(wildcard $(ZEPHYR_SAMPLES)/*)
 SAMPLE_NAMES = $(notdir $(SAMPLE_DIRS))
@@ -94,6 +97,9 @@ build: setup
 	fi
 	@ZEPHYR_BASE="$(ZEPHYR_BASE)" bash "$(ZEPHYR_DIR)/patch_kconfig.sh" 2>&1 | grep -v '^$$' || true
 	@mkdir -p "$(BUILD_DIR)"
+	@if [ "$(JV_IO_BACKEND)" = "semihost" ]; then \
+		echo "[zephyr] JV_IO_BACKEND=semihost mapped to magic for RTL-stable run/exit"; \
+	fi
 	@. "$(ZEPHYR_VENV)/bin/activate" && \
 		export ZEPHYR_BASE="$(ZEPHYR_BASE)" && \
 		export ZEPHYR_TOOLCHAIN_VARIANT="$(ZEPHYR_TOOLCHAIN_VARIANT)" && \
@@ -104,7 +110,7 @@ build: setup
 			-DZEPHYR_BASE="$(ZEPHYR_BASE)" \
 			-DZEPHYR_TOOLCHAIN_VARIANT="$(ZEPHYR_TOOLCHAIN_VARIANT)" \
 			-DCROSS_COMPILE="$(CROSS_COMPILE)" \
-			-DJV32_IO_BACKEND="$(JV_IO_BACKEND)" \
+			-DJV32_IO_BACKEND="$(JV32_IO_BACKEND_EFFECTIVE)" \
 			-DZEPHYR_MODULES="$(ZEPHYR_DIR)"
 	@cp "$(ZEPHYR_BUILD_DIR)/zephyr/zephyr.elf" "$(BUILD_DIR)/zephyr-$(TEST).elf"
 	@$(OBJDUMP) -D "$(BUILD_DIR)/zephyr-$(TEST).elf" > "$(BUILD_DIR)/zephyr-$(TEST).dis"

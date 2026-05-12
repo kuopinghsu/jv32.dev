@@ -3,6 +3,7 @@
 
 # SoC configuration
 CONFIG_SOC_RISCV_JV32=y
+CONFIG_XIP=y
 
 # Serial and Console configuration
 CONFIG_SERIAL=y

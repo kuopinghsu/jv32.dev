@@ -67,7 +67,7 @@ OPENROAD ?= $(HOME)/OpenROAD/python/openroad
 # $(firstword $(MAKEFILE_LIST)) is always this Makefile itself (not includes).
 SYN_DIR        := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 VENV_DIR       := $(SYN_DIR)/.venv
-PDK_ROOT       := $(SYN_DIR)/pdk
+PDK_ROOT       ?= $(SYN_DIR)/pdk
 OPENRAM_OUTDIR := $(SYN_DIR)/lib/openram
 OPENLANE_DIR   := $(SYN_DIR)/openlane
 BUILD_DIR      := $(SYN_DIR)/build
@@ -171,88 +171,98 @@ check:
 	@echo "  OPENRAM_OUT  : $(OPENRAM_OUTDIR)"
 	@echo "Checks passed."
 
-# ── OpenLane2 / Nix dependency setup ─────────────────────────────────────────
-# Pre-fetches all OpenLane2 Nix packages into the local Nix store so that
-# subsequent 'make synth' invocations start without a network download.
+# ── LVS entry point ─────────────────────────────────────────────────────────
+# The repo-local Magic setup is a stub, so the default `make lvs` entry point
+# falls back to the already-configured OpenLane/Netgen LVS path.
+# A real Magic+Netgen flow remains available via `make lvs-gds` when a full
+# FreePDK45/NangateOpenCellLibrary install is provided through NANGATE_HOME.
 #
-# Run once after cloning / updating openlane2:
-#   make syn-setup
+# Usage:
+#   make lvs
+#   make lvs-gds GDS_FILE=... LVS_NL=... LVS_PDK_ROOT=...
 #
-syn-setup:
-	@echo "========================================"
-	@echo " OpenLane2 Nix dependency setup"
-	@echo "  OPENLANE : $(OPENLANE)"
-	@echo "  NIX_SHELL: $(NIX_SHELL)"
-	@echo "========================================" 
-	@if [ ! -d "$(OPENLANE)" ]; then \
-	    echo "ERROR: OPENLANE not found at '$(OPENLANE)'"; \
-	    echo "       Set OPENLANE in env.config."; \
-	    exit 1; \
-	fi
-	@if [ ! -f "$(OPENLANE)/shell.nix" ]; then \
-	    echo "ERROR: shell.nix not found in $(OPENLANE)."; \
-	    echo "       Make sure OPENLANE points to the openlane2 source tree."; \
-	    exit 1; \
-	fi
-	@if ! command -v $(NIX_SHELL) >/dev/null 2>&1; then \
-	    echo "ERROR: nix-shell not found. Install Nix: https://nixos.org/download"; \
-	    exit 1; \
-	fi
-	@echo "Pre-fetching Nix packages (this may take several minutes on first run)..."
-	$(NIX_SHELL) $(OPENLANE)/shell.nix --run \
-	    "python3 -m openlane --version"
-	@chmod +x $(SYN_DIR)/scripts/openlane_nix.sh
-	@echo "========================================" 
-	@echo " syn-setup complete."
-	@echo " Nix store is primed; 'make synth' will use:"
-	@echo "   OPENLANE_CMD = $(OPENLANE_CMD)"
-	@echo "========================================" 
+_OL_NL   := $(OPENLANE_RUN_DIR)/final/nl/$(DESIGN).nl.v
+LVS_NL   ?= $(if $(wildcard $(_OL_NL)),$(_OL_NL),)
+LVS_PDK_ROOT ?= $(NANGATE_HOME)
+LVS_MAGIC_RC  ?= $(firstword $(wildcard \
+	$(LVS_PDK_ROOT)/libs.tech/magic/freepdk45.magicrc \
+	$(LVS_PDK_ROOT)/libs.tech/magic/FreePDK45.magicrc))
+LVS_NETGEN_SETUP ?= $(firstword $(wildcard \
+	$(LVS_PDK_ROOT)/libs.tech/netgen/freepdk45.tcl \
+	$(LVS_PDK_ROOT)/libs.tech/netgen/FreePDK45_setup.tcl))
+LVS_LOG  := $(BUILD_DIR)/lvs.log
+LVS_RPT  := $(BUILD_DIR)/lvs.rpt
+LVS_KEEP_TCL ?= 1
 
-# ── OpenRAM Python venv setup ────────────────────────────────────────────────
-openram-setup:
-	@echo "========================================"
-	@echo " Creating local Python venv for OpenRAM"
-	@echo "  venv    : $(VENV_DIR)"
-	@echo "  OpenRAM : $(OPENRAM)"
-	@echo "========================================"
-	@if [ ! -d "$(OPENRAM)" ]; then \
-	    echo "ERROR: OPENRAM not found at '$(OPENRAM)'"; exit 1; \
-	fi
-	$(PYTHON3) -m venv $(VENV_DIR)
-	$(VENV_DIR)/bin/pip install --upgrade pip --quiet
-	@if [ -f "$(OPENRAM)/requirements.txt" ]; then \
-	    $(VENV_DIR)/bin/pip install -r $(OPENRAM)/requirements.txt --quiet; \
+lvs:
+	@mkdir -p $(BUILD_DIR)
+	@if [ -n "$(LVS_MAGIC_RC)" ] && [ -n "$(LVS_NETGEN_SETUP)" ]; then \
+	    $(MAKE) --no-print-directory lvs-gds; \
 	else \
-	    echo "WARNING: $(OPENRAM)/requirements.txt not found, skipping."; \
+	    echo "Standalone Magic tech files not available; using OpenLane/Netgen LVS instead." | tee $(LVS_LOG); \
+	    $(MAKE) --no-print-directory lvs-resume; \
 	fi
-	@# Pin numpy<2 and gdspy for OpenRAM 1.x compatibility
-	$(VENV_DIR)/bin/pip install "numpy<2" "gdspy" --quiet
-	@echo "venv ready. Activate with: source $(VENV_DIR)/bin/activate"
 
-# ── OpenRAM macro compilation ────────────────────────────────────────────────
-gen-mem:
+lvs-gds:
 	@echo "========================================"
-	@echo " Compiling OpenRAM SRAM macros"
-	@echo "  PDK      : $(PDK) (Nangate 45nm)"
-	@echo "  OPENRAM  : $(OPENRAM)"
-	@echo "  Config   : $(OPENRAM_OUTDIR)/$(OPENRAM_CFG)"
-	@echo "  Macro    : sram_1rw_1024x64 (1024 words x 64-bit = 8 KB)"
-	@echo "  IRAM     : $(IRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB"
-	@echo "  DRAM     : $(DRAM_BANKS) banks × 8 KB = $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB"
+	@echo " Standalone Magic + Netgen LVS"
+	@echo "  Design  : $(DESIGN)"
+	@echo "  GDS     : $(GDS_FILE)"
+	@echo "  Netlist : $(LVS_NL)"
+	@echo "  Report  : $(LVS_RPT)"
 	@echo "========================================"
-	@if [ ! -d "$(OPENRAM)" ]; then \
-	    echo "ERROR: OPENRAM not found at '$(OPENRAM)'"; exit 1; \
+	@if [ -z "$(GDS_FILE)" ] || [ ! -f "$(GDS_FILE)" ]; then \
+	    echo "ERROR: GDS not found: $(GDS_FILE)"; \
+	    echo "       Run 'make synth' first, or set GDS_FILE=<path>"; \
+	    exit 1; \
 	fi
-	@if [ ! -f "$(VENV_DIR)/bin/activate" ]; then \
-	    echo "ERROR: venv not found. Run 'make openram-setup' first."; exit 1; \
+	@if [ -z "$(LVS_NL)" ] || [ ! -f "$(LVS_NL)" ]; then \
+	    echo "ERROR: Gate-level netlist not found: $(LVS_NL)"; \
+	    echo "       Run 'make synth' first, or set LVS_NL=<path>"; \
+	    exit 1; \
 	fi
-	@if [ ! -f "$(OPENRAM_OUTDIR)/$(OPENRAM_CFG)" ]; then \
-	    echo "ERROR: OpenRAM config not found: $(OPENRAM_OUTDIR)/$(OPENRAM_CFG)"; exit 1; \
+	@if [ -z "$(LVS_PDK_ROOT)" ]; then \
+	    echo "ERROR: NANGATE_HOME is not set."; \
+	    echo "       Set NANGATE_HOME to a real FreePDK45/NangateOpenCellLibrary install."; \
+	    exit 1; \
 	fi
-	@echo "Running OpenRAM compiler..."
-	@cd $(OPENRAM_OUTDIR) && \
-	    . $(VENV_DIR)/bin/activate && \
-	    OPENRAM_HOME=$(OPENRAM)/compiler \
+	@if [ -z "$(LVS_MAGIC_RC)" ] || [ ! -f "$(LVS_MAGIC_RC)" ]; then \
+	    echo "ERROR: Magic tech file not found under $(LVS_PDK_ROOT)."; \
+	    echo "       Need a real FreePDK45/NangateOpenCellLibrary install for standalone LVS."; \
+	    exit 1; \
+	fi
+	@if [ -z "$(LVS_NETGEN_SETUP)" ] || [ ! -f "$(LVS_NETGEN_SETUP)" ]; then \
+	    echo "ERROR: Netgen setup file not found under $(LVS_PDK_ROOT)."; \
+	    echo "       Need a real FreePDK45/NangateOpenCellLibrary install for standalone LVS."; \
+	    exit 1; \
+	fi
+	@# Step 1: Magic SPICE extraction from GDS
+	@printf '%s\n' \
+	    'gds read $(GDS_FILE)' \
+	    'load $(DESIGN)' \
+	    'select top cell' \
+	    'port makeall' \
+	    'ext2spice lvs' \
+	    'ext2spice -o $(BUILD_DIR)/$(DESIGN).spice' \
+	    'quit -noprompt' \
+	    > $(BUILD_DIR)/lvs_magic_cmd.tcl
+	MAGIC_EXT_USE_GDS=1 \
+	    magic -dnull -noconsole \
+	        -rcfile $(LVS_MAGIC_RC) \
+	        $(BUILD_DIR)/lvs_magic_cmd.tcl \
+	    2>&1 | tee $(LVS_LOG)
+	@if [ "$(LVS_KEEP_TCL)" != "1" ]; then rm -f $(BUILD_DIR)/lvs_magic_cmd.tcl; fi
+	@# Step 2: Netgen LVS (extracted SPICE vs gate-level netlist)
+	netgen -batch lvs \
+	    "$(BUILD_DIR)/$(DESIGN).spice $(DESIGN)" \
+	    "$(LVS_NL) $(DESIGN)" \
+	    $(LVS_NETGEN_SETUP) \
+	    $(LVS_RPT) \
+	    2>&1 | tee -a $(LVS_LOG)
+	@echo "========================================"
+	@echo " LVS report: $(LVS_RPT)"
+	@grep -E "(Circuit|Netlist|match|Mismatch)" $(LVS_RPT) | tail -5 || true
+	@echo "========================================"
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
 	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(OPENRAM_CFG)
@@ -790,58 +800,16 @@ lvs-resume: normalize-spice
 #
 _OL_NL   := $(OPENLANE_RUN_DIR)/final/nl/$(DESIGN).nl.v
 LVS_NL   ?= $(if $(wildcard $(_OL_NL)),$(_OL_NL),)
+LVS_PDK_ROOT ?= $(NANGATE_HOME)
+LVS_MAGIC_RC  ?= $(firstword $(wildcard \
+	$(LVS_PDK_ROOT)/libs.tech/magic/freepdk45.magicrc \
+	$(LVS_PDK_ROOT)/libs.tech/magic/FreePDK45.magicrc))
+LVS_NETGEN_SETUP ?= $(firstword $(wildcard \
+	$(LVS_PDK_ROOT)/libs.tech/netgen/freepdk45.tcl \
+	$(LVS_PDK_ROOT)/libs.tech/netgen/FreePDK45_setup.tcl))
 LVS_LOG  := $(BUILD_DIR)/lvs.log
 LVS_RPT  := $(BUILD_DIR)/lvs.rpt
-
-lvs:
-	@echo "========================================"
-	@echo " Standalone Magic + Netgen LVS"
-	@echo "  Design  : $(DESIGN)"
-	@echo "  GDS     : $(GDS_FILE)"
-	@echo "  Netlist : $(LVS_NL)"
-	@echo "  Report  : $(LVS_RPT)"
-	@echo "========================================"
-	@if [ -z "$(GDS_FILE)" ] || [ ! -f "$(GDS_FILE)" ]; then \
-	    echo "ERROR: GDS not found: $(GDS_FILE)"; \
-	    echo "       Run 'make synth' first, or set GDS_FILE=<path>"; \
-	    exit 1; \
-	fi
-	@if [ -z "$(LVS_NL)" ] || [ ! -f "$(LVS_NL)" ]; then \
-	    echo "ERROR: Gate-level netlist not found: $(LVS_NL)"; \
-	    echo "       Run 'make synth' first, or set LVS_NL=<path>"; \
-	    exit 1; \
-	fi
-	@if [ -z "$(PDK_ROOT)" ]; then \
-	    echo "ERROR: PDK_ROOT is not set."; exit 1; \
-	fi
-	@mkdir -p $(BUILD_DIR)
-	@# Step 1: Magic SPICE extraction from GDS
-	@printf '%%s\n' \
-	    'gds read $(GDS_FILE)' \
-	    'load $(DESIGN)' \
-	    'select top cell' \
-	    'port makeall' \
-	    'ext2spice lvs' \
-	    'ext2spice -o $(BUILD_DIR)/$(DESIGN).spice' \
-	    'quit -noprompt' \
-	    > $(BUILD_DIR)/lvs_magic_cmd.tcl
-	MAGIC_EXT_USE_GDS=1 \
-	    magic -dnull -noconsole \
-	        -rcfile $(PDK_ROOT)/freepdk45/libs.tech/magic/FreePDK45.magicrc \
-	        $(BUILD_DIR)/lvs_magic_cmd.tcl \
-	    2>&1 | tee $(LVS_LOG)
-	@rm -f $(BUILD_DIR)/lvs_magic_cmd.tcl
-	@# Step 2: Netgen LVS (extracted SPICE vs gate-level netlist)
-	netgen -batch lvs \
-	    "$(BUILD_DIR)/$(DESIGN).spice $(DESIGN)" \
-	    "$(LVS_NL) $(DESIGN)" \
-	    $(PDK_ROOT)/freepdk45/libs.tech/netgen/FreePDK45_setup.tcl \
-	    $(LVS_RPT) \
-	    2>&1 | tee -a $(LVS_LOG)
-	@echo "========================================"
-	@echo " LVS report: $(LVS_RPT)"
-	@grep -E "(Circuit|Netlist|match|Mismatch)" $(LVS_RPT) | tail -5 || true
-	@echo "========================================"
+LVS_KEEP_TCL ?= 1
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 # SLPP_ALL_DIRS: Surelog pre-processing cache directories generated by OpenLane

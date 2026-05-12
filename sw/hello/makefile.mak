@@ -6,4 +6,3 @@
 # that warning for this translation unit only.
 CFLAGS += -Wno-unused-label
 
-JV_IO_BACKEND = magic

@@ -132,18 +132,19 @@ USE_SYNLIG: true
 # Macro placement (macro_placement.cfg) from user draw:
 #   DRAM bank[0] @ (70, 110)
 #   DRAM bank[1] @ (70, 620)
-#   IRAM bank[0] @ (1020, 110)
-#   IRAM bank[1] @ (1020, 620)
+#   IRAM bank[0] @ (1068, 110)
+#   IRAM bank[1] @ (1068, 620)
 #
 # Blue box in LAYOUT.confirmation.bluegreen.png is used as die boundary.
 # Green boxes are used as SRAM envelopes.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 1380 x 1100 = 1,518,000 um2 -> core util ~=25.2%
-#               die  = 1400 x 1120 = 1,568,000 um2
+#               core area = 1366 x 1100 = 1,502,600 um2 -> core util ~=30.0%
+#               die  = 1386 x 1120 = 1,552,320 um2 (reduced 10% from 1540;
+#               post-RSZ stages added for timing closure at smaller die)
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1400, 1120]
-CORE_AREA: [10, 10, 1390, 1110]
+DIE_AREA: [0, 0, 1386, 1120]
+CORE_AREA: [10, 10, 1376, 1110]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -172,6 +173,16 @@ PL_MACRO_CHANNEL: [80, 80]
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
 # design to avoid terminating before the dominant SRAM-to-core paths are fixed.
 PL_RESIZER_SETUP_MAX_BUFFER_PCT: 100
+
+# Enable post-GRT design repair and timing resizer.
+# These stages run after global routing so repair_design / repair_timing use
+# actual Steiner-tree wire-RC parasitics (more accurate than wire-RC estimates
+# used at placement).  This is the highest-leverage stage for closing the 86
+# remaining setup violations (WNS −0.83 ns, TNS −19.5 ns).
+RUN_POST_GRT_DESIGN_REPAIR: true
+RUN_POST_GRT_RESIZER_TIMING: true
+# Match the placement buffer budget so the GRT resizer is not starved.
+GRT_RESIZER_SETUP_MAX_BUFFER_PCT: 100
 
 # Reduce post-CTS timing margins to avoid over-constraining pre-route repair.
 PL_RESIZER_SETUP_SLACK_MARGIN: 0.05
