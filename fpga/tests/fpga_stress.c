@@ -85,9 +85,9 @@
 #define PRIO_MEM            (tskIDLE_PRIORITY + 2U)
 #define PRIO_CPU            (tskIDLE_PRIORITY + 2U)
 #define PRIO_MUTEX          (tskIDLE_PRIORITY + 2U)
-#define PRIO_SEM            (tskIDLE_PRIORITY + 3U)
-#define PRIO_QUEUE          (tskIDLE_PRIORITY + 3U)
-#define PRIO_EG_WORKER      (tskIDLE_PRIORITY + 3U)
+#define PRIO_SEM            (tskIDLE_PRIORITY + 2U)
+#define PRIO_QUEUE          (tskIDLE_PRIORITY + 2U)
+#define PRIO_EG_WORKER      (tskIDLE_PRIORITY + 2U)
 
 /* =========================================================================
  * Watchdog bit assignments
