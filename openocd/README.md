@@ -140,6 +140,7 @@ are listed below in execution order.  The 6 GDB tests are described separately i
 | `test_sbreadondata.tcl` | sbreadondata: SBCS bit round-trip; functional re-read on SBDATA0 capture; disabled-mode verification |
 | `test_haltsum.tcl` | HALTSUM0 (DMI 0x40): bit0=1 when halted, bit0=0 when running; consistent with dmstatus |
 | `test_dmactive.tcl` | dmcontrol.dmactive=0 DM reset; re-activate to dmactive=1; halt/resume functional after re-activation |
+| `test_semihost.tcl` | Semihost smoke test: run semihost-built hello ELF, trap on M-mode ebreak, and verify marker triplet `slli x0,x0,0x1f` / `ebreak` / `srai x0,x0,7` at `dpc-4:dpc+4` |
 | `test_jtag_tap.tcl` | JTAG TAP instructions: IDCODE (IR=0x01) raw scan; BYPASS (IR=0x1F) 1-bit shift register *(JTAG only)* |
 | `test_cjtag.tcl` | cJTAG OScan1 activation: halt/resume/re-halt over 2-wire transport *(cJTAG suite only)* |
 

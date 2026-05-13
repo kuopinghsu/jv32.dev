@@ -7,6 +7,7 @@
 #include "jv_platform.h"
 #include "jv_uart.h"
 #include "csr.h"
+#include <stdio.h>
 
 /* ============================================================================
  * Debugger testing constructs (exercised by openocd/test_gdb_hello.gdb):
@@ -59,6 +60,9 @@ foo2: foo();  /* second call site -- break main:foo2 */
 foo3: foo();  /* third  call site -- break main:foo3 */
 foo4: foo();  /* fourth call site -- break main:foo4 */
 foo5:         /* after last call  -- break main:foo5 */
+
+    /* Also exercise libc _write() path; semihost backend routes this via jv_putc(). */
+    printf("Hello via printf (semihost path)\n");
 
     jv_uart_puts("Hello, JV32!\n");
 

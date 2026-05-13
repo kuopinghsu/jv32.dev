@@ -72,6 +72,8 @@ VPI_CJTAG := $(BUILD_DIR)/jv32vpi_cjtag
 # alive in that spin loop so OpenOCD can halt/resume/examine it at will.
 BOOT_ELF ?= $(BUILD_DIR)/hello.elf
 BOOT_IO_BACKEND ?= magic
+SEMIHOST_BUILD_DIR ?= $(BUILD_DIR)/semihost
+SEMIHOST_ELF := $(SEMIHOST_BUILD_DIR)/hello.elf
 
 # ── VPI TCP port ──────────────────────────────────────────────────────────────
 VPI_PORT ?= 5555
@@ -84,12 +86,12 @@ GDB_PORT ?= 3333
 JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
 			   sba havereset abstractauto debug_ext_alias \
-			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive jtag_tap
+			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive semihost jtag_tap
 # cJTAG: cJTAG activation check first, then the same common tests (jtag_tap excluded — JTAG only)
 CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
 			   debug_errors breakpoint watchpoint misa dcsr triggers abstract_regs csr_fields \
 			   sba havereset abstractauto debug_ext_alias \
-			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive
+			   cmderr aampostincrement dscratch sbreadondata haltsum dmactive semihost
 
 # ── GDB test names (file stem of openocd/test_gdb_<name>.gdb) ────────────────
 # Each test is run with the JTAG VPI simulator + OpenOCD GDB server.
@@ -124,6 +126,9 @@ all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello gdb-zcm
 $(BOOT_ELF): FORCE
 	$(MAKE) -C $(ROOT_DIR) sw-hello BUILD_DIR=$(BUILD_DIR) JV_IO_BACKEND=$(BOOT_IO_BACKEND)
 
+$(SEMIHOST_ELF): FORCE
+	$(MAKE) -C $(ROOT_DIR) sw-hello BUILD_DIR=$(SEMIHOST_BUILD_DIR) JV_IO_BACKEND=semihost
+
 $(VPI_JTAG): FORCE
 	$(MAKE) -C $(ROOT_DIR) build-vpi-jtag WAVE=$(WAVE)
 
@@ -136,7 +141,7 @@ build-cjtag: $(VPI_CJTAG)
 # ─────────────────────────────────────────────────────────────────────────────
 # JTAG test suite
 # ─────────────────────────────────────────────────────────────────────────────
-test-jtag: $(VPI_JTAG) $(BOOT_ELF)
+test-jtag: $(VPI_JTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	@echo ""
 	@echo "=========================================="
 	@echo "JTAG Interface Tests (USE_CJTAG=0)"
@@ -148,9 +153,11 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 	run_one() { \
 	    N=$$((N+1)); \
 	    t=$$1; \
+	    ELF="$(BOOT_ELF)"; \
+	    if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	    LOG="$(LOG_DIR)/jtag_$$t"; \
 	    printf "  [jtag] %d/$(N_JTAG) %-20s ... " "$$N" "test_$$t"; \
-	    "$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    "$(VPI_JTAG)" "$$ELF" --port $(VPI_PORT) \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \
 	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
@@ -194,7 +201,7 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF)
 # ─────────────────────────────────────────────────────────────────────────────
 # cJTAG test suite
 # ─────────────────────────────────────────────────────────────────────────────
-test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
+test-cjtag: $(VPI_CJTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	@echo ""
 	@echo "=========================================="
 	@echo "cJTAG Interface Tests (USE_CJTAG=1)"
@@ -206,9 +213,11 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 	run_one() { \
 	    N=$$((N+1)); \
 	    t=$$1; \
+	    ELF="$(BOOT_ELF)"; \
+	    if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	    LOG="$(LOG_DIR)/cjtag_$$t"; \
 	    printf "  [cjtag] %d/$(N_CJTAG) %-20s ... " "$$N" "test_$$t"; \
-	    "$(VPI_CJTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    "$(VPI_CJTAG)" "$$ELF" --port $(VPI_PORT) \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \
 	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
@@ -252,11 +261,12 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF)
 # ─────────────────────────────────────────────────────────────────────────────
 # Individual JTAG tests: make jtag-halt_resume, make jtag-registers, ...
 # ─────────────────────────────────────────────────────────────────────────────
-jtag-%: $(VPI_JTAG) $(BOOT_ELF)
+jtag-%: $(VPI_JTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	@mkdir -p $(LOG_DIR)
-	@t=$*; LOG="$(LOG_DIR)/jtag_$$t"; \
+	@t=$*; LOG="$(LOG_DIR)/jtag_$$t"; ELF="$(BOOT_ELF)"; \
+	if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	echo "--- [jtag] test_$$t ---"; \
-	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	"$(VPI_JTAG)" "$$ELF" --port $(VPI_PORT) \
 	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/jtag_$$t.fst") \
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/jtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
@@ -292,11 +302,12 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF)
 # ─────────────────────────────────────────────────────────────────────────────
 # Individual cJTAG tests: make cjtag-cjtag, make cjtag-halt_resume, ...
 # ─────────────────────────────────────────────────────────────────────────────
-cjtag-%: $(VPI_CJTAG) $(BOOT_ELF)
+cjtag-%: $(VPI_CJTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	@mkdir -p $(LOG_DIR)
-	@t=$*; LOG="$(LOG_DIR)/cjtag_$$t"; \
+	@t=$*; LOG="$(LOG_DIR)/cjtag_$$t"; ELF="$(BOOT_ELF)"; \
+	if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	echo "--- [cjtag] test_$$t ---"; \
-	"$(VPI_CJTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	"$(VPI_CJTAG)" "$$ELF" --port $(VPI_PORT) \
 	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/cjtag_$$t.fst") \
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/cjtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
@@ -738,6 +749,7 @@ help:
 	@echo "    programbuf   step  debug_errors  breakpoint  watchpoint"
 	@echo "    misa  dcsr  triggers  abstract_regs  csr_fields"
 	@echo "    sba  havereset  abstractauto  debug_ext_alias"
+	@echo "    semihost"
 	@echo "    cjtag (cjtag-* only)"
 	@echo ""
 	@echo "  Available GDB test names:"
