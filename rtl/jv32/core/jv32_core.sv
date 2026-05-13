@@ -1663,6 +1663,7 @@ module jv32_core #(
                 end
                 else if (ibuf_fault_rdy) begin
                     ibuf_fault_pending_r <= 1'b0;
+                    ibuf_fault_pc_r      <= '0;
                 end
             end
 

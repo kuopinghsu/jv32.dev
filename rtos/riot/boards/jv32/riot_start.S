@@ -71,15 +71,37 @@ _start:
     .size   _start, .-_start
 
 /* ── Exit handler ──────────────────────────────────────────────────────
- * Writes exit code to the JV32 simulation magic address and spins.
- * KV_MAGIC_EXIT_ADDR = 0x40000004 (KV_MAGIC_BASE=0x40000000 + 0x0004).
- * No includes needed — we use the raw immediate.
+ * Issues a RISC-V semihosting SYS_EXIT_EXTENDED call and spins.
+ * The ebreak is intercepted by:
+ *   - tb_jv32_soc.cpp (RTL simulation, host-side at ENTRY_NOP retire)
+ *   - jv32sim.cpp     (software simulation, before trap fires)
+ *   - OpenOCD         (FPGA / real chip, via JTAG halt)
+ * The trap handler in irq_arch.c handles the ebreak if the simulator
+ * does not intercept it (advances mepc and resumes; spin is the fallback).
  */
     .globl  _exit
     .type   _exit, @function
 _exit:
-    li      t0, 0x40000004
-    sw      a0, 0(t0)
+    /* SYS_EXIT_EXTENDED (0x20):
+     *   a0 = 0x20
+     *   a1 = &{ reason=0x20026 (ADP_Stopped_ApplicationExit), subcode=code }
+     * Sequence: slli x0,x0,0x1f ; ebreak ; srai x0,x0,7 */
+    addi    sp, sp, -16
+    sw      a0, 0(sp)
+    li      t0, 0x20026
+    sw      t0, 4(sp)
+    lw      t1, 0(sp)
+    sw      t1, 8(sp)
+    li      a0, 0x20
+    addi    a1, sp, 4
+    .option push
+    .option norvc
+    .balign 4
+    .word   0x01F01013       /* slli x0, x0, 0x1f */
+    .word   0x00100073       /* ebreak             */
+    .word   0x40705013       /* srai x0, x0, 7    */
+    .option pop
+    addi    sp, sp, 16
 1:
     j       1b
     .size   _exit, .-_exit

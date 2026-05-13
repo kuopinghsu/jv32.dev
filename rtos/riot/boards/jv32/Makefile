@@ -40,13 +40,6 @@ JV_IO_BACKEND ?= semihost
 RIOT_IO_SRC   = $(PROJECT_ROOT)/sw/common/jv_io_$(JV_IO_BACKEND).c
 RIOT_IO_DEFS  =
 
-# RIOT's trap path (riscv_common/irq_arch.c) does not currently emulate the
-# RISC-V semihosting ebreak marker sequence, so using jv_io_semihost.c would
-# trap/hang before fallback can execute. Force raw backend behavior for RIOT.
-ifneq ($(filter semihost,$(JV_IO_BACKEND)),)
-RIOT_IO_DEFS += -DJV_SEMIHOST_ENABLE=0
-endif
-
 # ── RIOT source files (minimal kernel — no module system required) ────
 #
 # Core kernel

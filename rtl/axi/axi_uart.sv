@@ -136,6 +136,30 @@ module axi_uart #(
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;
     localparam FIFO_BITS    = $clog2(FIFO_DEPTH);
 
+    // Compile-time sanity checks on baud-rate parameters.
+    // CLKS_PER_BIT must fit in the 16-bit baud_div_r register and meet the
+    // minimum 4-cycle bit period required by the RX sampler.
+    initial begin
+        assert (CLKS_PER_BIT <= 65535)
+        else
+            $fatal(
+                1,
+                "axi_uart: CLKS_PER_BIT=%0d overflows 16-bit baud_div_r (CLK_FREQ=%0d, BAUD_RATE=%0d)",
+                CLKS_PER_BIT,
+                CLK_FREQ,
+                BAUD_RATE
+            );
+        assert (CLKS_PER_BIT >= 4)
+        else
+            $fatal(
+                1,
+                "axi_uart: CLKS_PER_BIT=%0d is below the minimum of 4 (CLK_FREQ=%0d, BAUD_RATE=%0d)",
+                CLKS_PER_BIT,
+                CLK_FREQ,
+                BAUD_RATE
+            );
+    end
+
     // Runtime baud-rate divisor register (write to offset 0x10, default = CLKS_PER_BIT-1)
     // baud_div_r  = CLKS_PER_BIT - 1  ->  bit period = baud_div_r + 1 clocks
     // baud_half_r = baud_div_r >> 1   ->  mid-bit sample point

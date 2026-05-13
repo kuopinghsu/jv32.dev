@@ -173,6 +173,30 @@ __attribute((used)) static void handle_trap(uword_t mcause)
             write_csr(mepc, return_pc + 4);
             break;
         }
+        case CAUSE_BREAKPOINT: {
+            /* RISC-V semihosting v1.0: slli x0,x0,0x1f / ebreak / srai x0,x0,7.
+             * Detect the three-instruction marker and advance mepc past the ebreak.
+             * The simulator/debugger handles the I/O side; the trap handler only
+             * needs to resume execution correctly.
+             * The saved caller frame is on the user stack, pointed to by s0 here. */
+            uword_t mepc_val = read_csr(mepc);
+            if (mepc_val >= 4u &&
+                *(volatile uint32_t *)(mepc_val - 4u) == 0x01F01013u && /* slli x0,x0,0x1f */
+                *(volatile uint32_t *)(mepc_val)      == 0x00100073u && /* ebreak           */
+                *(volatile uint32_t *)(mepc_val + 4u) == 0x40705013u) { /* srai x0,x0,7     */
+                /* Advance past the ebreak; a0 return value is left for the
+                 * simulator to supply via the host-side semihost handler. */
+                write_csr(mepc, mepc_val + 4u);
+                /* Update saved a0 in the caller's frame (user sp is in s0). */
+                uword_t frame_sp;
+                __asm__ volatile ("mv %0, s0" : "=r"(frame_sp));
+                *(volatile uword_t *)(frame_sp + a0_OFFSET) = 0u;
+                break;
+            }
+            /* Not a semihosting ebreak — unexpected breakpoint */
+            core_panic(PANIC_GENERAL_ERROR, "Unhandled breakpoint");
+            break;
+        }
 #ifdef MODULE_PERIPH_PMP
         case CAUSE_FAULT_FETCH:
             core_panic(PANIC_MEM_MANAGE, "MEM MANAGE HANDLER (fetch)");

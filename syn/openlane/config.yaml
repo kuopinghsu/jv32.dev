@@ -131,20 +131,20 @@ USE_SYNLIG: true
 # sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
 # Macro placement (macro_placement.cfg): bottom row, same Y, side-by-side
 # with uniform horizontal spacing.
-#   DRAM bank[0] @ (112.70, 20)
-#   DRAM bank[1] @ (463.28, 20)
-#   IRAM bank[0] @ (813.86, 20)
-#   IRAM bank[1] @ (1164.44, 20)
+#   DRAM bank[1] @ (89.81, 50)
+#   DRAM bank[0] @ (497.31, 50)
+#   IRAM bank[0] @ (904.81, 50)
+#   IRAM bank[1] @ (1312.31, 50)
 #
 # Blue box in LAYOUT.confirmation.bluegreen.png is used as die boundary.
 # Green boxes are used as SRAM envelopes.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 1505 x 932 = 1,402,660 um2
-#               die  = 1525 x 952 = 1,451,800 um2 (width +10%, height unchanged)
+#               core area = 1630 x 900 = 1,467,000 um2
+#               die  = 1650 x 920 = 1,518,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1525, 952]
-CORE_AREA: [10, 10, 1515, 942]
+DIE_AREA: [0, 0, 1650, 920]
+CORE_AREA: [10, 10, 1640, 910]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
