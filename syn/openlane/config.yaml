@@ -140,11 +140,11 @@ USE_SYNLIG: true
 # Green boxes are used as SRAM envelopes.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 1630 x 900 = 1,467,000 um2
-#               die  = 1650 x 920 = 1,518,000 um2
+#               core area = 1830 x 1080 = 1,976,400 um2
+#               die  = 1850 x 1100 = 2,035,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1650, 920]
-CORE_AREA: [10, 10, 1640, 910]
+DIE_AREA: [0, 0, 1850, 1100]
+CORE_AREA: [10, 10, 1840, 1090]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -168,7 +168,7 @@ FP_PDN_HPITCH: 120
 # ── Placement ─────────────────────────────────────────────────────────────────
 PL_TARGET_DENSITY_PCT: 30
 PL_MAX_PHI_COEFFICIENT: 4.0
-PL_MACRO_CHANNEL: [80, 80]
+PL_MACRO_CHANNEL: [20, 20]
 
 # Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
 # design to avoid terminating before the dominant SRAM-to-core paths are fixed.
@@ -192,14 +192,14 @@ GRT_RESIZER_SETUP_SLACK_MARGIN: 0.05
 # 0.05 ns hotter than GRT wire-RC estimates due to cross-ICG clock skew between
 # _38228_/_38238_ gated domains.  WNS was -0.017 ns at 0.10 ns → raised to 0.15.
 PL_RESIZER_HOLD_SLACK_MARGIN: 0.10
-GRT_RESIZER_HOLD_SLACK_MARGIN: 0.15
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.10
 
 # Stage 36 hold repair can exceed the default hold-buffer budget on this
 # macro-heavy design; raise the cap to prevent RSZ-0060 early termination.
 PL_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 GRT_RESIZER_HOLD_MAX_BUFFER_PCT: 100
-PL_RESIZER_ALLOW_SETUP_VIOS: false
-PL_RESIZER_FIX_HOLD_FIRST: false
+PL_RESIZER_ALLOW_SETUP_VIOS: true
+PL_RESIZER_FIX_HOLD_FIRST: true
 
 # Max slew/cap repair margins: run repair_design with 10% slew margin and
 # 10% cap margin so that post-route SPEF parasitics (which are ~20% higher
@@ -220,7 +220,7 @@ GRT_ADJUSTMENT: 0.15
 # Fail fast on severe congestion instead of spending hours in overflow retries.
 GRT_ALLOW_CONGESTION: false
 # Give the global router enough iterations to converge after macro spreading.
-GRT_OVERFLOW_ITERS: 40
+GRT_OVERFLOW_ITERS: 50
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
 # Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so

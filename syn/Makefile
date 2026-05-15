@@ -99,12 +99,14 @@ ifeq ($(RV32EC),1)
   BP_EN      := 0
   AMO_EN     := 0
   IBUF_EN    := 0
+  ZCMP_EN    := 0
 else
   RV32E_EN   ?= 0
   RV32M_EN   ?= 1
   JTAG_EN    ?= 1
   AMO_EN     ?= 1
   IBUF_EN    ?= 1
+  ZCMP_EN    ?= 1
 endif
 
 # OpenRAM config file (static; re-run gen-mem only for a different macro geometry)

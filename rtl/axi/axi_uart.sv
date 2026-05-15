@@ -139,6 +139,7 @@ module axi_uart #(
     // Compile-time sanity checks on baud-rate parameters.
     // CLKS_PER_BIT must fit in the 16-bit baud_div_r register and meet the
     // minimum 4-cycle bit period required by the RX sampler.
+`ifndef SYNTHESIS
     initial begin
         assert (CLKS_PER_BIT <= 65535)
         else
@@ -159,6 +160,7 @@ module axi_uart #(
                 BAUD_RATE
             );
     end
+`endif  // SYNTHESIS
 
     // Runtime baud-rate divisor register (write to offset 0x10, default = CLKS_PER_BIT-1)
     // baud_div_r  = CLKS_PER_BIT - 1  ->  bit period = baud_div_r + 1 clocks

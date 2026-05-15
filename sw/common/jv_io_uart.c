@@ -12,6 +12,14 @@ void jv_putc(char c)
     jv_uart_putc(c);
 }
 
+int jv_write(int fd, const char *buf, int len)
+{
+    (void)fd;
+    for (int i = 0; i < len; i++)
+        jv_uart_putc(buf[i]);
+    return len;
+}
+
 void jv_exit(int code)
 {
     if (code == 0) {

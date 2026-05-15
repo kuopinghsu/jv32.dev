@@ -798,6 +798,20 @@ static inline uint32_t semihost_u32_at(uint32_t addr) {
     return mem_read(addr, 4);
 }
 
+// Return a direct host pointer into sim memory for [addr, addr+len), or NULL
+// if the range spans a region boundary or is unmapped.
+static const uint8_t *semihost_mem_ptr(uint32_t addr, uint32_t len) {
+    if (len == 0) return NULL;
+    uint32_t off = 0;
+    if (iram_offset_for_addr(addr, (int)1, &off) &&
+            off + len <= IRAM_SIZE)  return iram  + off;
+    if (dram_offset_for_addr(addr, (int)1, &off) &&
+            off + len <= DRAM_SIZE)  return dram  + off;
+    if (extram_offset_for_addr(addr, (int)1, &off) &&
+            off + len <= EXTRAM_SIZE) return extram + off;
+    return NULL;
+}
+
 static inline bool semihost_is_call_site(uint32_t ebreak_pc) {
     if (ebreak_pc < 4) return false;
     return semihost_u32_at(ebreak_pc - 4) == SEMIHOST_ENTRY_NOP
@@ -833,9 +847,12 @@ static bool semihost_handle_call() {
         uint32_t buf    = semihost_u32_at(p + 4u);
         uint32_t len    = semihost_u32_at(p + 8u);
         FILE* out = (handle == 2u) ? stderr : stdout;
-        for (uint32_t i = 0; i < len; i++) {
-            uint32_t ch = mem_read(buf + i, 1) & 0xFFu;
-            fputc((int)ch, out);
+        const uint8_t *ptr = semihost_mem_ptr(buf, len);
+        if (ptr) {
+            fwrite(ptr, 1, len, out);
+        } else {
+            for (uint32_t i = 0; i < len; i++)
+                fputc((int)(mem_read(buf + i, 1) & 0xFFu), out);
         }
         fflush(out);
         regs[10] = 0;  // bytes not written

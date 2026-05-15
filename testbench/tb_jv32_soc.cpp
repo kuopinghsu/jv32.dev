@@ -28,6 +28,7 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include <inttypes.h>
 #include <chrono>
 #include <csignal>
@@ -434,8 +435,11 @@ static bool semihost_rtl_handle(uint32_t op, uint32_t p) {
         uint32_t buf    = semihost_rtl_u32(p + 4u);
         uint32_t len    = semihost_rtl_u32(p + 8u);
         FILE* out = (handle == 2u) ? stderr : stdout;
+        // Collect into a local buffer then fwrite once to reduce host I/O calls.
+        std::vector<char> tmp(len);
         for (uint32_t i = 0; i < len; i++)
-            fputc((int)(uint8_t)mem_read_byte((int)(buf + i)), out);
+            tmp[i] = (char)(uint8_t)mem_read_byte((int)(buf + i));
+        fwrite(tmp.data(), 1, len, out);
         fflush(out);
         return true;
     }

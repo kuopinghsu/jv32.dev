@@ -165,6 +165,7 @@ extern "C" {
 
 /* Link-time selectable backend API: apps always call the same interface. */
 void jv_putc(char c);
+int  jv_write(int fd, const char *buf, int len);
 void jv_exit(int code) __attribute__((noreturn));
 
 #ifdef __cplusplus

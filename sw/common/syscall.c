@@ -25,10 +25,7 @@ static char *_heap_ptr = NULL;
 
 int _write(int file, char *ptr, int len)
 {
-    UNUSED(file);
-    for (int i = 0; i < len; i++)
-        jv_putc(ptr[i]);
-    return len;
+    return jv_write(file, ptr, len);
 }
 
 void *_sbrk(int incr)
