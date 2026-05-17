@@ -104,7 +104,10 @@ VERILOG_DEFINES:
 # The Makefile computes them and writes build/tcm_params.yaml, which is passed
 # to OpenLane2 as a second config.
 
-SYNTH_STRATEGY: AREA 0
+# DELAY 4 = maximum timing-driven effort in Yosys ABC; trades area for speed.
+SYNTH_STRATEGY: DELAY 4
+# Size cells for timing after mapping.
+SYNTH_SIZING: true
 
 # ── Clock gating ─────────────────────────────────────────────────────────────
 # Lighter is a Yosys plugin that inserts integrated clock-gating (ICG) cells
@@ -131,20 +134,20 @@ USE_SYNLIG: true
 # sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
 # Macro placement (macro_placement.cfg): bottom row, same Y, side-by-side
 # with uniform horizontal spacing.
-#   DRAM bank[1] @ (89.81, 50)
-#   DRAM bank[0] @ (497.31, 50)
-#   IRAM bank[0] @ (904.81, 50)
-#   IRAM bank[1] @ (1312.31, 50)
+#   DRAM bank[1] @ (166.81, 50)
+#   DRAM bank[0] @ (728.31, 50)
+#   IRAM bank[0] @ (1289.81, 50)
+#   IRAM bank[1] @ (1851.31, 50)
 #
 # Blue box in LAYOUT.confirmation.bluegreen.png is used as die boundary.
 # Green boxes are used as SRAM envelopes.
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 1830 x 1080 = 1,976,400 um2
-#               die  = 1850 x 1100 = 2,035,000 um2
+#               core area = 2246 x 1328 = 2,982,688 um2
+#               die  = 2266 x 1348 = 3,054,568 um2  (+50% vs original 2,035,000 um2)
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1850, 1100]
-CORE_AREA: [10, 10, 1840, 1090]
+DIE_AREA: [0, 0, 1561.52, 1348]
+CORE_AREA: [10, 10, 1551.52, 1338]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -166,61 +169,37 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY_PCT: 30
-PL_MAX_PHI_COEFFICIENT: 4.0
-PL_MACRO_CHANNEL: [20, 20]
+PL_TARGET_DENSITY: 0.4
+PL_MACRO_CHANNEL: [10, 10]
 
-# Stage 36 setup repair also needs a larger buffer budget on this macro-heavy
-# design to avoid terminating before the dominant SRAM-to-core paths are fixed.
+# ── High-effort timing repair (setup + hold) ─────────────────────────────────
+# Buffer budgets: allow up to 100% cell count increase to fix violations.
 PL_RESIZER_SETUP_MAX_BUFFER_PCT: 100
-
-# Enable post-GRT design repair and timing resizer.
-# These stages run after global routing so repair_design / repair_timing use
-# actual Steiner-tree wire-RC parasitics (more accurate than wire-RC estimates
-# used at placement).  This is the highest-leverage stage for closing the 86
-# remaining setup violations (WNS −0.83 ns, TNS −19.5 ns).
-RUN_POST_GRT_DESIGN_REPAIR: true
-RUN_POST_GRT_RESIZER_TIMING: true
-# Match the placement buffer budget so the GRT resizer is not starved.
 GRT_RESIZER_SETUP_MAX_BUFFER_PCT: 100
-
-# Reduce post-CTS timing margins to avoid over-constraining pre-route repair.
-PL_RESIZER_SETUP_SLACK_MARGIN: 0.05
-GRT_RESIZER_SETUP_SLACK_MARGIN: 0.05
-# Hold slack margin: 0.15 ns at GRT stage to close post-route hold violations.
-# Post-GRT resizer targets this margin; actual SPEF-annotated paths run ~0.03-
-# 0.05 ns hotter than GRT wire-RC estimates due to cross-ICG clock skew between
-# _38228_/_38238_ gated domains.  WNS was -0.017 ns at 0.10 ns → raised to 0.15.
-PL_RESIZER_HOLD_SLACK_MARGIN: 0.10
-GRT_RESIZER_HOLD_SLACK_MARGIN: 0.10
-
-# Stage 36 hold repair can exceed the default hold-buffer budget on this
-# macro-heavy design; raise the cap to prevent RSZ-0060 early termination.
 PL_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 GRT_RESIZER_HOLD_MAX_BUFFER_PCT: 100
-PL_RESIZER_ALLOW_SETUP_VIOS: true
-PL_RESIZER_FIX_HOLD_FIRST: true
 
-# Max slew/cap repair margins: run repair_design with 10% slew margin and
-# 10% cap margin so that post-route SPEF parasitics (which are ~20% higher
-# than wire-RC estimates) do not reintroduce violations.
-# OpenLane 2 uses DESIGN_REPAIR_MAX_SLEW_PCT / DESIGN_REPAIR_MAX_CAP_PCT
-# (replaces the deprecated PL_RESIZER_MAX_SLEW_MARGIN / _MAX_CAP_MARGIN).
-DESIGN_REPAIR_MAX_SLEW_PCT: 10
-DESIGN_REPAIR_MAX_CAP_PCT: 10
+# Slack margins: use 0.1 ns (setup) / 0.08 ns (hold) so each resizer stage
+# repairs aggressively and leaves positive slack for downstream stages.
+PL_RESIZER_SETUP_SLACK_MARGIN: 0.10
+GRT_RESIZER_SETUP_SLACK_MARGIN: 0.10
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.08
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.08
+
+# Fix hold before setup so hold-buffer insertion doesn't re-introduce setup vios.
+PL_RESIZER_FIX_HOLD_FIRST: true
+# Allow setup violations to be created when repairing hold (last resort).
+PL_RESIZER_ALLOW_SETUP_VIOS: true
 
 # ── CTS ───────────────────────────────────────────────────────────────────────
-RUN_CTS: true
+CLOCK_TREE_SYNTH: true
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 # Global routing: increase layer count for large die
 RT_MAX_LAYER: metal9
-# Ease global-router capacity derating on the enlarged floorplan.
-GRT_ADJUSTMENT: 0.15
-# Fail fast on severe congestion instead of spending hours in overflow retries.
-GRT_ALLOW_CONGESTION: false
-# Give the global router enough iterations to converge after macro spreading.
-GRT_OVERFLOW_ITERS: 50
+GRT_ALLOW_CONGESTION: true
+# High-effort routing: more overflow-fix iterations before giving up.
+GRT_OVERFLOW_ITERS: 100
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
 # Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so

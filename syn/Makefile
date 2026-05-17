@@ -45,7 +45,8 @@ OPENLANE ?= $(HOME)/openlane2
 NANGATE_HOME ?=
 
 # Python binary used to run OpenRAM and openram-setup
-PYTHON3 ?= python3
+# Auto-selects the local venv (which has OpenRAM deps) when it exists.
+PYTHON3 ?= $(if $(wildcard $(SYN_DIR)/.venv/bin/python3),$(SYN_DIR)/.venv/bin/python3,python3)
 
 # openlane run command.
 # Default: use the nix-shell wrapper (scripts/openlane_nix.sh) so that
@@ -265,9 +266,25 @@ lvs-gds:
 	@echo " LVS report: $(LVS_RPT)"
 	@grep -E "(Circuit|Netlist|match|Mismatch)" $(LVS_RPT) | tail -5 || true
 	@echo "========================================"
+
+# ── OpenRAM SRAM macro compilation ──────────────────────────────────────────
+gen-mem: check
+	@echo "========================================"
+	@echo " Compiling OpenRAM SRAM macro"
+	@echo "  Config : $(OPENRAM_CFG)"
+	@echo "  Output : $(OPENRAM_OUTDIR)/"
+	@echo "========================================"
+	@if [ ! -d "$(OPENRAM)" ]; then \
+	    echo "ERROR: OPENRAM not found at '$(OPENRAM)'"; \
+	    echo "       Set OPENRAM in env.config or on command line."; \
+	    exit 1; \
+	fi
+	@mkdir -p $(OPENRAM_OUTDIR)
+	cd $(OPENRAM_OUTDIR) && \
+	    OPENRAM_HOME=$(OPENRAM)/compiler \
 	    OPENRAM_TECH=$(OPENRAM)/technology \
 	    PYTHONPATH=$(OPENRAM)/compiler \
-	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(OPENRAM_CFG)
+	    $(PYTHON3) $(OPENRAM)/sram_compiler.py $(SYN_DIR)/lib/openram/$(OPENRAM_CFG)
 	@echo "Snapping OpenRAM LEF pin geometry to manufacturing grid..."
 	@$(PYTHON3) $(SYN_DIR)/common/fix_openram_lef_grid.py $(OPENRAM_OUTDIR)/sram_1rw_1024x64.lef
 	@echo "========================================"
