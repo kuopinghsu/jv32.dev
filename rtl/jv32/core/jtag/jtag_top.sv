@@ -98,16 +98,20 @@ module jtag_top #(
     input  logic [31:0] dbg_mem_rdata_i,  // Memory read data
 
     // System reset outputs
-    output logic                        dbg_ndmreset_o,   // Non-debug module reset
-    output logic                        dbg_hartreset_o,  // Hart reset
+    output logic dbg_ndmreset_o,   // Non-debug module reset
+    output logic dbg_hartreset_o,  // Hart reset
+
     // Debug control signals from dcsr
-    output logic                        dbg_singlestep_o,  // dcsr[2]: single-step mode
-    output logic                        dbg_ebreakm_o,     // dcsr[15]: ebreak->debug mode
-    output logic [          31:0]       progbuf0_o,        // Program buffer 0
-    output logic [          31:0]       progbuf1_o,        // Program buffer 1
+    output logic        dbg_singlestep_o,  // dcsr[2]: single-step mode
+    output logic        dbg_ebreakm_o,     // dcsr[15]: ebreak->debug mode
+    output logic        dcsr_stopcount_o,  // dcsr[10]: freeze counters during debug halt
+    output logic [31:0] progbuf0_o,        // Program buffer 0
+    output logic [31:0] progbuf1_o,        // Program buffer 1
+
     // Trigger interface
     input  logic                        trigger_halt_i,
-    input  logic [N_TRIGGERS-1:0]       trigger_hit_i,     // per-trigger hit bits from CPU
+    input  logic                        ebreak_halt_i,  // ebreak caused current halt
+    input  logic [N_TRIGGERS-1:0]       trigger_hit_i,  // per-trigger hit bits from CPU
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o
 );
@@ -136,11 +140,14 @@ module jtag_top #(
         logic cjtag_tmsc_out;
         logic cjtag_tmsc_oen;
 
-        // cJTAG mode: Pin 1 is bidirectional TMSC, Pin 3 is unused
+        // cJTAG mode: only TCKC (pin0) and TMSC (pin1) are used.
+        // pin3 (JTAG TDO) is not part of the 2-wire cJTAG interface; tristate it.
+        // On a real IC this pin does not exist.  Any FPGA TDO workaround must
+        // live in the FPGA wrapper (jv32_fpga_top.sv), not here.
         assign pin1_tms_o  = cjtag_tmsc_out;
         assign pin1_tms_oe = cjtag_tmsc_oen;
-        assign pin3_tdo_o  = 1'b0;
-        assign pin3_tdo_oe = 1'b1;  // Tristate (unused)
+        assign pin3_tdo_o  = 1'b0;  // unused in 2-wire cJTAG; value irrelevant
+        assign pin3_tdo_oe = 1'b1;  // tristate: pin3 is not driven in cJTAG mode
 
         // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
         cjtag_bridge u_cjtag_bridge (
@@ -227,10 +234,12 @@ module jtag_top #(
         // Debug control signals
         .dbg_singlestep_o(dbg_singlestep_o),
         .dbg_ebreakm_o   (dbg_ebreakm_o),
+        .dcsr_stopcount_o(dcsr_stopcount_o),
         .progbuf0_o      (progbuf0_o),
         .progbuf1_o      (progbuf1_o),
         // Trigger interface
         .trigger_halt_i  (trigger_halt_i),
+        .ebreak_halt_i   (ebreak_halt_i),
         .trigger_hit_i   (trigger_hit_i),
         .tdata1_o        (tdata1_o),
         .tdata2_o        (tdata2_o)

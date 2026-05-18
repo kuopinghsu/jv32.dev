@@ -84,8 +84,10 @@ module jv32_core #(
     output logic [          31:0]       dbg_pc_o,
     input  logic                        dbg_singlestep_i,
     input  logic                        dbg_ebreakm_i,
+    input  logic                        dcsr_stopcount_i,  // dcsr[10] from DM: freeze counters during debug halt
     // Trigger interface (Debug Spec 0.13 Sec.5.2 Trigger Module)
     output logic                        trigger_halt_o,  // trigger caused current halt
+    output logic                        ebreak_halt_o,   // ebreak (with ebreakm=1) caused current halt
     output logic [N_TRIGGERS-1:0]       trigger_hit_o,   // per-trigger: which trigger(s) fired
     input  logic [N_TRIGGERS-1:0][31:0] tdata1_i,        // mcontrol config per trigger
     input  logic [N_TRIGGERS-1:0][31:0] tdata2_i,        // match address per trigger
@@ -181,8 +183,9 @@ module jv32_core #(
         .RVM23_EN(1'b1),
         .ZCMP_EN (ZCMP_EN)
     ) u_rvc (
-        .clk            (clk),
-        .rst_n          (rst_n),
+        .clk  (clk),
+        .rst_n(rst_n),
+
         // A faulting I-fetch response must not be decompressed/consumed as a
         // real instruction; the IF/EX fault slot is injected separately below.
         // With IBUF: fault responses are never pushed to the FIFO, so the FIFO
@@ -219,9 +222,11 @@ module jv32_core #(
     logic                  dbg_enter_debug;
     logic                  trigger_match;
     logic                  trigger_halt_r;     // trigger module caused current halt (dcsr.cause=2)
+    logic                  ebreak_halt_r;      // ebreak caused current halt (dcsr.cause=1)
     logic [N_TRIGGERS-1:0] trigger_hit_r;      // which trigger(s) caused the halt
 
     assign trigger_halt_o = trigger_halt_r;
+    assign ebreak_halt_o  = ebreak_halt_r;
     assign trigger_hit_o  = trigger_hit_r;
 
     jv32_regfile #(
@@ -401,35 +406,37 @@ module jv32_core #(
         // where an incoming interrupt (e.g. MSIP from the just-issued store) sees
         // mstatus_mie=1 and takes the interrupt with mepc pointing to the store
         // rather than to the first instruction after the CSR write.
-        .csr_op         (if_stall ? 3'b000 : dec_csr_op),
-        .csr_wdata      (alu_op_a),  // forwarded rs1
-        .csr_zimm       (dec_rs1),   // zimm from rs1 field
-        .csr_rdata      (csr_rdata),
-        .exception      (wb_exception),
-        .exception_cause(wb_exc_cause),
-        .exception_pc   (ex_wb_r.pc),
-        .exception_tval (wb_exc_tval),
-        .mret           (ex_wb_r.mret && wb_retire),
-        .wb_valid       (wb_retire),
-        .irq_mepc       (ex_wb_r.pc),
-        .mtvec_o        (mtvec_csr),
-        .mepc_o         (mepc_csr),
-        .timer_irq      (timer_irq),
-        .external_irq   (external_irq),
-        .software_irq   (software_irq),
-        .clic_irq       (clic_irq),
-        .clic_level     (clic_level),
-        .clic_prio      (clic_prio),
-        .clic_id        (clic_id),
-        .clic_ack       (clic_ack),
-        .tail_chain_o   (csr_tail_chain),
-        .tail_chain_pc_o(csr_tail_chain_pc),
-        .irq_pending    (csr_irq_pending),
-        .irq_cause      (csr_irq_cause),
-        .irq_pc         (csr_irq_pc),
-        .heartbeat_o    (heartbeat_o),
-        .instret_inc    (trace_valid_r),
-        .mtime_i        (mtime_i)
+        .csr_op          (if_stall ? 3'b000 : dec_csr_op),
+        .csr_wdata       (alu_op_a),  // forwarded rs1
+        .csr_zimm        (dec_rs1),   // zimm from rs1 field
+        .csr_rdata       (csr_rdata),
+        .exception       (wb_exception),
+        .exception_cause (wb_exc_cause),
+        .exception_pc    (ex_wb_r.pc),
+        .exception_tval  (wb_exc_tval),
+        .mret            (ex_wb_r.mret && wb_retire),
+        .wb_valid        (wb_retire),
+        .irq_mepc        (ex_wb_r.pc),
+        .mtvec_o         (mtvec_csr),
+        .mepc_o          (mepc_csr),
+        .timer_irq       (timer_irq),
+        .external_irq    (external_irq),
+        .software_irq    (software_irq),
+        .clic_irq        (clic_irq),
+        .clic_level      (clic_level),
+        .clic_prio       (clic_prio),
+        .clic_id         (clic_id),
+        .clic_ack        (clic_ack),
+        .tail_chain_o    (csr_tail_chain),
+        .tail_chain_pc_o (csr_tail_chain_pc),
+        .irq_pending     (csr_irq_pending),
+        .irq_cause       (csr_irq_cause),
+        .irq_pc          (csr_irq_pc),
+        .heartbeat_o     (heartbeat_o),
+        .instret_inc     (trace_valid_r),
+        .mtime_i         (mtime_i),
+        .dbg_halted_i    (dbg_halted_r),
+        .dcsr_stopcount_i(dcsr_stopcount_i)
     );
 
     // =====================================================================
@@ -1078,6 +1085,7 @@ module jv32_core #(
             dbg_step_served_r  <= 1'b0;
             dbg_step_fire_r    <= 1'b0;
             trigger_halt_r     <= 1'b0;
+            ebreak_halt_r      <= 1'b0;
             trigger_hit_r      <= '0;
         end
         else begin
@@ -1099,6 +1107,7 @@ module jv32_core #(
                 dbg_step_pending_r <= dbg_singlestep_i;
                 dbg_step_fire_r    <= 1'b0;  // clear sticky flag on each resume
                 trigger_halt_r     <= 1'b0;  // clear trigger cause on resume
+                ebreak_halt_r      <= 1'b0;  // clear ebreak cause on resume
                 trigger_hit_r      <= '0;    // clear per-trigger hit bits on resume
             end
             else if ((dbg_enter_debug || trigger_match
@@ -1106,11 +1115,14 @@ module jv32_core #(
                       || (dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r)))
                       && !dmem_stall) begin
                 dbg_halted_r       <= 1'b1;
-                trigger_halt_r     <= trigger_match;      // record: trigger module caused halt
-                trigger_hit_r      <= trigger_match_vec;  // which trigger(s) fired
+                trigger_halt_r     <= trigger_match;                      // record: trigger module caused halt
+                ebreak_halt_r      <= dbg_enter_debug && !trigger_match;  // record: ebreak caused halt
+                trigger_hit_r      <= trigger_match_vec;                  // which trigger(s) fired
+
                 // resumeack stays 1 (sticky) - TCK synchronizer needs time to capture it
                 dbg_step_pending_r <= 1'b0;
                 dbg_step_fire_r    <= 1'b0;  // clear sticky flag on halt entry
+
                 // After a single-step halt, block re-resume until resumereq deasserts
                 if (dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r)) dbg_step_served_r <= 1'b1;
             end
@@ -1128,10 +1140,12 @@ module jv32_core #(
     //                        strict-store dmem_stall, AMO_STORE_WAIT.
     // dmem_resp_valid_rd     -- load_use_stall, forwarding, read dmem_stall.
     logic dmem_was_write_d;
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) dmem_was_write_d <= 1'b0;
         else dmem_was_write_d <= dmem_req_valid && dmem_req_write;
     end
+
     assign dmem_resp_valid_rd = dmem_resp_valid && !dmem_was_write_d;
 
     // Load-use hazard: stall only when WB holds a load/LR result whose SRAM

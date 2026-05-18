@@ -216,12 +216,12 @@ if {$err_after != 0} {
 puts "  cmderr was $err_before, cleared to 0 via W1C OK"
 puts "cmderr W1C OK"
 
-# ── 6. cmderr auto-cleared on new COMMAND write (jv32 design) ─────────────────
-# jv32 clears cmderr automatically at the start of each new COMMAND write
-# (rather than requiring explicit W1C before reuse, as strict Debug Spec requires).
-# Verify: first error sets cmderr; writing a new COMMAND resets it; the new
-# command then sets its own cmderr.
-puts "\[SUBTEST\] cmderr auto-cleared on new COMMAND write (jv32 behavior)"
+# ── 6. cmderr sticky: new COMMAND write ignored when cmderr != 0 ──────────────
+# Debug Spec §3.14.8: "If cmderr is non-zero, writes to this register are
+# ignored and do not change cmderr."  jv32 implements strict sticky semantics:
+# cmderr is only cleared via W1C; a new COMMAND write while cmderr is non-zero
+# is silently discarded and cmderr is unchanged.
+puts "\[SUBTEST\] cmderr sticky: COMMAND write ignored when cmderr != 0"
 
 # Trigger CMDERR_EXCEPTION (=3) with an unmapped read.
 riscv dmi_write 0x05 $BAD_ADDR
@@ -232,25 +232,25 @@ set acs_s1 [as_u32 [riscv dmi_read 0x16]]
 set err_s1 [expr {($acs_s1 >> 8) & 0x7}]
 if {$err_s1 != 3} {
     clear_cmderr
-    error "cmderr auto-clear test: expected CMDERR_EXCEPTION=3, got $err_s1"
+    error "cmderr sticky test: expected CMDERR_EXCEPTION=3, got $err_s1"
 }
 puts "  first error: cmderr=$err_s1 (EXCEPTION=3)"
 
-# Write a new COMMAND.  jv32 auto-clears cmderr at the start of each command,
-# then sets it to the new error.  An unsupported aarsize=3 command → NOTSUP=2.
+# Write a new COMMAND while cmderr is non-zero.  Per spec the command is
+# silently ignored and cmderr must remain unchanged at 3.
 riscv dmi_write 0x17 [expr {1 << 24}]
 after 5
 
 set acs_s2 [as_u32 [riscv dmi_read 0x16]]
 set err_s2 [expr {($acs_s2 >> 8) & 0x7}]
-# jv32 auto-clears before each command → cmderr reflects the NEW command's error.
-if {$err_s2 != 2} {
+# Spec-compliant sticky behaviour: cmderr must still be 3, not overwritten.
+if {$err_s2 != 3} {
     clear_cmderr
-    error "cmderr auto-clear: expected NOTSUP=2 after new COMMAND, got $err_s2"
+    error "cmderr sticky: expected cmderr=3 unchanged after COMMAND write, got $err_s2"
 }
 clear_cmderr
-puts "  after new COMMAND: cmderr=$err_s2 (NOTSUP=2, previous error auto-cleared)"
-puts "cmderr auto-clear on COMMAND write OK"
+puts "  after COMMAND write: cmderr=$err_s2 (still EXCEPTION=3, command silently ignored)"
+puts "cmderr sticky on COMMAND write OK"
 
 # ── Final state: verify clean and hart is halted ──────────────────────────────
 check_cmderr "final clean" 0

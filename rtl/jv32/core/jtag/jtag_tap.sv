@@ -70,10 +70,12 @@ module jtag_tap #(
     output logic        dbg_hartreset_o,
     output logic        dbg_singlestep_o,
     output logic        dbg_ebreakm_o,
+    output logic        dcsr_stopcount_o,  // dcsr[10]: freeze counters during debug halt
     output logic [31:0] progbuf0_o,
     output logic [31:0] progbuf1_o,
 
     input  logic                        trigger_halt_i,
+    input  logic                        ebreak_halt_i,   // ebreak caused current halt
     input  logic [N_TRIGGERS-1:0]       trigger_hit_i,
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o
@@ -804,9 +806,11 @@ module jtag_tap #(
         .dbg_hartreset_o (dbg_hartreset_o),
         .dbg_singlestep_o(dbg_singlestep_o),
         .dbg_ebreakm_o   (dbg_ebreakm_o),
+        .dcsr_stopcount_o(dcsr_stopcount_o),
         .progbuf0_o      (progbuf0_o),
         .progbuf1_o      (progbuf1_o),
         .trigger_halt_i  (trigger_halt_i),
+        .ebreak_halt_i   (ebreak_halt_i),
         .trigger_hit_i   (trigger_hit_i),
         .tdata1_o        (tdata1_o),
         .tdata2_o        (tdata2_o)

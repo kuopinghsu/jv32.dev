@@ -52,6 +52,13 @@ set_clock_groups -asynchronous \
     -group $core_clock_group \
     -group [get_clocks jtag_tck]
 
+# Explicit cross-domain false paths (supplements set_clock_groups above).
+# OpenROAD's unconstrained-endpoint checker counts CDC synchronizer D-pins as
+# unconstrained when only clock-groups is used; adding explicit false paths
+# marks those endpoints as excluded rather than unconstrained.
+set_false_path -from [get_clocks core_clk] -to [get_clocks jtag_tck]
+set_false_path -from [get_clocks jtag_tck] -to [get_clocks core_clk]
+
 # ── Clock uncertainty and transition ──────────────────────────────────────────
 # Uncertainty and transition on the primary clocks are inherited by gated
 # derivatives — no need to list each CLKGATE GCK output separately.
@@ -73,6 +80,15 @@ set_clock_uncertainty -setup 1.0 [get_clocks jtag_tck]
 set_clock_uncertainty -hold  0.1 [get_clocks jtag_tck]
 set_clock_transition         1.0 [get_clocks jtag_tck]
 
+# ── Design-level max slew and max capacitance ─────────────────────────────────
+# Explicit targets for repair_design at every resizer stage.
+# Without these, OpenROAD only uses per-cell liberty limits which can still
+# leave post-route slew/cap violations when nets are long.
+# Nangate 45nm: BUF_X4 output slew ≈ 0.15 ns; 4× headroom = 0.6 ns.
+# 0.1 pF net capacitance ~ 200 µm wire in metal3 (0.5 fF/µm × 200 µm + pin load).
+set_max_transition 0.6 [current_design]
+set_max_capacitance 0.1 [current_design]
+
 # ── Input / output delay constraints ──────────────────────────────────────────
 # 20% of clock period for I/O delay budget
 set input_delay  2.5
@@ -93,6 +109,13 @@ set_output_delay $output_delay -clock [get_clocks core_clk] [all_outputs]
 # constrain them relative to jtag_tck so the path is fully analysed.
 set_output_delay $output_delay -clock [get_clocks jtag_tck] \
     [get_ports {jtag_pin1_tms_o jtag_pin1_tms_oe jtag_pin3_tdo_o jtag_pin3_tdo_oe}]
+
+# JTAG data inputs are sampled by jtag_tck; constrain them relative to jtag_tck
+# so JTAG-domain flip-flop D-pins have a valid timing path and are not reported
+# as unconstrained endpoints.  The false_path below still suppresses analysis
+# for the core_clk direction.
+set_input_delay $input_delay -clock [get_clocks jtag_tck] \
+    [get_ports {jtag_pin1_tms_i jtag_pin2_tdi_i}]
 
 # ── Drive strength for input ports ────────────────────────────────────────────
 set_driving_cell -lib_cell BUF_X4 -pin Z $all_in_ex_clk

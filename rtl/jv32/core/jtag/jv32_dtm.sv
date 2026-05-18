@@ -100,10 +100,12 @@ module jv32_dtm #(
     output logic        dbg_hartreset_o,
     output logic        dbg_singlestep_o,
     output logic        dbg_ebreakm_o,
+    output logic        dcsr_stopcount_o,  // dcsr[10]: freeze counters during debug halt
     output logic [31:0] progbuf0_o,
     output logic [31:0] progbuf1_o,
 
     input  logic                        trigger_halt_i,
+    input  logic                        ebreak_halt_i,   // ebreak (with ebreakm=1) caused current halt
     input  logic [N_TRIGGERS-1:0]       trigger_hit_i,
     output logic [N_TRIGGERS-1:0][31:0] tdata1_o,
     output logic [N_TRIGGERS-1:0][31:0] tdata2_o
@@ -119,6 +121,15 @@ module jv32_dtm #(
     localparam CMDERR_EXCEPTION  = 3'd3;
     localparam CMDERR_HALTRESUME = 3'd4;
     localparam CMDERR_BUS        = 3'd5;
+
+    // dcsr WARL-writable bits (Debug Spec §3.7.1):
+    //   [15]=ebreakm  [11]=stepie  [10]=stopcount  [9]=stoptime  [4]=mprven  [2]=step
+    // [1:0]=prv is intentionally excluded: for an M-mode-only implementation prv must
+    //   always be 3 (WARL), so writes are ignored and the override below forces 3.
+    // All other bits are WIRI, WPRI, or read-only (cause, nmip, ebreaks, ebreaku,
+    // reserved).  Applying this mask on write prevents the debugger from storing
+    // garbage in reserved fields.
+    localparam [31:0] DCSR_WRITE_MASK = 32'h0000_8E14;
 
     localparam [2:0] SBA_ACCESS8  = 3'd0;
     localparam [2:0] SBA_ACCESS16 = 3'd1;
@@ -279,6 +290,7 @@ module jv32_dtm #(
 
     assign dbg_singlestep_o          = cmd_busy ? 1'b0 : dcsr_reg[2];
     assign dbg_ebreakm_o             = dcsr_reg[15];
+    assign dcsr_stopcount_o          = dcsr_reg[10];
     assign progbuf0_o                = progbuf0_i;
     assign progbuf1_o                = progbuf1_i;
 
@@ -552,7 +564,12 @@ module jv32_dtm #(
 
             if (halted_i && !dbg_halted_prev_fsm) begin
                 if (!exec_waiting_halt) dpc_reg <= dbg_pc_i;
+                // prv records the privilege mode at halt entry (§3.7.1);
+                // M-mode-only implementation: prv is always 3.
+                dcsr_reg[1:0] <= 2'd3;
+                // cause priority: trigger(2) > ebreak(1) > single-step(4) > haltreq(3)
                 if (trigger_halt_i) dcsr_cause_r <= 3'd2;
+                else if (ebreak_halt_i) dcsr_cause_r <= 3'd1;
                 else if (dcsr_reg[2]) dcsr_cause_r <= 3'd4;
                 else dcsr_cause_r <= 3'd3;
             end
@@ -565,8 +582,10 @@ module jv32_dtm #(
                 command_reg_sys    <= command_reg_i;  // stable: held by jtag_tap until next toggle
                 data0_sys          <= data0_i;
                 data1_sys          <= data1_i;
-                command_valid_sys  <= 1'b1;
-                cmderr_sys         <= 3'b0;
+                // §3.5.1: if cmderr is non-zero, new commands are silently ignored.
+                // cmderr is only cleared by the debugger via W1C (cmderr_clr_tog).
+                // Clearing it here on every command write would violate the sticky semantics.
+                command_valid_sys  <= (cmderr_sys == 3'b0);
                 data0_result_valid <= 1'b0;
                 data1_result_valid <= 1'b0;
                 read_after_exec    <= 1'b0;
@@ -662,6 +681,10 @@ module jv32_dtm #(
                             dbg_pc_we_o    <= 1'b1;
                             cmd_state      <= CMD_EXEC;
                         end
+                        else if (cmd_is_access_reg && !cmd_transfer && !cmd_postexec) begin
+                            // transfer=0 + postexec=0 is a valid no-op (Debug Spec §3.5.1)
+                            cmd_state <= CMD_DONE;
+                        end
                         else if (cmd_is_access_mem) begin
                             if (command_reg_sys[23]) begin
                                 cmderr_sys <= CMDERR_NOTSUP;
@@ -682,7 +705,8 @@ module jv32_dtm #(
 
                     // SBA handling (independent of abstract command)
                     if (!command_valid_sys || cmd_busy) begin
-                        if ((sba_rd_toggle_sync[1] != sba_rd_toggle_r || sba_rd_pending_clk) && !mem_req_pending) begin
+                        if ((sba_rd_toggle_sync[1] != sba_rd_toggle_r || sba_rd_pending_clk) && !mem_req_pending
+                                && (sb_err == 3'b0)) begin  // §3.12.11: no SBA while sberror is set
                             sbaddress0_clk       <= sbaddress0_i;  // stable: held by jtag_tap
                             sbdata0_result_valid <= 1'b0;
                             sb_access_latched    <= sb_access_i;
@@ -692,7 +716,7 @@ module jv32_dtm #(
                             sba_rd_pending_clk   <= 1'b0;
                         end
                         else if ((sba_wr_toggle_sync[1] != sba_wr_toggle_r || sba_wr_pending_clk)
-                                  && !mem_req_pending) begin
+                                  && !mem_req_pending && (sb_err == 3'b0)) begin  // §3.12.11: no SBA while sberror is set
                             sbaddress0_clk          <= sbaddress0_i;
                             sbdata0_clk             <= sbdata0_i;
                             sbdata0_result_valid    <= 1'b0;
@@ -745,7 +769,23 @@ module jv32_dtm #(
 
                 CMD_CSR_READ: begin
                     case (cmd_regno)
-                        16'h07b0: data0_result <= {4'd4, dcsr_reg[27:9], dcsr_cause_r, dcsr_reg[5:0]};
+                        // dcsr §3.7.1: reconstruct with proper WIRI/RO zeroing.
+                        // [31:28]=xdebugver=4  [27:16]=0(WIRI)  [15]=ebreakm
+                        // [14:12]=0(reserved/no-S/no-U)  [11:9]=stepie/stopcount/stoptime
+                        // [8:6]=cause(RO,hw-written)  [5]=0  [4]=mprven  [3]=0(nmip)  [2:0]=step/prv
+                        16'h07b0:
+                        data0_result <= {
+                            4'd4,
+                            12'd0,
+                            dcsr_reg[15],
+                            3'b000,
+                            dcsr_reg[11:9],
+                            dcsr_cause_r,
+                            1'b0,
+                            dcsr_reg[4],
+                            1'b0,
+                            dcsr_reg[2:0]
+                        };
                         16'h07b2: data0_result <= dscratch0_reg;
                         16'h07b3: data0_result <= dscratch1_reg;
                         16'h0301: data0_result <= 32'h40001105;  // misa RV32IMAC
@@ -774,15 +814,21 @@ module jv32_dtm #(
                 CMD_CSR_WRITE: begin
                     case (cmd_regno)
                         16'h07b0: begin
-                            dcsr_reg     <= {4'd4, data0_sys[27:0]};
-                            dcsr_cause_r <= data0_sys[8:6];
+                            // Only update the WARL-writable fields; cause[8:6] is
+                            // read-only (§3.7.1) — written by hardware on halt, never
+                            // by the debugger.  prv is forced to 3 (WARL, M-mode only).
+                            dcsr_reg      <= data0_sys & DCSR_WRITE_MASK;
+                            dcsr_reg[1:0] <= 2'd3;  // WARL: M-mode-only, prv always 3
                         end
+                        16'h07b1: dpc_reg <= data0_sys;
                         16'h07b2: dscratch0_reg <= data0_sys;
                         16'h07b3: dscratch1_reg <= data0_sys;
                         16'h07A0: if (data0_sys < 32'(N_TRIGGERS)) tselect_reg <= data0_sys;
                         16'h07A1: begin
-                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]]        <= {4'd2, data0_sys[27:0]};
-                            trigger_hit_latch[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys[20];
+                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= {4'd2, data0_sys[27:0]};
+                            // hit (tdata1[20]) is write-0-to-clear only (Debug Spec §5.2.2);
+                            // writing 1 has no effect (WARL, set only by hardware trigger).
+                            if (!data0_sys[20]) trigger_hit_latch[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= 1'b0;
                         end
                         16'h07A2: tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys;
                         default:  ;
@@ -792,11 +838,13 @@ module jv32_dtm #(
 
                 CMD_MEM_READ: begin
                     if (!mem_req_pending) begin
-                        dbg_mem_req_o   <= 1'b1;
-                        dbg_mem_addr_o  <= mem_addr;
-                        dbg_mem_we_o    <= 4'b0;
+                        dbg_mem_req_o <= 1'b1;
+                        dbg_mem_addr_o <= {
+                            mem_addr[31:2], 2'b00
+                        };  // word-aligned; byte/half extracted from response using mem_addr[1:0]
+                        dbg_mem_we_o <= 4'b0;
                         mem_req_pending <= 1'b1;
-                        mem_wait_cnt    <= 4'b0;
+                        mem_wait_cnt <= 4'b0;
                     end
                     else if (dbg_mem_ready_i) begin
                         if (dbg_mem_error_i) begin
@@ -875,31 +923,37 @@ module jv32_dtm #(
                         sbaddress0_result_valid <= 1'b0;
                     end
                     else if (dbg_mem_ready_i) begin
-                        sbdata0_clk          <= sba_rdata_masked;
-                        sbdata0_result_valid <= 1'b1;
-                        dbg_mem_req_o        <= 1'b0;
-                        mem_req_pending      <= 1'b0;
-                        if (sb_access_latched == SBA_ACCESS32 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd4;
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        else if (sb_access_latched == SBA_ACCESS16 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd2;
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        else if (sb_access_latched == SBA_ACCESS8 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd1;
-                            sbaddress0_result_valid <= 1'b1;
+                        dbg_mem_req_o   <= 1'b0;
+                        mem_req_pending <= 1'b0;
+                        if (dbg_mem_error_i) begin
+                            sb_err    <= 3'd2;  // bad address / bus error (Debug Spec §3.12.11)
+                            cmd_state <= CMD_IDLE;
                         end
                         else begin
-                            sbaddress0_result_valid <= 1'b0;
+                            sbdata0_clk          <= sba_rdata_masked;
+                            sbdata0_result_valid <= 1'b1;
+                            if (sb_access_latched == SBA_ACCESS32 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd4;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else if (sb_access_latched == SBA_ACCESS16 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd2;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else if (sb_access_latched == SBA_ACCESS8 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd1;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else begin
+                                sbaddress0_result_valid <= 1'b0;
+                            end
+                            cmd_state <= CMD_IDLE;
                         end
-                        cmd_state <= CMD_IDLE;
                     end
                     else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err          <= 3'd1;
+                            sb_err          <= 3'd1;  // timeout (Debug Spec §3.12.11)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
                             cmd_state       <= CMD_IDLE;
@@ -919,27 +973,33 @@ module jv32_dtm #(
                     else if (dbg_mem_ready_i) begin
                         dbg_mem_req_o   <= 1'b0;
                         mem_req_pending <= 1'b0;
-                        if (sb_access_latched == SBA_ACCESS8 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd1;
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        else if (sb_access_latched == SBA_ACCESS16 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd2;
-                            sbaddress0_result_valid <= 1'b1;
-                        end
-                        else if (sb_access_latched == SBA_ACCESS32 && sb_autoincr_latched) begin
-                            sbaddress0_clk          <= sbaddress0_clk + 32'd4;
-                            sbaddress0_result_valid <= 1'b1;
+                        if (dbg_mem_error_i) begin
+                            sb_err    <= 3'd2;  // bad address / bus error (Debug Spec §3.12.11)
+                            cmd_state <= CMD_IDLE;
                         end
                         else begin
-                            sbaddress0_result_valid <= 1'b0;
+                            if (sb_access_latched == SBA_ACCESS8 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd1;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else if (sb_access_latched == SBA_ACCESS16 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd2;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else if (sb_access_latched == SBA_ACCESS32 && sb_autoincr_latched) begin
+                                sbaddress0_clk          <= sbaddress0_clk + 32'd4;
+                                sbaddress0_result_valid <= 1'b1;
+                            end
+                            else begin
+                                sbaddress0_result_valid <= 1'b0;
+                            end
+                            cmd_state <= CMD_IDLE;
                         end
-                        cmd_state <= CMD_IDLE;
                     end
                     else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
                         if (sba_wait_cnt == 4'b1111) begin
-                            sb_err          <= 3'd1;
+                            sb_err          <= 3'd1;  // timeout (Debug Spec §3.12.11)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
                             cmd_state       <= CMD_IDLE;
@@ -1023,12 +1083,12 @@ module jv32_dtm #(
 
 `ifndef SYNTHESIS
     logic _unused_dtm;
-    assign _unused_dtm = &{1'b0,
-        dcsr_reg[31:28], dcsr_reg[14:13], dcsr_reg[12:9],
-        dcsr_reg[8:6], dcsr_reg[3],
-        command_reg_sys[19],
-        dmactive_i, resumeack_i
-    };
+    assign _unused_dtm = &{1'b0, dcsr_reg[31:28],  // xdebugver: stored at reset (=4) but hardcoded in read
+        dcsr_reg[27:16],           // reserved WIRI: always 0 after DCSR_WRITE_MASK
+        dcsr_reg[14:12],           // reserved/ebreaks/ebreaku: RO-0 (no S/U-mode)
+        dcsr_reg[8:6],             // cause shadow: always 0 (cause stored in dcsr_cause_r)
+        dcsr_reg[5], dcsr_reg[3],  // reserved, nmip: RO-0
+        command_reg_sys[19], dmactive_i, resumeack_i};
 `endif
 
 endmodule

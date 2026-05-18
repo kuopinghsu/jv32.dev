@@ -248,7 +248,10 @@ package jv32_pkg;
         CSR_MVENDORID = 12'hF11,
         CSR_MARCHID   = 12'hF12,
         CSR_MIMPID    = 12'hF13,
-        CSR_MHARTID   = 12'hF14
+        CSR_MHARTID   = 12'hF14,
+
+        // Debug CSRs (Debug Spec v1.0, §3.7; accessible via program-buffer execution)
+        CSR_DCSR = 12'h7B0  // debug control & status (only dcsr.stopcount[10] stored)
     } csr_addr_e;
 
     // ========================================================================

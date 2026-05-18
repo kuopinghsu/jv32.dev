@@ -92,7 +92,16 @@ module jv32_csr #(
     input logic instret_inc,
 
     // mtime from platform timer (for time/timeh CSR shadow)
-    input logic [63:0] mtime_i
+    input logic [63:0] mtime_i,
+
+    // Debug halt status (from jv32_core dbg_halted_r); used to gate performance
+    // counters when dcsr.stopcount=1, per Debug Spec v1.0 §3.7.1.
+    input logic dbg_halted_i,
+
+    // dcsr.stopcount from the DM's dcsr_reg[10] (jv32_dtm owns the dcsr register;
+    // OpenOCD writes it via abstract CSR command, which never touches jv32_csr).
+    // When 1, mcycle/minstret freeze while the hart is in Debug Mode.
+    input logic dcsr_stopcount_i
 );
     import jv32_pkg::*;
 
@@ -139,8 +148,33 @@ module jv32_csr #(
     logic        mcountinhibit_cy;
     logic        mcountinhibit_ir;
 
+    // dcsr.stopcount is owned by jv32_dtm (dcsr_reg[10]).  It arrives here as
+    // dcsr_stopcount_i; no local register needed.
+
+    // Counter next-value computation ─────────────────────────────────────────
+    // mcycle_cnt_nxt / minstret_cnt_nxt: combinatorial +1 adder (keep outside
+    // always_ff so Yosys does not fold the carry chain into D, which would
+    // produce $adff instead of $adffe and block Lighter ICG insertion).
+    //
+    // mcycle_cnt_en / minstret_cnt_en: UNIFIED enable that covers BOTH the
+    // free-running increment path AND the CSR-write override path (e.g. OS
+    // zeroing perf counters).  A single enable wire shared by all 64 bits
+    // lets Lighter insert ONE CLKGATE_X* cell per counter.
+    //
+    // Without unification the two 32-bit halves have different enables
+    // (CSR_MCYCLE touches [31:0], CSR_MCYCLEH touches [63:32]), so Lighter
+    // either gates them separately or skips the register entirely.
+    logic [63:0] mcycle_cnt_nxt;
+    logic [63:0] minstret_cnt_nxt;
+    assign mcycle_cnt_nxt   = mcycle_cnt + 64'd1;
+    assign minstret_cnt_nxt = minstret_cnt + 64'd1;
+
+    logic [63:0] mcycle_cnt_d, minstret_cnt_d;
+    logic mcycle_cnt_en, minstret_cnt_en;
+
     // =====================================================================
     // Write data helper (CSRRW / CSRRS / CSRRC)
+    // Declared here (before comb_counter_nxt) to satisfy forward-reference rules.
     // =====================================================================
     logic [31:0] csr_src;  // effective source: rs1 or zimm-extended
     logic [31:0] wd;       // value to write into CSR
@@ -157,6 +191,34 @@ module jv32_csr #(
 
     logic csr_we;
     assign csr_we = (csr_op != 3'b0) && !((csr_op[1:0] != 2'b01) && (csr_src == 32'd0));
+
+    always_comb begin : comb_counter_nxt
+        // mcycle: free-running increment; hold when inhibited or debug-frozen.
+        mcycle_cnt_en = !mcountinhibit_cy && !(dbg_halted_i && dcsr_stopcount_i);
+        mcycle_cnt_d  = mcycle_cnt_en ? mcycle_cnt_nxt : mcycle_cnt;
+        // CSR-write override: OR into the enable so the same wire drives all 64
+        // bits, then patch only the written 32-bit half in the data path.
+        if (csr_we && csr_addr == CSR_MCYCLE) begin
+            mcycle_cnt_d[31:0] = wd;
+            mcycle_cnt_en      = 1'b1;
+        end
+        if (csr_we && csr_addr == CSR_MCYCLEH) begin
+            mcycle_cnt_d[63:32] = wd;
+            mcycle_cnt_en       = 1'b1;
+        end
+
+        // minstret: incremented once per retired instruction.
+        minstret_cnt_en = instret_inc && !mcountinhibit_ir && !(dbg_halted_i && dcsr_stopcount_i);
+        minstret_cnt_d  = minstret_cnt_en ? minstret_cnt_nxt : minstret_cnt;
+        if (csr_we && csr_addr == CSR_MINSTRET) begin
+            minstret_cnt_d[31:0] = wd;
+            minstret_cnt_en      = 1'b1;
+        end
+        if (csr_we && csr_addr == CSR_MINSTRETH) begin
+            minstret_cnt_d[63:32] = wd;
+            minstret_cnt_en       = 1'b1;
+        end
+    end
 
     // =====================================================================
     // MIP (read-only reflection of live interrupts)
@@ -216,6 +278,9 @@ module jv32_csr #(
             CSR_MARCHID: csr_rdata = 32'h0;
             CSR_MIMPID: csr_rdata = 32'h1;
             CSR_MHARTID: csr_rdata = 32'h0;
+            // Debug CSRs
+            // dcsr and dpc are owned by jv32_dtm and handled there via abstract
+            // CSR commands (CMD_CSR_READ/WRITE).  No entries needed here.
             default: csr_rdata = 32'd0;
         endcase
     end
@@ -236,17 +301,10 @@ module jv32_csr #(
             mtvt_reg         <= 32'h0;
             mintthresh_reg   <= 8'h0;
             mintstatus_mil   <= 8'h0;
-            mcycle_cnt       <= 64'h0;
-            minstret_cnt     <= 64'h0;
             mcountinhibit_cy <= 1'b0;
             mcountinhibit_ir <= 1'b0;
         end
         else begin
-            // ---- performance counters ----
-            // mcycle counts clock cycles (spec Sec.3.1.11); minstret counts retired instructions.
-            if (!mcountinhibit_cy) mcycle_cnt <= mcycle_cnt + 64'd1;
-            if (instret_inc && !mcountinhibit_ir) minstret_cnt <= minstret_cnt + 64'd1;
-
             // ---- exception trap ----
             if (exception) begin
                 mstatus_mpie   <= mstatus_mie;
@@ -313,6 +371,7 @@ module jv32_csr #(
                         mcountinhibit_cy <= wd[0];
                         mcountinhibit_ir <= wd[2];
                     end
+                    // dcsr is owned by jv32_dtm; no case needed here.
                     // mnxti write side-effect: if a qualifying CLIC IRQ is pending,
                     // atomically claim it (update mcause + mintstatus, re-enable MIE)
                     // so the handler can branch directly to tail_chain_pc_o.
@@ -323,14 +382,27 @@ module jv32_csr #(
                             mstatus_mie    <= 1'b1;  // re-enable for next handler (nesting)
                         end
                     end
-                    CSR_MCYCLE:     mcycle_cnt[31:0] <= wd;
-                    CSR_MCYCLEH:    mcycle_cnt[63:32] <= wd;
-                    CSR_MINSTRET:   minstret_cnt[31:0] <= wd;
-                    CSR_MINSTRETH:  minstret_cnt[63:32] <= wd;
                     default:        ;
                 endcase
                 `DEBUG2(`DBG_GRP_CSR, ("CSR write: addr=0x%h src=0x%h wd=0x%h", csr_addr, csr_src, wd));
             end
+        end
+    end
+
+    // =====================================================================
+    // Performance counters — dedicated always_ff for clean ICG
+    // =====================================================================
+    // Separate block so each 64-bit register has ONE shared enable wire
+    // (mcycle_cnt_en / minstret_cnt_en computed above in comb_counter_nxt).
+    // Lighter inserts a single CLKGATE_X* per counter, covering all 64 bits.
+    always_ff @(posedge clk or negedge rst_n) begin : ff_perf_counters
+        if (!rst_n) begin
+            mcycle_cnt   <= '0;
+            minstret_cnt <= '0;
+        end
+        else begin
+            if (mcycle_cnt_en) mcycle_cnt <= mcycle_cnt_d;
+            if (minstret_cnt_en) minstret_cnt <= minstret_cnt_d;
         end
     end
 

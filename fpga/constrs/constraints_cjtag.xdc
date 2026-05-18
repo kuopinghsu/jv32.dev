@@ -38,6 +38,15 @@ set_clock_groups -physically_exclusive \
     -group [get_clocks -include_generated_clocks clk_50m] \
     -group [get_clocks tap_tck]
 
+# In cJTAG mode, constraints.xdc (always loaded) defines jtag_tck on port
+# jtag_tck_i.  jtag_tck feeds only the cjtag_bridge 2-FF synchronizer inputs
+# and is therefore asynchronous to (and physically exclusive from) tap_tck.
+# Without this declaration Vivado may generate spurious TIMING-10 warnings for
+# paths between the two clocks.
+set_clock_groups -physically_exclusive \
+    -group [get_clocks jtag_tck] \
+    -group [get_clocks tap_tck]
+
 # -----------------------------------------------------------------------------
 # cJTAG I/O – false paths (TMSC bidirectional, TDI/TDO unused)
 # -----------------------------------------------------------------------------

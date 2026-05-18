@@ -580,12 +580,15 @@ module cjtag_bridge (
     assign tms_o    = tms_int;
     assign tdi_o    = tdi_int;
 
-    // TMSC output: present tdo_i (the TAP's combinatorial TDO output, wired to
-    // tdo_comb_o in top.sv) when the bridge is in output mode (tmsc_oen_int=0).
+    // TMSC output: present tdo_i (the TAP's negedge-registered tdo_o, wired to
+    // tap_tdo in jtag_top.sv) when the bridge is in output mode (tmsc_oen_int=0).
     // The TDO window opens one sys-clock before TCK rises (on TCKC negedge at
-    // bit_pos=2).  After TCK rises and the TAP shift register updates, tdo_comb_o
-    // immediately reflects the new shift-register LSB.  By the time the DTS
-    // samples TMSC on TCKC posedge, tdo_i holds the freshly-shifted-out bit.
+    // bit_pos=2).  At that point tdo_i holds the TAP's TDO from the *previous*
+    // TCK negedge (standard 1-cycle JTAG TDO latency: the probe sees TDO[N-1]
+    // in OScan1 cycle N).  TCK rises ~1 sys-clock after the window opens;
+    // tdo_o does not update until the following TCK negedge, so tdo_i remains
+    // stable throughout the entire TDO window until the probe samples on TCKC
+    // posedge.  This matches IEEE 1149.1 shift-register output timing. ✓
     assign tmsc_o   = !tmsc_oen_int ? tdo_i : 1'b0;
 
     // TMSC output enable: Registered, changes on rising edge

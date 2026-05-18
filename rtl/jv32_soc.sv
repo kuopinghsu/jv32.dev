@@ -262,6 +262,7 @@ module jv32_soc #(
     logic                        dbg_hartreset;
     logic                        dbg_singlestep;
     logic                        dbg_ebreakm;
+    logic                        dbg_dcsr_stopcount;
     logic [          31:0]       progbuf0;
     logic [          31:0]       progbuf1;
     logic                        soc_rst_n;
@@ -271,6 +272,7 @@ module jv32_soc #(
 
     // Trigger interface wires (DTM <-> core)
     logic                        dbg_trigger_halt;
+    logic                        dbg_ebreak_halt;  // ebreak caused current halt
     logic [N_TRIGGERS-1:0]       dbg_trigger_hit;  // per-trigger hit bits
     logic [N_TRIGGERS-1:0][31:0] dbg_tdata1;
     logic [N_TRIGGERS-1:0][31:0] dbg_tdata2;
@@ -469,11 +471,13 @@ module jv32_soc #(
                 .dbg_hartreset_o (dbg_hartreset),
                 .dbg_singlestep_o(dbg_singlestep),
                 .dbg_ebreakm_o   (dbg_ebreakm),
+                .dcsr_stopcount_o(dbg_dcsr_stopcount),
                 .progbuf0_o      (progbuf0),
                 .progbuf1_o      (progbuf1),
 
                 // Trigger interface
                 .trigger_halt_i(dbg_trigger_halt),
+                .ebreak_halt_i (dbg_ebreak_halt),
                 .trigger_hit_i (dbg_trigger_hit),
                 .tdata1_o      (dbg_tdata1),
                 .tdata2_o      (dbg_tdata2)
@@ -481,38 +485,39 @@ module jv32_soc #(
         end
         else begin : gen_no_jtag
             // No JTAG: tie all debug master outputs to safe quiescent values.
-            assign dbg_halt_req     = 1'b0;
-            assign dbg_resume_req   = 1'b0;
-            assign dbg_reg_we       = 1'b0;
-            assign dbg_reg_addr     = 5'd0;
-            assign dbg_reg_wdata    = 32'd0;
-            assign dbg_pc_we        = 1'b0;
-            assign dbg_pc_wdata     = 32'd0;
-            assign dbg_mem_req      = 1'b0;
-            assign dbg_mem_addr     = 32'd0;
-            assign dbg_mem_we       = 4'd0;
-            assign dbg_mem_wdata    = 32'd0;
-            assign dbg_ndmreset     = 1'b0;
-            assign dbg_hartreset    = 1'b0;
-            assign dbg_singlestep   = 1'b0;
-            assign dbg_ebreakm      = 1'b0;
-            assign progbuf0         = 32'h0010_0073;  // EBREAK
-            assign progbuf1         = 32'h0010_0073;  // EBREAK
-            assign dbg_tdata1       = '0;
-            assign dbg_tdata2       = '0;
+            assign dbg_halt_req       = 1'b0;
+            assign dbg_resume_req     = 1'b0;
+            assign dbg_reg_we         = 1'b0;
+            assign dbg_reg_addr       = 5'd0;
+            assign dbg_reg_wdata      = 32'd0;
+            assign dbg_pc_we          = 1'b0;
+            assign dbg_pc_wdata       = 32'd0;
+            assign dbg_mem_req        = 1'b0;
+            assign dbg_mem_addr       = 32'd0;
+            assign dbg_mem_we         = 4'd0;
+            assign dbg_mem_wdata      = 32'd0;
+            assign dbg_ndmreset       = 1'b0;
+            assign dbg_hartreset      = 1'b0;
+            assign dbg_singlestep     = 1'b0;
+            assign dbg_ebreakm        = 1'b0;
+            assign dbg_dcsr_stopcount = 1'b0;
+            assign progbuf0           = 32'h0010_0073;  // EBREAK
+            assign progbuf1           = 32'h0010_0073;  // EBREAK
+            assign dbg_tdata1         = '0;
+            assign dbg_tdata2         = '0;
 
             // Tie JTAG output pins to safe levels
-            assign jtag_pin1_tms_o  = 1'b1;
-            assign jtag_pin1_tms_oe = 1'b0;
-            assign jtag_pin3_tdo_o  = 1'b1;
-            assign jtag_pin3_tdo_oe = 1'b0;
+            assign jtag_pin1_tms_o    = 1'b1;
+            assign jtag_pin1_tms_oe   = 1'b0;
+            assign jtag_pin3_tdo_o    = 1'b1;
+            assign jtag_pin3_tdo_oe   = 1'b0;
 
             logic _unused_jtag_pins;
             assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
                                          jtag_pin1_tms_i, jtag_pin2_tdi_i,
                                          dbg_halted, dbg_resumeack, dbg_reg_rdata,
                                          dbg_pc, dbg_mem_ready, dbg_mem_error, dbg_mem_rdata,
-                                         dbg_trigger_halt, dbg_trigger_hit};
+                                         dbg_trigger_halt, dbg_ebreak_halt, dbg_trigger_hit};
         end
     endgenerate
 
@@ -927,11 +932,13 @@ module jv32_soc #(
         .dbg_pc_o        (dbg_pc),
         .dbg_singlestep_i(dbg_singlestep),
         .dbg_ebreakm_i   (dbg_ebreakm),
+        .dcsr_stopcount_i(dbg_dcsr_stopcount),
         .progbuf0_i      (progbuf0),
         .progbuf1_i      (progbuf1),
 
         // Trigger interface
         .dbg_trigger_halt_o(dbg_trigger_halt),
+        .dbg_ebreak_halt_o (dbg_ebreak_halt),
         .dbg_trigger_hit_o (dbg_trigger_hit),
         .dbg_tdata1_i      (dbg_tdata1),
         .dbg_tdata2_i      (dbg_tdata2),

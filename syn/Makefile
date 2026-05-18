@@ -31,10 +31,10 @@ PDK    := freepdk45
 # Override in env.config or on the command line.
 
 # OpenRAM 1.2.x root (directory containing sram_compiler.py)
-OPENRAM ?= $(HOME)/OpenRAM-1.2.48
+OPENRAM ?= $(HOME)/opt/OpenRAM
 
 # OpenLane 2 root (directory containing 'openlane' Python package)
-OPENLANE ?= $(HOME)/openlane2
+OPENLANE ?= $(HOME)/opt/openlane2
 
 # Nangate 45nm Open Cell Library root — must contain:
 #   NangateOpenCellLibrary.tech.lef
@@ -453,6 +453,7 @@ synth: check $(BUILD_DIR)
 	    --fast-shift $(FAST_SHIFT) \
 	    --bp-en      $(BP_EN)      \
 	    --ibuf-en    $(IBUF_EN)    \
+	    --zcmp-en    $(ZCMP_EN)    \
 	    --iram-kb    $(shell echo $$(( $(IRAM_SIZE) / 1024 ))) \
 	    --dram-kb    $(shell echo $$(( $(DRAM_SIZE) / 1024 ))) \
 	    --clock-mhz  80 \
@@ -460,12 +461,6 @@ synth: check $(BUILD_DIR)
 	    $(if $(wildcard $(GATE_COUNT_STAT)),--gate-count-json $(GATE_COUNT_STAT),)
 	@echo " Summary : $(SYN_DIR)/REPORT.md"
 	@echo " Generating layout diagrams..."
-	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_diag.py \
-	    $(OPENLANE_RUN_DIR) \
-	    $(BUILD_DIR)/LAYOUT.png \
-	    --lef-dir $(SYN_DIR)/lib/openram \
-	    --title "$(DESIGN) — Layout Floorplan ($(shell echo $$(( $(IRAM_SIZE)/1024 ))) KB IRAM / $(shell echo $$(( $(DRAM_SIZE)/1024 ))) KB DRAM)" \
-	    || echo " WARNING: layout diagram generation failed (matplotlib required)"
 	@$(PYTHON3) $(SYN_DIR)/scripts/gen_layout_gds.py \
 	    $(OPENLANE_RUN_DIR) \
 	    $(BUILD_DIR)/LAYOUT_gds.png \
@@ -473,7 +468,6 @@ synth: check $(BUILD_DIR)
 	    --layers 35,36,38,39 \
 	    --title "$(DESIGN) — Post-P&R GDS Layout (FreePDK45 Nangate 45 nm)" \
 	    || echo " WARNING: GDS layout generation failed (gdstk + Pillow required)"
-	@echo " Layout  : $(BUILD_DIR)/LAYOUT.png"
 	@echo " Layout  : $(BUILD_DIR)/LAYOUT_gds.png"
 	@echo "========================================"
 

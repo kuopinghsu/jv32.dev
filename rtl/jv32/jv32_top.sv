@@ -184,12 +184,14 @@ module jv32_top #(
     output logic [31:0] dbg_pc_o,
     input  logic        dbg_singlestep_i,
     input  logic        dbg_ebreakm_i,
+    input  logic        dcsr_stopcount_i,  // dcsr[10] from DM: freeze counters during halt
     input  logic [31:0] progbuf0_i,
     input  logic [31:0] progbuf1_i,
 
     // Trigger interface (Debug Spec 0.13 Sec.5.2)
     output logic                        dbg_trigger_halt_o,
-    output logic [N_TRIGGERS-1:0]       dbg_trigger_hit_o,   // per-trigger hit bits (set by HW, cleared on resume)
+    output logic                        dbg_ebreak_halt_o,  // ebreak (ebreakm=1) caused current halt
+    output logic [N_TRIGGERS-1:0]       dbg_trigger_hit_o,  // per-trigger hit bits (set by HW, cleared on resume)
     input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata1_i,
     input  logic [N_TRIGGERS-1:0][31:0] dbg_tdata2_i,
 
@@ -331,7 +333,9 @@ module jv32_top #(
         .dbg_pc_o            (dbg_pc_o),
         .dbg_singlestep_i    (dbg_singlestep_i),
         .dbg_ebreakm_i       (dbg_ebreakm_i),
+        .dcsr_stopcount_i    (dcsr_stopcount_i),
         .trigger_halt_o      (dbg_trigger_halt_o),
+        .ebreak_halt_o       (dbg_ebreak_halt_o),
         .trigger_hit_o       (dbg_trigger_hit_o),
         .tdata1_i            (dbg_tdata1_i),
         .tdata2_i            (dbg_tdata2_i),

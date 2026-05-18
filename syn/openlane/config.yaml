@@ -146,8 +146,8 @@ USE_SYNLIG: true
 #               core area = 2246 x 1328 = 2,982,688 um2
 #               die  = 2266 x 1348 = 3,054,568 um2  (+50% vs original 2,035,000 um2)
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1561.52, 1348]
-CORE_AREA: [10, 10, 1551.52, 1338]
+DIE_AREA: [0, 0, 1400, 700]
+CORE_AREA: [10, 10, 1390, 690]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.
@@ -169,8 +169,7 @@ FP_PDN_VPITCH: 120
 FP_PDN_HPITCH: 120
 
 # ── Placement ─────────────────────────────────────────────────────────────────
-PL_TARGET_DENSITY: 0.4
-PL_MACRO_CHANNEL: [10, 10]
+PL_TARGET_DENSITY_PCT: 40
 
 # ── High-effort timing repair (setup + hold) ─────────────────────────────────
 # Buffer budgets: allow up to 100% cell count increase to fix violations.
@@ -179,12 +178,15 @@ GRT_RESIZER_SETUP_MAX_BUFFER_PCT: 100
 PL_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 GRT_RESIZER_HOLD_MAX_BUFFER_PCT: 100
 
-# Slack margins: use 0.1 ns (setup) / 0.08 ns (hold) so each resizer stage
-# repairs aggressively and leaves positive slack for downstream stages.
+# Slack margins:
+# Setup: 0.10 ns at both placement and GRT stages.
+# Hold: CTS introduces up to -0.224 ns hold skew (measured worst case).
+#   Pre-CTS margin must absorb that skew: 0.224 + 0.05 headroom = 0.25 ns.
+#   GRT margin 0.12 ns covers residual violations after detailed routing.
 PL_RESIZER_SETUP_SLACK_MARGIN: 0.10
 GRT_RESIZER_SETUP_SLACK_MARGIN: 0.10
-PL_RESIZER_HOLD_SLACK_MARGIN: 0.08
-GRT_RESIZER_HOLD_SLACK_MARGIN: 0.08
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.25
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.12
 
 # Fix hold before setup so hold-buffer insertion doesn't re-introduce setup vios.
 PL_RESIZER_FIX_HOLD_FIRST: true
@@ -192,7 +194,7 @@ PL_RESIZER_FIX_HOLD_FIRST: true
 PL_RESIZER_ALLOW_SETUP_VIOS: true
 
 # ── CTS ───────────────────────────────────────────────────────────────────────
-CLOCK_TREE_SYNTH: true
+RUN_CTS: true
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 # Global routing: increase layer count for large die
@@ -200,6 +202,9 @@ RT_MAX_LAYER: metal9
 GRT_ALLOW_CONGESTION: true
 # High-effort routing: more overflow-fix iterations before giving up.
 GRT_OVERFLOW_ITERS: 100
+# Limit net length during GRT resizer to force buffer insertion on long nets,
+# directly reducing post-route max-slew and max-cap violations.
+GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH: 200
 
 # ── Antenna diode insertion ───────────────────────────────────────────────────
 # Nangate ANTENNA_X1 is missing ANTENNADIFFAREA in the liberty view, so

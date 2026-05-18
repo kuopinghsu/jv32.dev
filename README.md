@@ -438,15 +438,15 @@ See [fpga/README.md](fpga/README.md) for pin assignments, clock architecture, bl
 
 ## Synthesis & P&R Results
 
-**PDK:** FreePDK45 / Nangate 45 nm — **Flow:** OpenLane2 (Classic) — **Date:** 2026-05-06
-Config: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, 80 MHz, 16 KB IRAM + 16 KB DRAM.
+**PDK:** FreePDK45 / Nangate 45 nm — **Flow:** OpenLane2 (Classic) — **Date:** 2026-05-18
+Config: `RV32EC=0`, `RV32M_EN=1`, `AMO_EN=1`, `JTAG_EN=1`, `FAST_MUL=1 (MUL_MC=1)`, `FAST_SHIFT=1`, `BP_EN=1`, `IBUF_EN=1`, `ZCMP_EN=1`, 80 MHz, 16 KB IRAM + 16 KB DRAM.
 
 | Metric | Value |
 |---|---|
-| Standard cell area | 68,918 µm² |
-| Logic (pre-P&R) | 85,250 NAND2-eq · post-P&R flat: **86,363 NAND2-eq** |
+| Standard cell area | 75,953 µm² |
+| Logic (pre-P&R) | 81,098 NAND2-eq · post-P&R flat: **95,179 NAND2-eq** |
 | Timing | Setup ✅ MET · Hold ✅ MET (80 MHz, tt_025C_1v10) |
-| Total power | **33.93 mW** (seq 3.91 + comb 20.77 + clk 1.56 + SRAM 7.69) |
+| Total power | **23.16 mW** (seq 1.71 + comb 12.26 + clk 1.50 + SRAM 7.69) |
 | DRC | **0 errors** ✅ |
 
 > Full floorplan, timing, power, DRC, and P&R detail: [syn/REPORT.md](syn/REPORT.md)
@@ -458,8 +458,8 @@ Gate counts from hierarchical Yosys synthesis on Nangate 45 nm (NAND2\_X1 = 0.79
 
 | Config | jv32_soc | jv32_core | jv32_top |
 |---|---:|---:|---:|
-| RV32EC=1 (minimum) | 41,397 NAND2-eq | 26,781 | 30,833 |
-| RV32EC=0 (full, default) | 85,250 NAND2-eq | 52,493 | 56,559 |
+| RV32EC=1 (minimum) | 42,328 NAND2-eq | 27,658 | 31,713 |
+| RV32EC=0 (full, default) | 81,098 NAND2-eq | 51,630 | 55,687 |
 
 > Per-module hierarchy, FF counts, and clock gating breakdown: [syn/README.md](syn/README.md)
 
