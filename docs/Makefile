@@ -60,6 +60,8 @@ setup:
 	gem install --user-install asciidoctor-pdf
 	gem install --user-install asciidoctor-diagram
 	gem install --user-install rouge
+	@echo "=== Installing WaveDrom CLI (requires npm) ==="
+	npm install -g wavedrom-cli
 	@echo "=== Done. Run 'asciidoctor-pdf --version' to verify ==="
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
