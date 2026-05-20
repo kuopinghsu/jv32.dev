@@ -180,9 +180,17 @@ module cjtag_bridge (
             // Track when TCKC goes high
             if (tckc_posedge) begin
                 tckc_is_high      <= 1'b1;
-                tmsc_toggle_count <= 5'd0;  // Reset counter on TCKC rising edge
+                // When the first TMSC toggle arrives in the same system-clock window
+                // as TCKC rising (common with fast MPSSE GPIO writes), both
+                // tckc_posedge and tmsc_edge are asserted in the same cycle.
+                // The if-priority would otherwise discard that edge and reset the
+                // count to 0, causing the escape to be undercounted (e.g. 5 instead
+                // of 6 for the SELECT escape → bridge stays in OFFLINE).
+                // Fix: pre-load the counter with 1 when a coincident edge is seen.
+                tmsc_toggle_count <= tmsc_edge ? 5'd1 : 5'd0;
 
-                `DEBUG2(`DBG_GRP_JTAG, ("[%0t] TCKC POSEDGE detected! Resetting toggle count", $time));
+                `DEBUG2(`DBG_GRP_JTAG,
+                        ("[%0t] TCKC POSEDGE detected! Resetting toggle count (tmsc_edge=%b)", $time, tmsc_edge));
             end
             // Track TCKC going low (escape sequence ends)
             else if (tckc_negedge) begin
@@ -782,9 +790,11 @@ module cjtag_bridge (
     // Escape Sequence Assertions
     // -------------------------------------------------------------------------
 
-    // Assert: Toggle counter resets on TCKC rising edge
+    // Assert: Toggle counter resets (or pre-loads to 1) on TCKC rising edge.
+    // When a TMSC edge coincides with the TCKC posedge in the same clock cycle
+    // the counter is pre-loaded with 1 to avoid losing that edge.
     property toggle_counter_reset_on_posedge;
-        @(posedge clk_i) disable iff (!ntrst_i) tckc_posedge |=> (tmsc_toggle_count == 5'd0);
+        @(posedge clk_i) disable iff (!ntrst_i) tckc_posedge |=> (tmsc_toggle_count <= 5'd1);
     endproperty
     assert property (toggle_counter_reset_on_posedge)
     else $error("[ASSERT] Toggle counter not reset on TCKC posedge: %0d", tmsc_toggle_count);
