@@ -114,17 +114,21 @@ module jv32_fpga_top #(
         // cJTAG: SoC drives TMSC and controls output-enable
         assign tmsc_out   = soc_tms_o;
         assign tmsc_oe_n  = soc_tms_oe;
-        // FPGA emulation workaround: route TDO to J12 (ADBUS2) so a standard
-        // 4-wire FT2232H probe works without bridging ADBUS2+ADBUS3.
+        // FPGA emulation workaround: route tap_tdo to J12 (ADBUS2) so a
+        // standard 4-wire FT2232H probe can read TDO on ADBUS2 without
+        // bridging ADBUS2+ADBUS3 to TMSC.
         //
-        // When cjtag_bridge is in TDO-output mode (soc_tms_oe=0) it drives
-        // TMSC = tap_tdo, so soc_tms_o carries tap_tdo at that moment.  Gate
-        // J12 on soc_tms_oe: low → output tap_tdo, high → 0 (harmless; the
-        // FTDI probe does not sample ADBUS2 during nTDI/TMS OScan1 slots).
+        // jtag_top (gen_pin_mux_cjtag) now drives pin3_tdo_o = tap_tdo, so
+        // soc_tdo_o carries the TAP's negedge-registered TDO at all times.
+        // Using soc_tdo_o directly (as in JTAG mode) means J12 is stable
+        // ~500 ns before the FTDI samples ADBUS2 at the TDO-slot posedge,
+        // eliminating the race condition that caused all-zeroes TDO reads
+        // when the cjtag_bridge TDO window opened too late (~100 ns pipeline
+        // worst case = same moment as the FTDI sample point at 5 MHz TCKC).
         //
-        // A real silicon cJTAG device has no separate TDO pin; the probe must
-        // bridge ADBUS2+ADBUS3 to TMSC, or use a native 2-wire cJTAG DTS.
-        assign jtag_tdo_o = soc_tms_oe ? 1'b0 : soc_tms_o;
+        // A real silicon cJTAG device has no separate TDO pin; the probe
+        // must bridge ADBUS2+ADBUS3 to TMSC, or use a native 2-wire DTS.
+        assign jtag_tdo_o = soc_tdo_o;
     end else begin : g_jtag_io
         // JTAG: TMS is always an input – permanently tristate the IOBUF
         assign tmsc_out   = 1'b0;

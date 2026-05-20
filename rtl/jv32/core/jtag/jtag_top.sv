@@ -68,7 +68,7 @@ module jtag_top #(
     input logic pin2_tdi_i,  // JTAG TDI (cJTAG: don't care)
 
     // Pin 3: TDO (JTAG only, unused in cJTAG)
-    output logic pin3_tdo_o,   // JTAG TDO (cJTAG: 0)
+    output logic pin3_tdo_o,   // JTAG TDO / cJTAG tap_tdo (both modes)
     output logic pin3_tdo_oe,  // Output enable: 0=drive output, 1=tristate
 
     // Debug interface to CPU
@@ -140,14 +140,18 @@ module jtag_top #(
         logic cjtag_tmsc_out;
         logic cjtag_tmsc_oen;
 
-        // cJTAG mode: only TCKC (pin0) and TMSC (pin1) are used.
-        // pin3 (JTAG TDO) is not part of the 2-wire cJTAG interface; tristate it.
-        // On a real IC this pin does not exist.  Any FPGA TDO workaround must
-        // live in the FPGA wrapper (jv32_fpga_top.sv), not here.
+        // cJTAG mode: only TCKC (pin0) and TMSC (pin1) are used for the
+        // 2-wire cJTAG protocol.  On a real silicon cJTAG device pin3 does
+        // not exist, but on the FPGA we route tap_tdo to pin3_tdo_o so that
+        // the FPGA wrapper can drive it on J12 (ADBUS2).  This lets a
+        // standard 4-wire FT2232H probe read TDO without bridging ADBUS2+3.
+        // tap_tdo is negedge-registered by jtag_tap and is stable for the
+        // entire OScan1 bit period (~500 ns at 5 MHz TCKC), giving the
+        // FTDI probe ample setup time with zero race condition.
         assign pin1_tms_o  = cjtag_tmsc_out;
         assign pin1_tms_oe = cjtag_tmsc_oen;
-        assign pin3_tdo_o  = 1'b0;  // unused in 2-wire cJTAG; value irrelevant
-        assign pin3_tdo_oe = 1'b1;  // tristate: pin3 is not driven in cJTAG mode
+        assign pin3_tdo_o  = tap_tdo;  // route tap_tdo to J12 for FT2232H probe
+        assign pin3_tdo_oe = 1'b0;     // drive output (J12 always carries valid TDO)
 
         // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
         cjtag_bridge u_cjtag_bridge (
