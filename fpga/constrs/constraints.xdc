@@ -70,7 +70,7 @@ set_false_path -to [get_ports heartbeat_o]
 
 # -----------------------------------------------------------------------------
 # 1 Hz blink LED – LED3 on J11, 3.3 V LVCMOS33 (HR bank)
-# 1 Hz blink LED – LED4 on J12, 3.3 V LVCMOS33 (HR bank) (cJTAG: invert of LED3, JTAG: 0)
+# 1 Hz blink LED – LED4 on J10, 3.3 V LVCMOS33 (HR bank) (cJTAG: invert of LED3, JTAG: 0)
 # Generated inside jv32_soc_fpga from clk/rst_n: 1 s high, 1 s low.
 # Slow output – false path is appropriate.
 # -----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ set_property PACKAGE_PIN J11 [get_ports led1_o]
 set_property IOSTANDARD LVCMOS33 [get_ports led1_o]
 set_false_path -to [get_ports led1_o]
 
-set_property PACKAGE_PIN J12 [get_ports led2_o]
+set_property PACKAGE_PIN J10 [get_ports led2_o]
 set_property IOSTANDARD LVCMOS33 [get_ports led2_o]
 set_false_path -to [get_ports led2_o]
 

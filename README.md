@@ -66,12 +66,14 @@ This repository is part of a family of open-source RV32 cores targeting differen
 
 ## Performance
 
+> **Toolchain:** riscv64-unknown-elf-gcc 15.2.0
+
 Measured on the Verilator RTL simulator at 80 MHz with maximum-performance settings
 (`ARCH=rv32ima_zicsr_zba_zbb_zbs FAST_MUL=1 MUL_MC=0 FAST_DIV=1 FAST_SHIFT=1 BP_EN=1 IBUF_EN=1`).
 
 | Benchmark | Score | CPI |
 |---|---|---|
-| CoreMark 1.0 | **3.80 CoreMark/MHz** | 1.093 |
+| CoreMark 1.0 | **3.80 CoreMark/MHz** | 1.091 |
 | Dhrystone 2.1 | **1.77 DMIPS/MHz** | 1.245 |
 
 See [docs/performance_analysis.pdf](docs/performance_analysis.pdf) for the full analysis,

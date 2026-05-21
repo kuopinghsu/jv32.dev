@@ -127,7 +127,7 @@ system clock which is on an **HP (High Performance) bank**, 1.8 V LVCMOS18.
 | `uart_rx_i` | J14 | HR / LVCMOS33 | I | UART RX |
 | `heartbeat_o` | H9 | HR / LVCMOS33 | O | LED6 — toggles every 2²⁴ retired instructions |
 | `led1_o` | J11 | HR / LVCMOS33 | O | LED3 — 1 Hz blink (1 s on / 1 s off, from clk/rst_n) |
-| `led2_o` | J12 | HR / LVCMOS33 | O | LED4 — invert of led1_o for cJTAG, 0 for JTAG |
+| `led2_o` | J10 | HR / LVCMOS33 | O | LED4 — invert of led1_o for cJTAG, 0 for JTAG |
 
 ---
 

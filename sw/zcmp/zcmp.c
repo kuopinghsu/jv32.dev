@@ -12,8 +12,10 @@
  *   cm.mvsa01 sreg1, sreg2  -- s[sreg1]=a0,  s[sreg2]=a1
  *   cm.mva01s sreg1, sreg2  -- a0=s[sreg1],  a1=s[sreg2]
  *
- * All instructions are emitted as raw 16-bit .hword encodings so they
- * assemble correctly regardless of the -march string passed to GCC.
+ * Each asm block emits ".option arch, +zcmp" before the first Zcmp
+ * mnemonic so the assembler accepts cm.push/cm.pop/etc. regardless of
+ * the -march string passed on the command line (same approach used in
+ * rtos/freertos/portable/RISC-V/portContext.h).
  *
  * Encoding reference (RTL implementation -- Q2=ci[1:0]=10, funct3=5=ci[15:13]=101):
  *
@@ -31,23 +33,23 @@
  *     ci[9:7]=sreg1, ci[4:2]=sreg2
  *     s-reg mapping: 0->s0(x8), 1->s1(x9), 2->s2(x18), ..., 7->s7(x23)
  *
- *   Instruction                    rlist  sadj  .hword
- *   cm.push  {ra,s0},   -16         5     16    0xB852
- *   cm.pop   {ra,s0},    16         5     16    0xBA52
- *   cm.push  {ra,s0},   -32         5     32    0xB856  (spimm_extra=1)
- *   cm.pop   {ra,s0},    32         5     32    0xBA56  (spimm_extra=1)
- *   cm.push  {ra,s0,s1},-16         6     16    0xB862
- *   cm.pop   {ra,s0,s1}, 16         6     16    0xBA62
- *   cm.popretz {ra,s0},  16         5     16    0xBC52
- *   cm.popret  {ra,s0},  16         5     16    0xBE52
- *   cm.mvsa01 s0,s1 (sreg1=0,sreg2=1)           0xAC26
- *   cm.mva01s s0,s1 (sreg1=0,sreg2=1)           0xAC66
+ *   Instruction                    rlist  sadj
+ *   cm.push  {ra,s0},   -16         5     16
+ *   cm.pop   {ra,s0},    16         5     16
+ *   cm.push  {ra,s0},   -32         5     32   (spimm_extra=1)
+ *   cm.pop   {ra,s0},    32         5     32   (spimm_extra=1)
+ *   cm.push  {ra,s0-s1},-16         6     16
+ *   cm.pop   {ra,s0-s1}, 16         6     16
+ *   cm.popretz {ra,s0},  16         5     16
+ *   cm.popret  {ra,s0},  16         5     16
+ *   cm.mvsa01 s0,s1   (sreg1=0, sreg2=1)
+ *   cm.mva01s s0,s1   (sreg1=0, sreg2=1)
  * ============================================================================ */
 
 #include "jv_platform.h"
 #include <stdint.h>
 
-static int g_fail = 0;
+static int g_fail __attribute__((unused)) = 0;
 
 #define CHECK(label, got, exp) do { \
     if ((uint32_t)(got) != (uint32_t)(exp)) { \
@@ -73,6 +75,8 @@ static int g_fail = 0;
  * After a correct push/pop round-trip, the returned value equals sentinel.
  * ============================================================================ */
 
+#ifdef __riscv_zcmp
+
 /* rlist=5 ({ra,s0}), sadj=16 -- single s-register save/restore. */
 __attribute__((naked, noinline))
 static uint32_t do_push_pop_rlist5(uint32_t sentinel __attribute__((unused)))
@@ -80,9 +84,10 @@ static uint32_t do_push_pop_rlist5(uint32_t sentinel __attribute__((unused)))
     __asm__(
         "mv   t0, s0\n"           /* t0 = caller's s0                   */
         "mv   s0, a0\n"           /* s0 = sentinel                       */
-        ".hword 0xB852\n"         /* cm.push {ra,s0}, -16               */
+        ".option arch, +zcmp\n"
+        "cm.push {ra,s0}, -16\n"  /* save ra and s0, sp -= 16           */
         "li   s0, 0xDEADC0DE\n"  /* corrupt s0                          */
-        ".hword 0xBA52\n"         /* cm.pop  {ra,s0},  16               */
+        "cm.pop  {ra,s0}, 16\n"   /* restore ra and s0, sp += 16        */
         "mv   a0, s0\n"           /* a0 = restored s0 (should = sentinel)*/
         "mv   s0, t0\n"           /* restore caller's s0                 */
         "ret\n"
@@ -96,9 +101,10 @@ static uint32_t do_push_pop_rlist5_spimm1(uint32_t sentinel __attribute__((unuse
     __asm__(
         "mv   t0, s0\n"           /* t0 = caller's s0                   */
         "mv   s0, a0\n"           /* s0 = sentinel                       */
-        ".hword 0xB856\n"         /* cm.push {ra,s0}, -32  (spimm=1)    */
+        ".option arch, +zcmp\n"
+        "cm.push {ra,s0}, -32\n"  /* save ra and s0, sp -= 32 (spimm=1) */
         "li   s0, 0xDEADC0DE\n"  /* corrupt s0                          */
-        ".hword 0xBA56\n"         /* cm.pop  {ra,s0},  32  (spimm=1)    */
+        "cm.pop  {ra,s0}, 32\n"   /* restore ra and s0, sp += 32        */
         "mv   a0, s0\n"           /* a0 = restored s0                    */
         "mv   s0, t0\n"           /* restore caller's s0                 */
         "ret\n"
@@ -114,10 +120,11 @@ static uint32_t do_push_pop_rlist6(uint32_t sentinel __attribute__((unused)))
         "mv   t1, s1\n"           /* t1 = caller's s1                   */
         "li   s0, 0xAAAAAAAA\n"   /* s0 = distinct filler               */
         "mv   s1, a0\n"           /* s1 = sentinel                       */
-        ".hword 0xB862\n"         /* cm.push {ra,s0,s1}, -16            */
+        ".option arch, +zcmp\n"
+        "cm.push {ra,s0-s1}, -16\n" /* save ra, s0, s1; sp -= 16        */
         "li   s0, 0xDEAD0001\n"  /* corrupt s0                          */
         "li   s1, 0xDEAD0002\n"  /* corrupt s1                          */
-        ".hword 0xBA62\n"         /* cm.pop  {ra,s0,s1},  16            */
+        "cm.pop  {ra,s0-s1}, 16\n"  /* restore ra, s0, s1; sp += 16     */
         "mv   a0, s1\n"           /* a0 = restored s1 (should = sentinel)*/
         "mv   s0, t0\n"           /* restore caller's s0                 */
         "mv   s1, t1\n"           /* restore caller's s1                 */
@@ -139,10 +146,10 @@ __attribute__((naked, noinline))
 static uint32_t do_popret(uint32_t sentinel __attribute__((unused)))
 {
     __asm__(
-        ".hword 0xB852\n"         /* cm.push {ra,s0}, -16  (a0=sentinel) */
+        ".option arch, +zcmp\n"
+        "cm.push  {ra,s0}, -16\n"  /* save ra and s0, sp -= 16          */
         /* a0 is still = sentinel; s0 = caller's original s0              */
-        ".hword 0xBE52\n"         /* cm.popret {ra,s0}, 16 -- returns     */
-                                  /* with a0 = sentinel (popret != popretz)*/
+        "cm.popret {ra,s0}, 16\n"  /* restore ra and s0, sp += 16, ret  */
     );
 }
 
@@ -156,19 +163,20 @@ static uint32_t do_popretz(uint32_t sentinel)
 {
     (void)sentinel;
     __asm__(
-        ".hword 0xB852\n"         /* cm.push {ra,s0}, -16               */
-        ".hword 0xBC52\n"         /* cm.popretz {ra,s0}, 16 -- a0=0, ret */
+        ".option arch, +zcmp\n"
+        "cm.push   {ra,s0}, -16\n"  /* save ra and s0, sp -= 16         */
+        "cm.popretz {ra,s0}, 16\n"  /* restore ra and s0, a0=0, ret     */
     );
 }
 
 /* ============================================================================
  * cm.mvsa01 / cm.mva01s -- register moves between a0/a1 and s-registers
  *
- * cm.mvsa01 (sreg1=0=s0, sreg2=1=s1):  s0=a0,  s1=a1   encoding: 0xAC26
- * cm.mva01s (sreg1=0=s0, sreg2=1=s1):  a0=s0,  a1=s1   encoding: 0xAC66
+ * cm.mvsa01 (sreg1=0=s0, sreg2=1=s1):  s0=a0,  s1=a1
+ * cm.mva01s (sreg1=0=s0, sreg2=1=s1):  a0=s0,  a1=s1
  *
  * GCC register-pinned locals ensure the compiler puts the right values
- * in the right physical registers before and after each .hword instruction.
+ * in the right physical registers before and after each cm.mv* instruction.
  * ============================================================================ */
 static void test_mv_variants(void)
 {
@@ -181,7 +189,8 @@ static void test_mv_variants(void)
     ra0 = 0x12345678u;
     ra1 = 0x9ABCDEF0u;
     __asm__ volatile(
-        ".hword 0xAC26\n"         /* cm.mvsa01 s0,s1: s0=a0, s1=a1     */
+        ".option arch, +zcmp\n"
+        "cm.mvsa01 s0,s1\n"        /* s0=a0, s1=a1                       */
         : "=r"(rs0), "=r"(rs1)
         : "r"(ra0),  "r"(ra1)
     );
@@ -192,7 +201,8 @@ static void test_mv_variants(void)
     rs0 = 0xABCD1234u;
     rs1 = 0xEF012345u;
     __asm__ volatile(
-        ".hword 0xAC66\n"         /* cm.mva01s a0,a1: a0=s0, a1=s1     */
+        ".option arch, +zcmp\n"
+        "cm.mva01s s0,s1\n"        /* a0=s0, a1=s1                       */
         : "=r"(ra0), "=r"(ra1)
         : "r"(rs0),  "r"(rs1)
     );
@@ -200,11 +210,18 @@ static void test_mv_variants(void)
     CHECK("cm.mva01s a1=s1", ra1, 0xEF012345u);
 }
 
+#endif /* __riscv_zcmp */
+
 /* ============================================================================
  * Main
  * ============================================================================ */
 int main(void)
 {
+#ifndef __riscv_zcmp
+    jv_puts("SKIP (Zcmp extension not enabled; __riscv_zcmp not defined)\n");
+    jv_exit(0);
+    return 0;
+#else
     uint32_t v;
 
     jv_puts("zcmp: Zcmp compressed instruction coverage test\n");
@@ -236,4 +253,5 @@ int main(void)
 
     jv_exit(g_fail);
     return g_fail;
+#endif /* __riscv_zcmp */
 }

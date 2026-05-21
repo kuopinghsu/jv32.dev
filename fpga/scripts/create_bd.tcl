@@ -151,7 +151,7 @@ connect_bd_net [get_bd_pins u_soc/heartbeat_o] [get_bd_ports heartbeat_o]
 
 # ---------------------------------------------------------------------------
 # 1 Hz blink LED (LED3, J11) – generated inside jv32_soc_fpga from clk/rst_n
-# 1 Hz blink LED (LED4, J12) – generated inside jv32_soc_fpga from clk/rst_n
+# 1 Hz blink LED (LED4, J10) – generated inside jv32_soc_fpga from clk/rst_n
 # ---------------------------------------------------------------------------
 connect_bd_net [get_bd_pins u_soc/led1_o] [get_bd_ports led1_o]
 connect_bd_net [get_bd_pins u_soc/led2_o] [get_bd_ports led2_o]

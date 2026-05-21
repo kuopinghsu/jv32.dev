@@ -202,6 +202,50 @@ pxPortInitialiseStack:
     slli t1, t1, 4
     or t0, t0, t1                       /* Set MPIE and MPP bits in mstatus value. */
 
+#if defined( __riscv_zcmp ) && !defined( __riscv_32e )
+    /* Build the ZCmp context frame top-down (a0 starts as pxTopOfStack):
+     *
+     *  Slot 30 (sp+120): ra  = portTASK_RETURN_ADDRESS
+     *  Slots 29..18    : s0-s11         (space only, left uninitialised)
+     *  Slot 17 (sp+ 68): mstatus        (with MPIE=1, MIE=0)
+     *  Slot 16 (sp+ 64): xCriticalNesting = 0
+     *  Slots 15..5     : t6-t3, a7-a1   (space only)
+     *  Slot  4 (sp+ 16): a0             = pvParameters
+     *  Slots  3..1     : t2-t0          (space only)
+     *  [chip-specific registers if any]
+     *  Slot  0 (sp+  0): pxCode
+     */
+    addi a0, a0, -portWORD_SIZE
+    load_x t1, xTaskReturnAddress
+    store_x t1, 0( a0 )                 /* ra = portTASK_RETURN_ADDRESS into slot 30. */
+
+    addi a0, a0, -( 12 * portWORD_SIZE ) /* Space for slots 29..18: s0-s11. */
+
+    addi a0, a0, -portWORD_SIZE
+    store_x t0, 0( a0 )                 /* mstatus into slot 17. */
+
+    addi a0, a0, -portWORD_SIZE
+    store_x x0, 0( a0 )                 /* xCriticalNesting = 0 into slot 16. */
+
+    addi a0, a0, -( 12 * portWORD_SIZE ) /* Space for slots 15..4: t6-t3, a7-a1. */
+    store_x a2, 0( a0 )                 /* pvParameters into slot 4 (a0 / x10). */
+
+    addi a0, a0, -( 3 * portWORD_SIZE ) /* Space for slots 3..1: t2-t0. */
+
+    addi t0, x0, portasmADDITIONAL_CONTEXT_SIZE
+chip_specific_stack_frame:
+    beq t0, x0, 1f
+    addi a0, a0, -portWORD_SIZE
+    store_x x0, 0( a0 )
+    addi t0, t0, -1
+    j chip_specific_stack_frame
+1:
+    addi a0, a0, -portWORD_SIZE
+    store_x a1, 0( a0 )                 /* pxCode into slot 0. */
+    ret
+
+#else /* Standard (non-ZCmp) frame. */
+
     addi a0, a0, -portWORD_SIZE
     store_x t0, 0(a0)                   /* mstatus onto the stack. */
     addi a0, a0, -portWORD_SIZE         /* Space for critical nesting count. */
@@ -227,9 +271,19 @@ chip_specific_stack_frame:              /* First add any chip specific registers
     addi a0, a0, -portWORD_SIZE
     store_x a1, 0(a0)                   /* mret value (pxCode parameter) onto the stack. */
     ret
+
+#endif /* __riscv_zcmp */
 /*-----------------------------------------------------------*/
 
 xPortStartFirstTask:
+#if defined( __riscv_zcmp ) && !defined( __riscv_32e )
+    /* For ZCmp builds portcontextRESTORE_CONTEXT loads sp from pxCurrentTCB,
+     * restores all caller-saved registers, then uses addi+cm.pop to restore
+     * the callee-saved registers (ra, s0-s11) before executing mret to begin
+     * the first task.  The frame's mstatus has MPIE=1, so mret atomically
+     * enables interrupts as the task starts. */
+    portcontextRESTORE_CONTEXT
+#else
     load_x  sp, pxCurrentTCB            /* Load pxCurrentTCB. */
     load_x  sp, 0( sp )                 /* Read sp from first TCB member. */
 
@@ -278,6 +332,7 @@ xPortStartFirstTask:
 
     addi    sp, sp, portCONTEXT_SIZE
     ret
+#endif /* __riscv_zcmp */
 /*-----------------------------------------------------------*/
 
 freertos_risc_v_application_exception_handler:

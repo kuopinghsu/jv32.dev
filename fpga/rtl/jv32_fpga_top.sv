@@ -26,7 +26,7 @@
 //
 //   1 Hz blink LED (LVCMOS33)
 //   led1_o        J11   LED3 — 1 s on / 1 s off, generated from clk/rst_n
-//   led2_o        J12   LED4 — invert of led1_o for cJTAG. 0 for JTAG
+//   led2_o        J10   LED4 — invert of led1_o for cJTAG. 0 for JTAG
 //
 // Parameters
 // ----------
@@ -64,7 +64,7 @@ module jv32_fpga_top #(
     // 1 Hz blink LED – J11, LVCMOS33 (LED3)
     output logic led1_o,
 
-    // 1 Hz blink LED – J12, LVCMOS33 (LED4)
+    // 1 Hz blink LED – J10, LVCMOS33 (LED4)
     output logic led2_o
 );
 

@@ -32,6 +32,7 @@ export RV32E_EN
 export RV32M_EN
 export AMO_EN
 export RV32B_EN
+export ZCMP_EN
 export RAS_EN
 export IBUF_EN
 export SPIKE
@@ -56,10 +57,9 @@ else
   ifneq ($(RV32B_EN),0)
     _ARCH_EXTS := $(_ARCH_EXTS)_zba_zbb_zbs
   endif
-  # Note: ZCMP_EN controls RTL hardware only; _zcmp is NOT added to ARCH
-  # because the toolchain has no rv32*_zcmp multilib.
-  # Zcmp instructions in sw/zcmp use raw .hword encodings and compile fine
-  # without _zcmp in -march.
+  ifeq ($(ZCMP_EN),1)
+    _ARCH_EXTS := $(_ARCH_EXTS)_zcmp
+  endif
   export ARCH := rv32i$(_SW_EXTS)c$(_ARCH_EXTS)
   export ABI  := ilp32
 endif
