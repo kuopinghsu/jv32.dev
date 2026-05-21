@@ -39,7 +39,8 @@ module jv32_soc_fpga #(
 
     // 1 Hz blink LED – 1 s high / 1 s low, generated from clk/rst_n.
     // Useful sanity indicator that the MMCM is locked and reset is released.
-    output wire led_o,
+    output wire led1_o,
+    output wire led2_o,
 
     // UART
     output wire uart_tx_o,
@@ -129,7 +130,8 @@ module jv32_soc_fpga #(
         end
     end
 
-    assign led_o = led_r;
+    assign led1_o = led_r;
+    assign led2_o = USE_CJTAG ? ~led_r : 0;
 
 endmodule
 
