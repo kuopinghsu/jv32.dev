@@ -40,7 +40,7 @@ all: $(PDFS)
 
 %.pdf: %.adoc
 	$(ASCIIDOCTOR_PDF) $(ADOC_FLAGS) $(THEME_FLAG) -r asciidoctor-diagram -o $@ $<
-	@$(RM) -rf images .asciidoctor package-lock.json package.json diag-ditaa-*.svg diag-ditaa-*.png
+	@$(RM) -rf images .asciidoctor package-lock.json package.json diag-ditaa-*.svg diag-ditaa-*.png diag-wavedrom-*.svg
 
 docs-check:
 	@set -e; \
@@ -49,7 +49,7 @@ docs-check:
 		$(ASCIIDOCTOR_PDF) $(ADOC_FLAGS) -a pdf-theme=$$theme -r asciidoctor-diagram -o /tmp/jv32-docs-check-$$theme.pdf $(CHECK_DOC); \
 		$(RM) -f /tmp/jv32-docs-check-$$theme.pdf; \
 	done
-	@$(RM) -rf images .asciidoctor package-lock.json package.json diag-ditaa-*.svg diag-ditaa-*.png
+	@$(RM) -rf images .asciidoctor package-lock.json package.json diag-ditaa-*.svg diag-ditaa-*.png diag-wavedrom-*.svg
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
