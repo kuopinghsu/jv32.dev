@@ -13,12 +13,13 @@
 # Top-level targets
 #   all             — test-jtag, then test-cjtag
 #   all-with-gdb    — test-jtag, test-cjtag, then test-gdb, then gdb-hello (trace compare)
-#   test-jtag       — run all JTAG TCL test scripts
-#   test-cjtag      — run all cJTAG TCL test scripts
-#   test-gdb        — run all GDB tests (JTAG VPI + OpenOCD GDB server)
-#   build-jtag      — build the JTAG VPI simulator (USE_CJTAG=0)
-#   build-cjtag     — build the cJTAG VPI simulator (USE_CJTAG=1)
-#   clean           — remove generated build artefacts
+#   test-jtag               — run all JTAG TCL test scripts
+#   test-cjtag             — run all cJTAG TCL test scripts
+#   test-gdb               — run all GDB tests (JTAG VPI + OpenOCD GDB server)
+#   build-jtag             — build the JTAG VPI simulator (USE_CJTAG=0)
+#   build-cjtag            — build the cJTAG VPI simulator (USE_CJTAG=1)
+#   ftdi-cjtag-activate    — verify ftdi.c cjtag_reset_online_activate() against RTL sim
+#   clean                  — remove generated build artefacts
 #
 # Individual test targets
 #   jtag-<name>     — run a single JTAG test   (e.g. make jtag-halt_resume)
@@ -63,8 +64,10 @@ OPENOCD ?= openocd
 GDB      ?= $(RISCV_PREFIX)gdb
 
 # ── Simulator binaries (built by root Makefile) ───────────────────────────────
-VPI_JTAG  := $(BUILD_DIR)/jv32vpi_jtag
-VPI_CJTAG := $(BUILD_DIR)/jv32vpi_cjtag
+VPI_JTAG         := $(BUILD_DIR)/jv32vpi_jtag
+VPI_CJTAG        := $(BUILD_DIR)/jv32vpi_cjtag
+REPLAYER_BIN     := $(BUILD_DIR)/test_ftdi_cjtag_activate
+REPLAYER_SRC     := $(OPENOCD_DIR)/test_ftdi_cjtag_activate.c
 
 # ── ELF to load into the SoC ─────────────────────────────────────────────────
 # hello.elf prints output, calls _exit, then spins in `_spin: j _spin`.
@@ -108,17 +111,17 @@ LOG_DIR := $(BUILD_DIR)/openocd_logs
 # ─────────────────────────────────────────────────────────────────────────────
 # Phony targets
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% gdb-zcmp jtag-no-trace-step FORCE
+.PHONY: all test-jtag test-cjtag test-gdb build-jtag build-cjtag clean help jtag-% cjtag-% gdb-% gdb-zcmp jtag-no-trace-step ftdi-cjtag-activate build-ftdi-cjtag-activate FORCE
 
 FORCE:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default
 # ─────────────────────────────────────────────────────────────────────────────
-all: test-jtag test-cjtag jtag-no-trace-step
+all: test-jtag test-cjtag jtag-no-trace-step ftdi-cjtag-activate
 
 # Run all three test suites (OpenOCD TCL over JTAG, over cJTAG, and GDB)
-all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello gdb-zcmp
+all-with-gdb: test-jtag test-cjtag test-gdb jtag-no-trace-step gdb-hello gdb-zcmp ftdi-cjtag-activate
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build prerequisites
@@ -137,6 +140,55 @@ $(VPI_CJTAG): FORCE
 
 build-jtag:  $(VPI_JTAG)
 build-cjtag: $(VPI_CJTAG)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ftdi cJTAG activation replayer
+# ─────────────────────────────────────────────────────────────────────────────
+build-ftdi-cjtag-activate: $(REPLAYER_BIN)
+
+$(REPLAYER_BIN): $(REPLAYER_SRC)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O2 -o $@ $<
+
+# ftdi-cjtag-activate
+# --------------------
+# Verifies that the cjtag_reset_online_activate() escape sequence from
+# OpenOCD's ftdi.c driver correctly activates the RTL cjtag_bridge.sv into
+# OScan1 SF0 mode.
+#
+# Steps:
+#   1. Build the replayer (test_ftdi_cjtag_activate.c) if not already built.
+#   2. Start the cJTAG VPI simulator (USE_CJTAG=1) on VPI_PORT.
+#   3. Run the replayer: it sends the exact {TCKC,TMSC} sequence from ftdi.c
+#      via CMD_OSCAN1_RAW packets, then performs an IDCODE scan over OScan1 SF0
+#      and verifies the result equals 0x1DEAD3FF.
+#   4. Reports [PASS] or [FAIL].
+#
+# Use WAVE=1 to capture a waveform: make WAVE=1 ftdi-cjtag-activate
+ftdi-cjtag-activate: $(REPLAYER_BIN) $(VPI_CJTAG) $(BOOT_ELF)
+	@mkdir -p $(LOG_DIR)
+	@LOG="$(LOG_DIR)/ftdi_cjtag_activate"; \
+	echo "--- [ftdi-cjtag-activate] ftdi.c cjtag_reset_online_activate() vs RTL ---"; \
+	"$(VPI_CJTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
+	    $(if $(filter 1 fst,$(WAVE)),--trace "$(BUILD_DIR)/ftdi_cjtag_activate.fst") \
+	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/ftdi_cjtag_activate.vcd") \
+	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	for _i in $$(seq 1 50); do \
+	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
+	    sleep 0.1; \
+	done; \
+	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' \
+	    || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
+	"$(REPLAYER_BIN)" $(VPI_PORT) >"$$LOG.rep.log" 2>&1; \
+	REP_RC=$$?; \
+	kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	cat "$$LOG.rep.log"; \
+	if [ $$REP_RC -eq 0 ]; then \
+	    echo ""; echo "[PASS] ftdi-cjtag-activate"; exit 0; \
+	else \
+	    echo ""; echo "[FAIL] ftdi-cjtag-activate (replayer exit=$$REP_RC)"; exit 1; \
+	fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JTAG test suite
@@ -722,7 +774,7 @@ gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 # ─────────────────────────────────────────────────────────────────────────────
 clean:
 	rm -rf $(LOG_DIR)
-	rm -f  $(VPI_JTAG) $(VPI_CJTAG)
+	rm -f  $(VPI_JTAG) $(VPI_CJTAG) $(REPLAYER_BIN)
 	rm -rf $(BUILD_DIR)/objdir_vpi_jtag $(BUILD_DIR)/objdir_vpi_cjtag
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -742,7 +794,8 @@ help:
 	@echo "  gdb-<name>    — single GDB test   (e.g. gdb-step)"
 	@echo "  gdb-hello     — GDB debug workflow + ISS trace compare (hello.elf)"
 	@echo "  gdb-zcmp      — Zcmp instruction test + ISS trace compare (zcmp.elf)"
-	@echo "  all-with-gdb  — test-jtag + test-cjtag + test-gdb + gdb-hello + gdb-zcmp"
+	@echo "  all-with-gdb  — test-jtag + test-cjtag + test-gdb + gdb-hello + gdb-zcmp + ftdi-cjtag-activate"
+	@echo "  ftdi-cjtag-activate — verify ftdi.c cjtag_reset_online_activate() against RTL"
 	@echo ""
 	@echo "  Available TCL test names:"
 	@echo "    halt_resume  registers  memory  memory_modes  reset  dm_status"
