@@ -97,7 +97,7 @@ set rtl_files [concat $rtl_files \
     [glob -nocomplain ${rtl_dir}/axi/*.sv      ] \
     [glob -nocomplain ${rtl_dir}/jv32/*.sv     ] \
     [glob -nocomplain ${rtl_dir}/jv32/core/*.sv] \
-    [glob -nocomplain ${rtl_dir}/jv32/core/jtag/*.sv] \
+    [glob -nocomplain ${rtl_dir}/jtag/*.sv          ] \
     [glob -nocomplain ${rtl_dir}/memories/*.sv ] \
 ]
 

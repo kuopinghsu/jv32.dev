@@ -17,10 +17,10 @@
 ../rtl/jv32/core/jv32_core.sv
 
 # JTAG / debug transport
-../rtl/jv32/core/jtag/cjtag_bridge.sv
-../rtl/jv32/core/jtag/jv32_dtm.sv
-../rtl/jv32/core/jtag/jtag_tap.sv
-../rtl/jv32/core/jtag/jtag_top.sv
+../rtl/jtag/cjtag_bridge.sv
+../rtl/jtag/jv32_dtm.sv
+../rtl/jtag/jtag_tap.sv
+../rtl/jtag/jtag_top.sv
 
 # Synthesisable SRAM wrapper (maps to OpenRAM macro)
 ../syn/lib/sram_1rw.sv

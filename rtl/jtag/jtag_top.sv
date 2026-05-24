@@ -130,28 +130,17 @@ module jtag_top #(
     // Internal signals for each mode
     logic jtag_tck, jtag_tms, jtag_tdi, jtag_tdo;
 
-    // Demux inputs from shared pins
-    assign jtag_tck = pin0_tck_i;  // JTAG TCK from pin 0
-    assign jtag_tms = pin1_tms_i;  // JTAG TMS from pin 1
-    assign jtag_tdi = pin2_tdi_i;  // JTAG TDI from pin 2
-
     // Mux outputs to shared pins based on mode
     if (USE_CJTAG) begin : gen_pin_mux_cjtag
         logic cjtag_tmsc_out;
         logic cjtag_tmsc_oen;
 
         // cJTAG mode: only TCKC (pin0) and TMSC (pin1) are used for the
-        // 2-wire cJTAG protocol.  On a real silicon cJTAG device pin3 does
-        // not exist, but on the FPGA we route tap_tdo to pin3_tdo_o so that
-        // the FPGA wrapper can drive it on J12 (ADBUS2).  This lets a
-        // standard 4-wire FT2232H probe read TDO without bridging ADBUS2+3.
-        // tap_tdo is negedge-registered by jtag_tap and is stable for the
-        // entire OScan1 bit period (~500 ns at 5 MHz TCKC), giving the
-        // FTDI probe ample setup time with zero race condition.
+        // 2-wire cJTAG protocol.  pin3 (TDO) is not used in cJTAG.
         assign pin1_tms_o  = cjtag_tmsc_out;
         assign pin1_tms_oe = cjtag_tmsc_oen;
-        assign pin3_tdo_o  = tap_tdo;  // route tap_tdo to J12 for FT2232H probe
-        assign pin3_tdo_oe = 1'b0;     // drive output (J12 always carries valid TDO)
+        assign pin3_tdo_o  = 1'b0;  // not used in cJTAG
+        assign pin3_tdo_oe = 1'b1;  // tristate (not used in cJTAG)
 
         // cJTAG mode: Instantiate bridge to convert 2-wire to 4-wire
         cjtag_bridge u_cjtag_bridge (
@@ -180,6 +169,9 @@ module jtag_top #(
         assign pin3_tdo_oe = 1'b0;  // Drive output
 
         // JTAG mode: Direct connection from shared pins
+        assign jtag_tck    = pin0_tck_i;
+        assign jtag_tms    = pin1_tms_i;
+        assign jtag_tdi    = pin2_tdi_i;
         assign tap_tck     = jtag_tck;
         assign tap_tms     = jtag_tms;
         assign tap_tdi     = jtag_tdi;

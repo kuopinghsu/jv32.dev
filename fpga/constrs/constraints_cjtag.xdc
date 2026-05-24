@@ -50,7 +50,21 @@ set_clock_groups -physically_exclusive \
 # -----------------------------------------------------------------------------
 # cJTAG I/O – false paths (TMSC bidirectional, TDI/TDO unused)
 # -----------------------------------------------------------------------------
-set_false_path -from [get_ports jtag_tmsc_io]
-set_false_path -to   [get_ports jtag_tmsc_io]
+# TDI (C12): not used in cJTAG – no timing relationship.
 set_false_path -from [get_ports jtag_tdi_i]
-set_false_path -to   [get_ports jtag_tdo_o]
+
+# TMSC (E12): async w.r.t. clk_50m; re-sampled on tap_tck inside cjtag_bridge.
+# Input is a CDC path (2-FF synchronizer in bridge) – false path is correct.
+set_false_path -from [get_ports jtag_tmsc_io]
+
+# TMSC output (E12): data path (IOBUF I-pin) is driven combinationally from
+# tap_tdo, which is negedge-registered by tap_tck in jtag_tap.sv.
+# The OE path (IOBUF T-pin = tmsc_oe_n) is clocked by the system clock and
+# is already excluded by set_clock_groups asynchronous above.
+set_output_delay -clock tap_tck -clock_fall -max 10.0            [get_ports jtag_tmsc_io]
+set_output_delay -clock tap_tck -clock_fall -min  0.0 -add_delay [get_ports jtag_tmsc_io]
+
+# TDO/J12 (cJTAG: TMSC-out mirror): same launch FF as jtag_tmsc_io data path –
+# negedge tap_tck registered tap_tdo via the combinational tmsc_o assign.
+set_output_delay -clock tap_tck -clock_fall -max 10.0            [get_ports jtag_tdo_o]
+set_output_delay -clock tap_tck -clock_fall -min  0.0 -add_delay [get_ports jtag_tdo_o]

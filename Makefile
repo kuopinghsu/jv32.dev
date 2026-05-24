@@ -72,12 +72,14 @@ endif
 # ============================================================================
 # Project directories
 # ============================================================================
-RTL_DIR  = rtl
-CORE_DIR = $(RTL_DIR)/jv32/core
-JV32_DIR = $(RTL_DIR)/jv32
-AXI_DIR  = $(RTL_DIR)/axi
-MEM_DIR  = $(RTL_DIR)/memories
-TB_DIR    = testbench
+RTL_DIR      = rtl
+CORE_DIR     = $(RTL_DIR)/jv32/core
+JV32_DIR     = $(RTL_DIR)/jv32
+AXI_DIR      = $(RTL_DIR)/axi
+MEM_DIR      = $(RTL_DIR)/memories
+JTAG_DIR     = $(RTL_DIR)/jtag
+TB_DIR       = testbench
+FPGA_RTL_DIR = fpga/rtl
 SW_DIR    = sw
 SIM_DIR   = sim
 VERIF_DIR = verif
@@ -132,7 +134,7 @@ LINT_MODULE_LIST = $(filter-out %_pkg.sv, $(RTL_ONLY_SRCS))
 LINT_MOD_FLAGS  = --lint-only -Wall -Wno-UNSIGNED -sv
 LINT_MOD_FLAGS += -Wno-UNDRIVEN -Wno-UNUSEDPARAM -Wno-UNUSEDSIGNAL -Wno-DECLFILENAME -Wno-SYNCASYNCNET
 LINT_MOD_FLAGS += -Wno-PINCONNECTEMPTY -Wno-UNOPTFLAT -Werror-IMPLICIT
-LINT_MOD_FLAGS += -I$(CORE_DIR) -I$(JV32_DIR) -I$(AXI_DIR) -I$(RTL_DIR)
+LINT_MOD_FLAGS += -I$(CORE_DIR) -I$(JV32_DIR) -I$(AXI_DIR) -I$(RTL_DIR) -I$(JTAG_DIR)
 
 # Simulation parameters (override on command line, e.g. make build-rtl FAST_MUL=0)
 ifdef RV32E_EN
@@ -221,7 +223,7 @@ RTL_SOURCES = \
     $(AXI_DIR)/axi_pkg.sv \
     $(CORE_DIR)/jv32_pkg.sv \
     $(filter-out $(CORE_DIR)/jv32_pkg.sv, $(wildcard $(CORE_DIR)/*.sv)) \
-    $(wildcard $(CORE_DIR)/jtag/*.sv) \
+    $(wildcard $(JTAG_DIR)/*.sv) \
     $(filter-out $(AXI_DIR)/axi_pkg.sv,   $(wildcard $(AXI_DIR)/*.sv)) \
     $(wildcard $(JV32_DIR)/*.sv) \
     $(wildcard $(MEM_DIR)/*.sv) \
@@ -1560,6 +1562,7 @@ cleanup-all:
 #   make format-rtl
 #   make format-rtl FILES="rtl/jv32/core/jv32_rvc.sv rtl/axi/axi_clic.sv"
 # ============================================================================
+FORMAT_SV_SOURCES ?= $(RTL_SOURCES) $(TB_SV_SOURCES) $(wildcard $(FPGA_RTL_DIR)/*.sv)
 format-rtl:
 	@echo "=========================================="
 	@echo "Verible SystemVerilog format"
@@ -1585,9 +1588,9 @@ format-rtl:
 	    $$VFBIN \
 	        --inplace \
 	        --flagfile=.rules.verible_format \
-	        $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) \
+	        $(if $(FILES),$(FILES),$(FORMAT_SV_SOURCES)) \
 	        >/dev/null && \
-	    python3 scripts/sv_format.py $(if $(FILES),$(FILES),$(RTL_SOURCES) $(TB_SV_SOURCES)) && \
+	    python3 scripts/sv_format.py $(if $(FILES),$(FILES),$(FORMAT_SV_SOURCES)) && \
 	    echo "" && \
 	    echo "==========================================" && \
 	    echo "Format complete!" && \

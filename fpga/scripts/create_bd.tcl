@@ -18,13 +18,13 @@
 #   USE_CJTAG I/O mux   – these stay in jv32_fpga_top.sv
 #
 # BD external ports (seen by jv32_fpga_top.sv via jv32_bd_wrapper):
-#   clk_in1        I  50 MHz raw clock  (from FPGA pin E18)
-#   jtag_tck_i     I  TCK (JTAG) / TCKC (cJTAG)
-#   jtag_tmsc_in   I  TMS/TMSC pad data in  (from IOBUF in jv32_fpga_top.sv)
-#   jtag_tdi_i     I  TDI (JTAG; muxed to 0 inside jv32_soc_fpga when USE_CJTAG=1)
-#   soc_tms_o      O  TMSC drive data   (cJTAG mode; to IOBUF in jv32_fpga_top.sv)
-#   soc_tms_oe     O  TMSC output-enable (cJTAG mode; to IOBUF T pin)
-#   soc_tdo_o      O  TDO output         (JTAG mode;  to jtag_tdo_o via top)
+#   clk_in1            I  50 MHz raw clock  (from FPGA pin E18)
+#   jtag_pin0_tck_i    I  TCK (JTAG) / TCKC (cJTAG)
+#   jtag_pin1_tms_i    I  TMS/TMSC pad data in  (from IOBUF in jv32_fpga_top.sv)
+#   jtag_pin2_tdi_i    I  TDI (JTAG; muxed to 0 inside jv32_soc_fpga when USE_CJTAG=1)
+#   jtag_pin1_tms_o    O  TMSC drive data    (cJTAG mode; to IOBUF in jv32_fpga_top.sv)
+#   jtag_pin1_tms_oe   O  TMSC output-enable (cJTAG mode; to IOBUF T pin)
+#   jtag_pin3_tdo_o    O  TDO output         (JTAG mode;  to jtag_tdo_o via top)
 #   uart_rx_i      I  UART RX
 #   uart_tx_o      O  UART TX
 #
@@ -88,12 +88,12 @@ set_property CONFIG.USE_CJTAG $use_cjtag [get_bd_cells u_soc]
 # External ports
 # ---------------------------------------------------------------------------
 create_bd_port -dir I -type clk -freq_hz 50000000 clk_in1
-create_bd_port -dir I                              jtag_tck_i
-create_bd_port -dir I                              jtag_tmsc_in
-create_bd_port -dir I                              jtag_tdi_i
-create_bd_port -dir O                              soc_tms_o
-create_bd_port -dir O                              soc_tms_oe
-create_bd_port -dir O                              soc_tdo_o
+create_bd_port -dir I                              jtag_pin0_tck_i
+create_bd_port -dir I                              jtag_pin1_tms_i
+create_bd_port -dir I                              jtag_pin2_tdi_i
+create_bd_port -dir O                              jtag_pin1_tms_o
+create_bd_port -dir O                              jtag_pin1_tms_oe
+create_bd_port -dir O                              jtag_pin3_tdo_o
 create_bd_port -dir I                              uart_rx_i
 create_bd_port -dir O                              uart_tx_o
 create_bd_port -dir O                              heartbeat_o
@@ -123,20 +123,20 @@ connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] \
 
 # ---------------------------------------------------------------------------
 # JTAG / cJTAG
-#   jtag_tck_i   → u_soc/jtag_pin0_tck_i
-#   jtag_tmsc_in → u_soc/jtag_pin1_tms_i  (data from IOBUF in jv32_fpga_top)
-#   jtag_tdi_i   → u_soc/jtag_pin2_tdi_i  (jv32_soc_fpga muxes to 0 if USE_CJTAG=1)
-#   u_soc/jtag_pin1_tms_o  → soc_tms_o    (TMSC drive;  cJTAG mode)
-#   u_soc/jtag_pin1_tms_oe → soc_tms_oe   (TMSC OE;     cJTAG mode)
-#   u_soc/jtag_pin3_tdo_o  → soc_tdo_o    (TDO output;  JTAG mode)
+#   jtag_pin0_tck_i  → u_soc/jtag_pin0_tck_i
+#   jtag_pin1_tms_i  → u_soc/jtag_pin1_tms_i  (data from IOBUF in jv32_fpga_top)
+#   jtag_pin2_tdi_i  → u_soc/jtag_pin2_tdi_i  (jv32_soc_fpga muxes to 0 if USE_CJTAG=1)
+#   u_soc/jtag_pin1_tms_o  → jtag_pin1_tms_o  (TMSC drive;  cJTAG mode)
+#   u_soc/jtag_pin1_tms_oe → jtag_pin1_tms_oe (TMSC OE;     cJTAG mode)
+#   u_soc/jtag_pin3_tdo_o  → jtag_pin3_tdo_o  (TDO output;  JTAG mode)
 # ---------------------------------------------------------------------------
-connect_bd_net [get_bd_ports jtag_tck_i]   [get_bd_pins u_soc/jtag_pin0_tck_i]
-connect_bd_net [get_bd_ports jtag_tmsc_in] [get_bd_pins u_soc/jtag_pin1_tms_i]
-connect_bd_net [get_bd_ports jtag_tdi_i]   [get_bd_pins u_soc/jtag_pin2_tdi_i]
+connect_bd_net [get_bd_ports jtag_pin0_tck_i]  [get_bd_pins u_soc/jtag_pin0_tck_i]
+connect_bd_net [get_bd_ports jtag_pin1_tms_i]  [get_bd_pins u_soc/jtag_pin1_tms_i]
+connect_bd_net [get_bd_ports jtag_pin2_tdi_i]  [get_bd_pins u_soc/jtag_pin2_tdi_i]
 
-connect_bd_net [get_bd_pins u_soc/jtag_pin1_tms_o]  [get_bd_ports soc_tms_o]
-connect_bd_net [get_bd_pins u_soc/jtag_pin1_tms_oe] [get_bd_ports soc_tms_oe]
-connect_bd_net [get_bd_pins u_soc/jtag_pin3_tdo_o]  [get_bd_ports soc_tdo_o]
+connect_bd_net [get_bd_pins u_soc/jtag_pin1_tms_o]  [get_bd_ports jtag_pin1_tms_o]
+connect_bd_net [get_bd_pins u_soc/jtag_pin1_tms_oe] [get_bd_ports jtag_pin1_tms_oe]
+connect_bd_net [get_bd_pins u_soc/jtag_pin3_tdo_o]  [get_bd_ports jtag_pin3_tdo_o]
 
 # ---------------------------------------------------------------------------
 # UART
