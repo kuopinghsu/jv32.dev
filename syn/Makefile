@@ -268,6 +268,25 @@ lvs-gds:
 	@echo "========================================"
 
 # ── OpenRAM SRAM macro compilation ──────────────────────────────────────────
+openram-setup:
+	@echo "========================================"
+	@echo " Creating Python venv and installing deps"
+	@echo "  Venv    : $(VENV_DIR)"
+	@echo "  Reqs    : $(SYN_DIR)/requirements.txt"
+	@echo "========================================"
+	python3 -m venv $(VENV_DIR)
+	$(VENV_DIR)/bin/pip install --upgrade pip -q
+	$(VENV_DIR)/bin/pip install -r $(SYN_DIR)/requirements.txt -q
+	@echo "========================================"
+	@echo " venv ready: $(VENV_DIR)"
+	@echo " Python  : $(VENV_DIR)/bin/python3"
+	@echo "========================================"
+
+syn-setup:
+	@echo "Pre-fetching OpenLane2 Nix packages..."
+	$(NIX_SHELL) $(OPENLANE)/shell.nix --run "echo Nix packages fetched."
+	@echo "Done."
+
 gen-mem: check
 	@echo "========================================"
 	@echo " Compiling OpenRAM SRAM macro"

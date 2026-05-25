@@ -3,7 +3,7 @@
 **Design:** `jv32_soc`
 **PDK:** FreePDK45 / Nangate 45nm Open Cell Library
 **Flow:** OpenLane2 (Classic)
-**Date:** 2026-05-18
+**Date:** 2026-05-25
 
 ---
 
@@ -32,12 +32,12 @@
 
 | Metric | Value |
 |---|---|
-| Die area | 980000 µm² = 0.980 mm² |
-| Core area | 934939 µm² = 0.935 mm² |
-| Standard cell area | 75953 µm² |
+| Die area | 960000 µm² = 0.960 mm² |
+| Core area | 913469 µm² = 0.913 mm² |
+| Standard cell area | 75883 µm² |
 | Macro area | 382846 µm² |
-| Total instance utilization | 49.1% |
-| Std cell utilization | 13.76% |
+| Total instance utilization | 50.2% |
+| Std cell utilization | 14.30% |
 
 ---
 
@@ -84,16 +84,16 @@
 
 | Category | Count | % of std cells |
 |---|---|---|
-| Total instances | 49510 | — |
-| Standard cells (excl. tap) | 49,506 | 100% |
+| Total instances | 49249 | — |
+| Standard cells (excl. tap) | 49,245 | 100% |
 | Sequential (flip-flops) | 5291 | 10.7% |
-| Multi-input combinational | 33701 | 68.1% |
-| Buffers | 4524 | 9.1% |
+| Multi-input combinational | 33701 | 68.4% |
+| Buffers | 4524 | 9.2% |
 | Inverters | 2178 | 4.4% |
 | Macros | 4 | — |
-| Tap cells | 3507 | — |
+| Tap cells | 3246 | — |
 | I/O ports | 469 | — |
-| **NAND2 equivalents (post-P&R)** | **95,179** | — |
+| **NAND2 equivalents (post-P&R)** | **95,092** | — |
 
 ---
 
@@ -102,11 +102,11 @@
 | Metric | Value |
 |---|---|
 | Clock roots | 223 |
-| CTS buffers inserted | 1021 |
-| Clock subnets | 1021 |
+| CTS buffers inserted | 1010 |
+| Clock subnets | 1010 |
 | Clock sinks | 5516 |
 | Post-CTS setup WNS | 0.0 ns ✅ |
-| Post-CTS hold WNS  | -0.07319972613017654 ns ⚠️ |
+| Post-CTS hold WNS  | -0.06937944859439654 ns ⚠️ |
 
 > **Note:** Negative hold WNS immediately after CTS is expected — TritonCTS optimises setup skew and may temporarily worsen hold slack. The subsequent **Resizer / ECO (post-CTS)** step inserts hold buffers to close hold timing; the final post-PnR STA confirms hold WNS = 0.
 
@@ -114,8 +114,8 @@
 
 | Clock | Setup skew (ns) | Hold skew (ns) |
 |---|---|---|
-| `core_clk` | 0.573454 | -0.273345 |
-| `jtag_tck` | 1.169694 | -0.274758 |
+| `core_clk` | 0.579098 | -0.282790 |
+| `jtag_tck` | 1.156651 | -0.256651 |
 
 ---
 
@@ -130,15 +130,15 @@
 
 | Clock | Setup skew (ns) |
 |---|---|
-| `core_clk` | 0.573454 |
-| `jtag_tck` | 1.169694 |
+| `core_clk` | 0.579098 |
+| `jtag_tck` | 1.156651 |
 
 ### Design Checks
 
 | Check | Count | |
 |---|---|---|
-| Max slew violations   | 69   | ⚠️ |
-| Max cap violations    | 129937    | ℹ️ |
+| Max slew violations   | 68   | ⚠️ |
+| Max cap violations    | 130274    | ℹ️ |
 | Max fanout violations | 0 | ✅ |
 | Unconstrained endpoints | 251 | ℹ️ |
 
@@ -163,11 +163,11 @@
 
 | Iteration | DRC Errors | Wirelength (µm) |
 |---|---|---|
-| 1 | 21,992 | 1,872,059 |
-| 2 | 5,241 | 1,863,208 |
-| 3 | 3,970 | 1,862,114 |
-| 4 | 163 | 1,861,810 |
-| 5 | 0 | 1,861,789 |
+| 1 | 20,977 | 1,865,957 |
+| 2 | 5,152 | 1,857,120 |
+| 3 | 3,984 | 1,855,640 |
+| 4 | 171 | 1,855,307 |
+| 5 | 0 | 1,855,283 |
 | **Final** | **0** ✅ | — |
 
 ---
@@ -178,12 +178,12 @@
 
 | Group | Internal (W) | Switching (W) | Leakage (W) | Total (W) | % |
 |---|---|---|---|---|---|
-| Sequential | 1.15 mW | 0.12 mW | 0.45 mW | 1.71 mW | 7.4% |
-| Combinational | 4.92 mW | 4.43 mW | 2.92 mW | 12.26 mW | 52.9% |
-| Clock | 0.71 mW | 0.66 mW | 0.13 mW | 1.50 mW | 6.5% |
-| Macro | 7.15 mW | 0.00 mW | 0.53 mW | 7.69 mW | 33.2% |
+| Sequential | 1.15 mW | 0.11 mW | 0.45 mW | 1.70 mW | 7.3% |
+| Combinational | 4.94 mW | 4.57 mW | 2.92 mW | 12.43 mW | 53.6% |
+| Clock | 0.64 mW | 0.62 mW | 0.12 mW | 1.39 mW | 6.0% |
+| Macro | 7.15 mW | 0.00 mW | 0.53 mW | 7.69 mW | 33.1% |
 | Pad | 0.00 mW | 0.00 mW | 0.00 mW | 0.00 mW | 0.0% |
-| Total | 13.93 mW | 5.21 mW | 4.02 mW | 23.16 mW | 100.0% |
+| Total | 13.88 mW | 5.30 mW | 4.02 mW | 23.21 mW | 100.0% |
 
 ---
 
@@ -191,25 +191,25 @@
 
 | Metric | Value |
 |---|---|
-| Total routed nets | 134,705 |
-| Constrained signal nets | 130,060 |
-| Total wirelength | **1861.74 mm** |
-| Total vias | 685,644 |
+| Total routed nets | 135,042 |
+| Constrained signal nets | 130,397 |
+| Total wirelength | **1855.23 mm** |
+| Total vias | 688,454 |
 
 ### Longest Nets (Top 10)
 
 | Rank | Net | Length |
 |---|---|---|
-| 1 | `clknet_3_4__leaf_clk` | 1.008 mm |
-| 2 | `clk` | 0.895 mm |
-| 3 | `clknet_3_5__leaf_clk` | 0.833 mm |
-| 4 | `_02704_` | 0.745 mm |
-| 5 | `_10253_` | 0.700 mm |
-| 6 | `net10` | 0.698 mm |
-| 7 | `_10212_` | 0.696 mm |
-| 8 | `clknet_1_0__leaf_jtag_pin0_tck_i` | 0.640 mm |
-| 9 | `net8` | 0.639 mm |
-| 10 | `net62774` | 0.613 mm |
+| 1 | `clk` | 0.942 mm |
+| 2 | `_02704_` | 0.820 mm |
+| 3 | `clknet_3_6_0_clk` | 0.782 mm |
+| 4 | `clknet_3_5_0_clk` | 0.713 mm |
+| 5 | `clknet_3_0_0_clk` | 0.667 mm |
+| 6 | `net6` | 0.616 mm |
+| 7 | `net4` | 0.610 mm |
+| 8 | `net5` | 0.599 mm |
+| 9 | `_32887_` | 0.567 mm |
+| 10 | `clknet_3_2_0_clk` | 0.565 mm |
 
 ---
 
@@ -218,17 +218,17 @@
 | Layer | Resource | Demand | Usage | Overflow (H/V/Total) |
 |---|---|---|---|---|
 | metal1 | 0 | 0 | 0.00% ✅ | 0 /  0 /  0 |
-| metal2 | 933,964 | 280,728 | 30.06% ✅ | 0 /  0 /  0 |
-| metal3 | 1,336,998 | 362,782 | 27.13% ✅ | 0 /  0 /  0 |
-| metal4 | 536,544 | 99,769 | 18.59% ✅ | 0 /  0 /  0 |
-| metal5 | 862,809 | 71,657 | 8.31% ✅ | 0 /  0 /  0 |
-| metal6 | 859,936 | 60,035 | 6.98% ✅ | 0 /  0 /  0 |
-| metal7 | 222,110 | 4,791 | 2.16% ✅ | 0 /  0 /  0 |
-| metal8 | 221,444 | 1,590 | 0.72% ✅ | 0 /  0 /  0 |
-| metal9 | 220,780 | 599 | 0.27% ✅ | 0 /  0 /  0 |
-| **Total** | **5,194,585** | **881,951** | **16.98%** | **0 /  0 /  0** ✅ |
+| metal2 | 899,560 | 273,424 | 30.40% ✅ | 0 /  0 /  0 |
+| metal3 | 1,291,937 | 438,198 | 33.92% ✅ | 0 /  0 /  0 |
+| metal4 | 516,500 | 75,543 | 14.63% ✅ | 0 /  0 /  0 |
+| metal5 | 846,097 | 67,294 | 7.95% ✅ | 0 /  0 /  0 |
+| metal6 | 840,616 | 12,264 | 1.46% ✅ | 0 /  0 /  0 |
+| metal7 | 217,360 | 6,221 | 2.86% ✅ | 0 /  0 /  0 |
+| metal8 | 216,692 | 279 | 0.13% ✅ | 0 /  0 /  0 |
+| metal9 | 215,840 | 2,726 | 1.26% ✅ | 0 /  0 /  0 |
+| **Total** | **5,044,602** | **875,949** | **17.36%** | **0 /  0 /  0** ✅ |
 
-> GRT total wirelength: 2396574 µm
+> GRT total wirelength: 2401704 µm
 
 ---
 
@@ -246,18 +246,18 @@
 
 | Step | Tool | Runtime |
 |---|---|---|
-| Synthesis | Yosys | 00:02:33.807 |
-| Floorplan | OpenROAD | 00:00:05.411 |
-| Global Placement | OpenROAD (RePLace) | 00:02:52.419 |
-| Clock Tree Synthesis | TritonCTS | 00:00:20.397 |
-| Resizer / ECO (post-CTS) | OpenROAD (resizer) | 00:37:42.387 |
-| Global Routing | OpenROAD (FastRoute) | 00:00:36.072 |
-| Detailed Routing | TritonRoute | 00:02:07.418 |
-| Post-PnR STA | OpenROAD (OpenSTA) | 00:02:57.092 |
-| GDS Stream-out | KLayout | 00:00:10.262 |
-| SPICE Extraction | Magic | 00:03:23.596 |
-| LVS | Netgen | 00:00:29.065 |
-| **Total (listed steps)** | | **53 m 14 s** |
+| Synthesis | Yosys | 00:02:31.394 |
+| Floorplan | OpenROAD | 00:00:05.746 |
+| Global Placement | OpenROAD (RePLace) | 00:03:00.213 |
+| Clock Tree Synthesis | TritonCTS | 00:00:18.381 |
+| Resizer / ECO (post-CTS) | OpenROAD (resizer) | 00:35:03.637 |
+| Global Routing | OpenROAD (FastRoute) | 00:00:35.584 |
+| Detailed Routing | TritonRoute | 00:02:07.702 |
+| Post-PnR STA | OpenROAD (OpenSTA) | 00:02:41.021 |
+| GDS Stream-out | KLayout | 00:00:09.602 |
+| SPICE Extraction | Magic | 00:02:59.579 |
+| LVS | Netgen | 00:00:32.785 |
+| **Total (listed steps)** | | **50 m 0 s** |
 
 ---
 

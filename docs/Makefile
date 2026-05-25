@@ -1,9 +1,9 @@
 # Makefile — JV32 Docs: AsciiDoc → PDF
 #
 # Targets:
-#   make [all]    — build all PDFs
-#   make setup    — install asciidoctor + asciidoctor-pdf (requires gem)
-#   make clean    — remove generated PDFs
+#   make [all]        — build all PDFs
+#   make setup        — install asciidoctor + asciidoctor-pdf (requires gem)
+#   make clean        — remove generated PDFs
 #
 # Usage:
 #   make                         # build everything
@@ -34,9 +34,20 @@ THEME_FLAG := -a pdf-theme=$(THEMES)
 SRCS := $(wildcard *.adoc)
 PDFS := $(SRCS:.adoc=.pdf)
 
-.PHONY: all setup clean docs-check
+.PHONY: all help setup clean docs-check
 
 all: $(PDFS)
+
+help:
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@echo '  all            Build all AsciiDoc PDFs (default)'
+	@echo '  <name>.pdf     Build a single PDF from <name>.adoc'
+	@echo '  docs-check     Render $(CHECK_DOC) with all themes (dry-run check)'
+	@echo ''
+	@echo '  setup          Install asciidoctor + asciidoctor-pdf via gem'
+	@echo '  clean          Remove generated PDFs, Sphinx/ND output, and .venv'
 
 %.pdf: %.adoc
 	$(ASCIIDOCTOR_PDF) $(ADOC_FLAGS) $(THEME_FLAG) -r asciidoctor-diagram -o $@ $<

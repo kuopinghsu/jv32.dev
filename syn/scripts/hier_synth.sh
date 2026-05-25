@@ -79,10 +79,10 @@ YOSYS_EOF
         "${RTL_DIR}/jv32/core/jv32_regfile.sv" \
         "${RTL_DIR}/jv32/core/jv32_csr.sv" \
         "${RTL_DIR}/jv32/core/jv32_core.sv" \
-        "${RTL_DIR}/jv32/core/jtag/cjtag_bridge.sv" \
-        "${RTL_DIR}/jv32/core/jtag/jv32_dtm.sv" \
-        "${RTL_DIR}/jv32/core/jtag/jtag_tap.sv" \
-        "${RTL_DIR}/jv32/core/jtag/jtag_top.sv" \
+        "${RTL_DIR}/jtag/cjtag_bridge.sv" \
+        "${RTL_DIR}/jtag/jv32_dtm.sv" \
+        "${RTL_DIR}/jtag/jtag_tap.sv" \
+        "${RTL_DIR}/jtag/jtag_top.sv" \
         "${LIB_DIR}/sram_1rw.sv" \
         "${RTL_DIR}/axi/axi_pkg.sv" \
         "${RTL_DIR}/axi/axi_xbar.sv" \

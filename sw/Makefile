@@ -88,6 +88,9 @@ LDFLAGS += -nostartfiles
 LDFLAGS += -T $(COMMON_LINK)
 LDFLAGS += -Wl,--gc-sections
 
+# Extra linker flags from per-test makefile.mak (e.g. -nostdlib++ for C++ tests)
+LDFLAGS += $(LDFLAGS_EXTRA)
+
 # Common sources compiled into every test ELF.
 # jv_putc()/jv_exit() come from the selected backend library, not this wildcard.
 COMMON_SRCS := common/startup.S \

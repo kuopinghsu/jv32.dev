@@ -31,10 +31,10 @@ VERILOG_FILES:
   - dir::../../rtl/jv32/core/jv32_regfile.sv
   - dir::../../rtl/jv32/core/jv32_csr.sv
   - dir::../../rtl/jv32/core/jv32_core.sv
-  - dir::../../rtl/jv32/core/jtag/cjtag_bridge.sv
-  - dir::../../rtl/jv32/core/jtag/jv32_dtm.sv
-  - dir::../../rtl/jv32/core/jtag/jtag_tap.sv
-  - dir::../../rtl/jv32/core/jtag/jtag_top.sv
+  - dir::../../rtl/jtag/cjtag_bridge.sv
+  - dir::../../rtl/jtag/jv32_dtm.sv
+  - dir::../../rtl/jtag/jtag_tap.sv
+  - dir::../../rtl/jtag/jtag_top.sv
   - dir::../lib/sram_1rw.sv
   - dir::../../rtl/axi/axi_pkg.sv
   - dir::../../rtl/axi/axi_xbar.sv
@@ -132,22 +132,20 @@ USE_SYNLIG: true
 # Absolute die sizing.
 #
 # sram_1rw_1024x64 macro (wpr=4): 247.88 x 386.12 um
-# Macro placement (macro_placement.cfg): bottom row, same Y, side-by-side
-# with uniform horizontal spacing.
-#   DRAM bank[1] @ (166.81, 50)
-#   DRAM bank[0] @ (728.31, 50)
-#   IRAM bank[0] @ (1289.81, 50)
-#   IRAM bank[1] @ (1851.31, 50)
-#
-# Blue box in LAYOUT.confirmation.bluegreen.png is used as die boundary.
-# Green boxes are used as SRAM envelopes.
+# Macro placement (macro_placement.cfg): bottom row, same Y, side-by-side.
+# Gap pattern: 20 (left), 20, 500 (center), 20, 20 (right) um.
+#   4 macros x 247.88 = 991.52 um; total gaps = 580 um → core width = 1571.52 um
+#   DRAM bank[1] @ (30.00,   50)
+#   DRAM bank[0] @ (297.88,  50)
+#   IRAM bank[0] @ (1045.76, 50)
+#   IRAM bank[1] @ (1313.64, 50)
 #
 # Area budget:  macros = 4 x 247.88 x 386.12 = 382,846 um2
-#               core area = 2246 x 1328 = 2,982,688 um2
-#               die  = 2266 x 1348 = 3,054,568 um2  (+50% vs original 2,035,000 um2)
+#               core area = 1571.52 x 580 = 911,482 um2
+#               die  = 1600 x 600 = 960,000 um2
 FP_SIZING: absolute
-DIE_AREA: [0, 0, 1400, 700]
-CORE_AREA: [10, 10, 1390, 690]
+DIE_AREA: [0, 0, 1600, 600]
+CORE_AREA: [10, 10, 1590, 590]
 
 # Power-delivery network
 # The OpenRAM sram_1rw_2048x32 macro obstructs metal1–metal4.

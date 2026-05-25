@@ -22,6 +22,18 @@
 CFLAGS := $(filter-out -ffreestanding,$(CFLAGS))
 CPP_EXTRA_FLAGS := -fno-exceptions -fno-rtti -fpermissive
 
+# GCC 15 riscv64-unknown-elf does not add the target-specific C++ include
+# sub-directory (e.g. riscv64-unknown-elf/) to the search path when the
+# matching multilib directory does not exist, so bits/c++config.h is not
+# found.  Add it explicitly via -isystem so it is searched after the generic
+# headers but before the compiler's own fixed includes.
+CPP_EXTRA_FLAGS += -isystem $(shell $(CXX) -print-sysroot)/include/c++/$(shell $(CXX) -dumpversion)/$(shell $(CXX) -dumpmachine)
+# The riscv64-unknown-elf toolchain only ships 64-bit libstdc++/libsupc++ so
+# linking it against a 32-bit ELF fails.  Use -nostdlib++ to suppress the
+# implicit -lstdc++ added by g++; operator new/delete are provided by
+# sw/common/cxx_stubs.cpp backed by newlib malloc.
+LDFLAGS_EXTRA += -nostdlib++
+
 # Use magic backend for this test so RTL and ISS exit paths match.
 # The ISS implements RISC-V semihosting and exits via ebreak, while the RTL
 # doesn't and continues to the magic device exit. Using the magic backend

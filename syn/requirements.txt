@@ -9,3 +9,5 @@ coverage
 
 # syn/scripts helpers
 matplotlib>=3.9,<4
+gdstk
+Pillow
