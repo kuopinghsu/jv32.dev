@@ -29,7 +29,10 @@ fpga/
 │   └── create_bd.tcl               # IP Integrator block design script
 ├── tests/
 │   ├── Makefile
-│   └── fpga_stress.c               # Long-running FreeRTOS stability stress test
+│   ├── fpga_stress.c               # Long-running FreeRTOS stability stress test
+│   ├── mem_connect_check.gdb       # Quick JTAG smoke test (SBA path, ~30 s)
+│   ├── mem_test_iram.gdb           # IRAM word pattern test (abstract mem, ~2 min)
+│   └── mem_test_dram.gdb           # DRAM word + byte/halfword test (abstract mem, ~3 min)
 └── build/                          # Vivado project output (git-ignored)
     ├── jv32_ku5p_cjtag.bit         # USE_CJTAG=1 bitstream (default)
     ├── jv32_ku5p_cjtag.mcs         # USE_CJTAG=1 SPI flash image
@@ -489,3 +492,61 @@ One status line is printed over UART every 5 seconds:
 [HHH:MM:SS] A=<cpu_iters> B=<q_sent> C=<ev_rounds> D=<sem_rounds>
             E=<mtx_iters> F=<mem_allocs> err=<total> heap=<free> wdf=<wdog_faults>
 ```
+
+---
+
+## JTAG connection verification
+
+Three GDB scripts in `fpga/tests/` verify the JTAG debug path after programming
+a new bitstream, without requiring any firmware to be built.
+
+| Script | Path tested | Region | Time |
+|---|---|---|---|
+| `mem_connect_check.gdb` | **SBA** (`SBADDRESS0`/`SBDATA0`) | 8 words × 2 @ end of IRAM/DRAM | ~30 s |
+| `mem_test_iram.gdb` | **Abstract memory** (`CMD_ACCESS_MEM`) | 1 KB @ `0x8001E000` | ~2 min |
+| `mem_test_dram.gdb` | **Abstract memory** + byte/hw lanes | 1 KB + 64 B @ `0x9001E000` | ~3 min |
+
+Run them in order — `mem_connect_check` first to confirm basic connectivity,
+then the pattern tests to exercise the full memory path.
+
+```bash
+# Terminal 1 — start OpenOCD (pick the matching config for your bitstream)
+openocd -f fpga/jtag/jv32_fpga_jtag.cfg     # USE_CJTAG=0 bitstream
+# or
+openocd -f fpga/jtag/jv32_fpga_cjtag.cfg    # USE_CJTAG=1 bitstream (default)
+
+# Terminal 2 — run the scripts
+riscv64-unknown-elf-gdb -q -x fpga/tests/mem_connect_check.gdb
+riscv64-unknown-elf-gdb -q -x fpga/tests/mem_test_iram.gdb
+riscv64-unknown-elf-gdb -q -x fpga/tests/mem_test_dram.gdb
+```
+
+Each script halts the hart, runs its tests, prints a `[PASS]` / `[FAIL]` summary,
+and exits with code 0 on success or 1 on failure.  The hart is left halted.
+
+### What each test covers
+
+**`mem_connect_check.gdb`** — Uses `monitor mww` / `monitor mdw` (OpenOCD SBA
+commands) to write and read back 8 fixed patterns in IRAM and DRAM.  Also reads
+`misa` and `mhartid` CSRs and warns if they do not match the expected values
+(`0x40001105` = RV32IMAC, `0x00000000`).
+
+**`mem_test_iram.gdb`** — Uses GDB native `{unsigned int}addr` memory access
+(routes through the abstract memory command in `jv32_dtm`) to run four patterns
+over a 1 KB window at `0x8001E000` (last 8 KB of the 128 KB IRAM):
+
+| Phase | Pattern | Words | Detects |
+|---|---|---|---|
+| 1 | Walking-1 | 32 | Stuck-at-0 bit faults |
+| 2 | Walking-0 | 32 | Stuck-at-1 bit faults |
+| 3 | Address unique | 256 | Address aliasing / stuck address lines |
+| 4 | Checkerboard | 256 | Inter-cell coupling |
+
+**`mem_test_dram.gdb`** — Same four word patterns over `0x9001E000`, then two
+additional sub-tests at `0x9001E400` that exercise the byte-enable generation
+logic in `jv32_dtm` (the `CMD_ACCESS_MEM` aamsize field):
+
+| Phase | Access | What is verified |
+|---|---|---|
+| 5 | Byte (`{char}`) | All 4 byte lanes: write one lane, confirm others are zero, read back byte |
+| 6 | Halfword (`{short}`) | Both halfword lanes: write one lane, confirm other is zero, read back halfword |

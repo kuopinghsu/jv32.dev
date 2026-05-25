@@ -42,15 +42,12 @@ TEST_BASE  = 0x8001E000    # 1 KB test window at end of IRAM
 WORD_COUNT = 256           # words per sweep for address/checkerboard patterns
 MAX_ERRORS = 8             # cap reported errors per phase to keep output readable
 
-
 def wr32(addr, val):
     # GDB native write – routes through abstract memory command in jv32_dtm
     gdb.execute("set {int}0x%08x = 0x%08x" % (addr, val), to_string=True)
 
-
 def rd32(addr):
     return int(gdb.parse_and_eval("{unsigned int}0x%08x" % addr)) & 0xFFFFFFFF
-
 
 def run_phase(name, pattern_fn, count):
     """Write all words, then read all back.  Returns error count."""
@@ -68,7 +65,6 @@ def run_phase(name, pattern_fn, count):
                 print("      ... (further errors suppressed for this phase)")
                 break
     return errors
-
 
 total_errors = 0
 

@@ -46,34 +46,27 @@ BYTE_BASE  = 0x9001E400    # 64 B byte/halfword sub-test window
 WORD_COUNT = 256
 MAX_ERRORS = 8
 
-
 # ── memory helpers ────────────────────────────────────────────────────────────
 
 def wr32(addr, val):
     gdb.execute("set {int}0x%08x = 0x%08x" % (addr, val), to_string=True)
 
-
 def rd32(addr):
     return int(gdb.parse_and_eval("{unsigned int}0x%08x" % addr)) & 0xFFFFFFFF
-
 
 def wr8(addr, val):
     # GDB {char} write – exercises aamsize=0 byte-enable in jv32_dtm
     gdb.execute("set {char}0x%08x = 0x%02x" % (addr, val & 0xFF), to_string=True)
 
-
 def rd8(addr):
     return int(gdb.parse_and_eval("{unsigned char}0x%08x" % addr)) & 0xFF
-
 
 def wr16(addr, val):
     # GDB {short} write – exercises aamsize=1 halfword-enable in jv32_dtm
     gdb.execute("set {short}0x%08x = 0x%04x" % (addr, val & 0xFFFF), to_string=True)
 
-
 def rd16(addr):
     return int(gdb.parse_and_eval("{unsigned short}0x%08x" % addr)) & 0xFFFF
-
 
 def run_phase(name, pattern_fn, count):
     errors = 0
@@ -90,7 +83,6 @@ def run_phase(name, pattern_fn, count):
                 print("      ... (further errors suppressed for this phase)")
                 break
     return errors
-
 
 total_errors = 0
 

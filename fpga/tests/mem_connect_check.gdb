@@ -43,10 +43,8 @@ PATTERNS = [
     0x12345678, 0xFEDCBA98, 0x00000000, 0xFFFFFFFF,
 ]
 
-
 def sba_wr32(addr, val):
     gdb.execute("monitor mww 0x%08x 0x%08x" % (addr, val), to_string=True)
-
 
 def sba_rd32(addr):
     out = gdb.execute("monitor mdw 0x%08x" % addr, to_string=True)
@@ -55,14 +53,12 @@ def sba_rd32(addr):
         raise gdb.GdbError("mdw parse failed: " + out.strip())
     return int(m.group(1), 16)
 
-
 def read_csr(name):
     out = gdb.execute("monitor reg " + name, to_string=True)
     m = re.search(r'0x([0-9a-fA-F]+)', out)
     if not m:
         raise gdb.GdbError("reg parse failed for " + name + ": " + out.strip())
     return int(m.group(1), 16)
-
 
 total_errors = 0
 

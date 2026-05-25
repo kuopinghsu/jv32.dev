@@ -200,9 +200,10 @@ module jtag_tap #(
 
     // =========================================================================
     // DTMCS shift register -- TCK domain
-    // abits=7, version=1 (DTM 0.13), idle=0, dmistat=0 (constant read-only)
+    // abits=7, version=1 (DTM 0.13), idle=1, dmistat=0 (constant read-only)
+    // idle=1: probe must spend ≥1 TCK cycle in Run-Test/Idle (RISC-V Debug 0.13 §3.8)
     // =========================================================================
-    localparam [31:0] DTMCS_VALUE = {14'b0, 1'b0, 1'b0, 1'b0, 3'd0, 2'b00, 6'd7, 4'd1};
+    localparam [31:0] DTMCS_VALUE = {14'b0, 1'b0, 1'b0, 1'b0, 3'd1, 2'b00, 6'd7, 4'd1};
 
     logic [31:0] dtmcs_shift;
 

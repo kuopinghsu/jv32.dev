@@ -117,6 +117,7 @@ module jv32_dtm #(
     localparam CMD_ACCESS_REG = 8'h00;
     localparam CMD_ACCESS_MEM = 8'h02;
 
+    localparam CMDERR_BUSY       = 3'd1;
     localparam CMDERR_NOTSUP     = 3'd2;
     localparam CMDERR_EXCEPTION  = 3'd3;
     localparam CMDERR_HALTRESUME = 3'd4;
@@ -579,13 +580,22 @@ module jv32_dtm #(
             // Command-write toggle edge detection
             // ----------------------------------------------------------------
             if (cmd_wr_toggle_sync[1] != cmd_wr_toggle_r) begin
-                command_reg_sys    <= command_reg_i;  // stable: held by jtag_tap until next toggle
-                data0_sys          <= data0_i;
-                data1_sys          <= data1_i;
+                command_reg_sys <= command_reg_i;  // stable: held by jtag_tap until next toggle
+                data0_sys       <= data0_i;
+                data1_sys       <= data1_i;
                 // §3.5.1: if cmderr is non-zero, new commands are silently ignored.
                 // cmderr is only cleared by the debugger via W1C (cmderr_clr_tog).
-                // Clearing it here on every command write would violate the sticky semantics.
-                command_valid_sys  <= (cmderr_sys == 3'b0);
+                // §3.5.1: if a command is dispatched while busy=1, set cmderr=1 (busy) and ignore.
+                if (cmderr_sys != 3'b0) begin
+                    command_valid_sys <= 1'b0;  // sticky cmderr: silently ignored
+                end
+                else if (cmd_busy) begin
+                    cmderr_sys        <= CMDERR_BUSY;  // new command while busy
+                    command_valid_sys <= 1'b0;
+                end
+                else begin
+                    command_valid_sys <= 1'b1;
+                end
                 data0_result_valid <= 1'b0;
                 data1_result_valid <= 1'b0;
                 read_after_exec    <= 1'b0;
@@ -609,7 +619,11 @@ module jv32_dtm #(
                     mem_req_pending <= 1'b0;
 
                     if (command_valid_sys && !cmd_busy) begin
-                        if (!halted_i) begin
+                        if (any_noexist_i) begin
+                            // §3.5.1: selected hart does not exist — not accessible
+                            cmderr_sys <= CMDERR_EXCEPTION;
+                        end
+                        else if (!halted_i) begin
                             cmderr_sys <= CMDERR_HALTRESUME;
                         end
                         else if (cmd_is_access_reg && cmd_transfer) begin
@@ -686,7 +700,8 @@ module jv32_dtm #(
                             cmd_state <= CMD_DONE;
                         end
                         else if (cmd_is_access_mem) begin
-                            if (command_reg_sys[23]) begin
+                            if (command_reg_sys[23] || command_reg_sys[22:20] > 3'd2) begin
+                                // §3.5.6: aamvirtual not supported; aamsize>2 (64/128-bit) not supported
                                 cmderr_sys <= CMDERR_NOTSUP;
                             end
                             else begin
@@ -707,25 +722,35 @@ module jv32_dtm #(
                     if (!command_valid_sys || cmd_busy) begin
                         if ((sba_rd_toggle_sync[1] != sba_rd_toggle_r || sba_rd_pending_clk) && !mem_req_pending
                                 && (sb_err == 3'b0)) begin  // §3.12.11: no SBA while sberror is set
-                            sbaddress0_clk       <= sbaddress0_i;  // stable: held by jtag_tap
-                            sbdata0_result_valid <= 1'b0;
-                            sb_access_latched    <= sb_access_i;
-                            sb_autoincr_latched  <= sb_autoincr_i;
-                            cmd_state            <= CMD_SBA_READ;
-                            sba_wait_cnt         <= 4'b0;
-                            sba_rd_pending_clk   <= 1'b0;
+                            sba_rd_pending_clk <= 1'b0;
+                            if (sb_access_i > 3'd2) begin
+                                sb_err <= 3'd4;  // §3.12.11: sbaccess value not supported
+                            end
+                            else begin
+                                sbaddress0_clk       <= sbaddress0_i;  // stable: held by jtag_tap
+                                sbdata0_result_valid <= 1'b0;
+                                sb_access_latched    <= sb_access_i;
+                                sb_autoincr_latched  <= sb_autoincr_i;
+                                cmd_state            <= CMD_SBA_READ;
+                                sba_wait_cnt         <= 4'b0;
+                            end
                         end
                         else if ((sba_wr_toggle_sync[1] != sba_wr_toggle_r || sba_wr_pending_clk)
                                   && !mem_req_pending && (sb_err == 3'b0)) begin  // §3.12.11: no SBA while sberror is set
-                            sbaddress0_clk          <= sbaddress0_i;
-                            sbdata0_clk             <= sbdata0_i;
-                            sbdata0_result_valid    <= 1'b0;
-                            sbaddress0_result_valid <= 1'b0;
-                            sb_access_latched       <= sb_access_i;
-                            sb_autoincr_latched     <= sb_autoincr_i;
-                            cmd_state               <= CMD_SBA_WRITE;
-                            sba_wr_pending_clk      <= 1'b0;
-                            sba_wait_cnt            <= 4'b0;
+                            sba_wr_pending_clk <= 1'b0;
+                            if (sb_access_i > 3'd2) begin
+                                sb_err <= 3'd4;  // §3.12.11: sbaccess value not supported
+                            end
+                            else begin
+                                sbaddress0_clk          <= sbaddress0_i;
+                                sbdata0_clk             <= sbdata0_i;
+                                sbdata0_result_valid    <= 1'b0;
+                                sbaddress0_result_valid <= 1'b0;
+                                sb_access_latched       <= sb_access_i;
+                                sb_autoincr_latched     <= sb_autoincr_i;
+                                cmd_state               <= CMD_SBA_WRITE;
+                                sba_wait_cnt            <= 4'b0;
+                            end
                         end
                     end
                 end  // CMD_IDLE
