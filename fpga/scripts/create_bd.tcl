@@ -1,4 +1,4 @@
-cd # =============================================================================
+# =============================================================================
 # File   : create_bd.tcl
 # Project: JV32 RISC-V SoC
 # Brief  : IP Integrator block design for the JV32 FPGA subsystem.
