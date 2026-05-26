@@ -31,8 +31,9 @@ fpga/
 │   ├── Makefile
 │   ├── fpga_stress.c               # Long-running FreeRTOS stability stress test
 │   ├── mem_connect_check.gdb       # Quick JTAG smoke test (SBA path, ~30 s)
-│   ├── mem_test_iram.gdb           # IRAM word pattern test (abstract mem, ~2 min)
-│   └── mem_test_dram.gdb           # DRAM word + byte/halfword test (abstract mem, ~3 min)
+│   ├── mem_test_iram.gdb           # IRAM word pattern test (abstract mem, ~10 min)
+│   ├── mem_test_dram.gdb           # DRAM word + byte/halfword test (abstract mem, ~15 min)
+│   └── mem_test_progbuf.gdb        # IRAM + DRAM word pattern test (progbuf path, ~20 min)
 └── build/                          # Vivado project output (git-ignored)
     ├── jv32_ku5p_cjtag.bit         # USE_CJTAG=1 bitstream (default)
     ├── jv32_ku5p_cjtag.mcs         # USE_CJTAG=1 SPI flash image
@@ -425,12 +426,10 @@ mem 0x80000000 0x80020000 rw    # IRAM  128 KB
 mem 0x90000000 0x90020000 rw    # DRAM  128 KB
 
 # (b) Switch OpenOCD to progbuf memory-access mode.
-#     The config files default to "abstract" mode, which cannot perform
-#     arbitrary memory writes (only register-width abstract-command
-#     accesses).  progbuf mode is required for: software breakpoints,
-#     "load", "set {int}addr = val", monitor mww, and any GDB
-#     memory-write packet.  Register read/write and hardware
-#     breakpoints work in either mode.
+#     The config files default to "sysbus abstract" mode.  progbuf mode
+#     is required for: software breakpoints, "load", "set {int}addr = val",
+#     and any GDB memory-write packet.  Register read/write and hardware
+#     breakpoints work in any mode.
 monitor riscv set_mem_access progbuf
 ```
 
@@ -503,8 +502,9 @@ a new bitstream, without requiring any firmware to be built.
 | Script | Path tested | Region | Time |
 |---|---|---|---|
 | `mem_connect_check.gdb` | **SBA** (`SBADDRESS0`/`SBDATA0`) | 8 words × 2 @ end of IRAM/DRAM | ~30 s |
-| `mem_test_iram.gdb` | **Abstract memory** (`CMD_ACCESS_MEM`) | 1 KB @ `0x8001E000` | ~2 min |
-| `mem_test_dram.gdb` | **Abstract memory** + byte/hw lanes | 1 KB + 64 B @ `0x9001E000` | ~3 min |
+| `mem_test_iram.gdb` | **Abstract memory** (`CMD_ACCESS_MEM`) | 4 KB @ `0x8001E000` | ~10 min |
+| `mem_test_dram.gdb` | **Abstract memory** + byte/hw lanes | 4 KB + 64 B @ `0x9001E000` | ~15 min |
+| `mem_test_progbuf.gdb` | **Program buffer** (hart-executed lw/sw) | 4 KB each: IRAM + DRAM | ~20 min |
 
 Run them in order — `mem_connect_check` first to confirm basic connectivity,
 then the pattern tests to exercise the full memory path.
@@ -519,6 +519,7 @@ openocd -f fpga/jtag/jv32_fpga_cjtag.cfg    # USE_CJTAG=1 bitstream (default)
 riscv64-unknown-elf-gdb -q -x fpga/tests/mem_connect_check.gdb
 riscv64-unknown-elf-gdb -q -x fpga/tests/mem_test_iram.gdb
 riscv64-unknown-elf-gdb -q -x fpga/tests/mem_test_dram.gdb
+riscv64-unknown-elf-gdb -q -x fpga/tests/mem_test_progbuf.gdb
 ```
 
 Each script halts the hart, runs its tests, prints a `[PASS]` / `[FAIL]` summary,
@@ -532,21 +533,35 @@ commands) to write and read back 8 fixed patterns in IRAM and DRAM.  Also reads
 (`0x40001105` = RV32IMAC, `0x00000000`).
 
 **`mem_test_iram.gdb`** — Uses GDB native `{unsigned int}addr` memory access
-(routes through the abstract memory command in `jv32_dtm`) to run four patterns
-over a 1 KB window at `0x8001E000` (last 8 KB of the 128 KB IRAM):
+(routes through the abstract memory command in `jv32_dtm`) to run six patterns
+over a 4 KB window at `0x8001E000` (last 8 KB of the 128 KB IRAM):
 
-| Phase | Pattern | Words | Detects |
-|---|---|---|---|
-| 1 | Walking-1 | 32 | Stuck-at-0 bit faults |
-| 2 | Walking-0 | 32 | Stuck-at-1 bit faults |
-| 3 | Address unique | 256 | Address aliasing / stuck address lines |
-| 4 | Checkerboard | 256 | Inter-cell coupling |
+| Phase | Pattern | Words | Passes | Detects |
+|---|---|---|---|---|
+| 1 | Walking-1 | 32 | 1 | Stuck-at-0 bit faults |
+| 2 | Walking-0 | 32 | 1 | Stuck-at-1 bit faults |
+| 3 | Address unique | 1024 | 4 | Address aliasing / stuck address lines |
+| 4 | Checkerboard | 1024 | 4 | Inter-cell coupling |
+| 5 | Inv-address | 1024 | 1 | Complement of address pattern |
+| 6 | Pseudo-random | 1024 | 1 | Broad data pattern coverage (XOR-shift hash) |
 
-**`mem_test_dram.gdb`** — Same four word patterns over `0x9001E000`, then two
-additional sub-tests at `0x9001E400` that exercise the byte-enable generation
+**`mem_test_dram.gdb`** — Same six word patterns over `0x9001E000`, then two
+additional sub-tests at `0x9001F000` that exercise the byte-enable generation
 logic in `jv32_dtm` (the `CMD_ACCESS_MEM` aamsize field):
 
-| Phase | Access | What is verified |
-|---|---|---|
-| 5 | Byte (`{char}`) | All 4 byte lanes: write one lane, confirm others are zero, read back byte |
-| 6 | Halfword (`{short}`) | Both halfword lanes: write one lane, confirm other is zero, read back halfword |
+| Phase | Access | Region | What is verified |
+|---|---|---|---|
+| 1–6 | Word (`{int}`) | 4 KB @ `0x9001E000` | Same six patterns as IRAM |
+| 7 | Byte (`{char}`) | 64 B @ `0x9001F000` | All 4 byte lanes: write one lane, confirm others are zero, read back byte (16 words) |
+| 8 | Halfword (`{short}`) | 64 B @ `0x9001F000` | Both halfword lanes: write one lane, confirm other is zero, read back halfword (16 words) |
+
+**`mem_test_progbuf.gdb`** — Forces `monitor riscv set_mem_access progbuf` after
+halt, then runs the same six word patterns over both IRAM and DRAM.  This
+exercises the hart-executed path (OpenOCD writes `lw`/`sw` + `ebreak` into the
+2-word program buffer) rather than the DM-internal abstract command or SBA
+paths.  Memory access is restored to `sysbus abstract` on exit.
+
+| Region | Base | Phases | Words |
+|---|---|---|---|
+| IRAM | `0x8001E000` | 6 (same patterns as `mem_test_iram.gdb`) | 1024 |
+| DRAM | `0x9001E000` | 6 (same patterns as `mem_test_iram.gdb`) | 1024 |
