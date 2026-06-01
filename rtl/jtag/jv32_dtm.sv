@@ -83,6 +83,10 @@ module jv32_dtm #(
     output logic [31:0] dbg_reg_wdata_o,
     output logic        dbg_reg_we_o,
     input  logic [31:0] dbg_reg_rdata_i,
+    output logic [11:0] dbg_csr_addr_o,
+    output logic [31:0] dbg_csr_wdata_o,
+    output logic        dbg_csr_we_o,
+    input  logic [31:0] dbg_csr_rdata_i,
 
     output logic [31:0] dbg_pc_wdata_o,
     output logic        dbg_pc_we_o,
@@ -465,6 +469,9 @@ module jv32_dtm #(
             dbg_reg_we_o               <= 1'b0;
             dbg_reg_addr_o             <= '0;
             dbg_reg_wdata_o            <= '0;
+            dbg_csr_we_o               <= 1'b0;
+            dbg_csr_addr_o             <= '0;
+            dbg_csr_wdata_o            <= '0;
             dbg_pc_we_o                <= 1'b0;
             dbg_pc_wdata_o             <= '0;
             dbg_mem_req_o              <= 1'b0;
@@ -610,6 +617,7 @@ module jv32_dtm #(
             // ----------------------------------------------------------------
             cmd_state    <= cmd_state_nx;
             dbg_reg_we_o <= 1'b0;
+            dbg_csr_we_o <= 1'b0;
             dbg_pc_we_o  <= 1'b0;
 
             case (cmd_state)
@@ -664,21 +672,10 @@ module jv32_dtm #(
                                         end
                                     end
                                 end
-                                else if (cmd_regno == 16'h07b0 || cmd_regno == 16'h07b2 ||
-                                         cmd_regno == 16'h07b3 || cmd_regno == 16'h07A0 ||
-                                         cmd_regno == 16'h07A1 || cmd_regno == 16'h07A2 ||
-                                         cmd_regno == 16'h07A4 || cmd_regno == 16'h0301 ||
-                                         cmd_regno == 16'h0C22 || cmd_regno == 16'h0FB0 ||
-                                         cmd_regno == 16'h0F14 || cmd_regno == 16'h0F11 ||
-                                         cmd_regno == 16'h0F12 || cmd_regno == 16'h0F13) begin
+                                else if (cmd_regno < 16'h1000) begin
+                                    dbg_csr_addr_o <= cmd_regno[11:0];
                                     if (cmd_write) cmd_state <= CMD_CSR_WRITE;
                                     else cmd_state <= CMD_CSR_READ;
-                                end
-                                else if (cmd_regno == 16'h0300 || cmd_regno == 16'h0304 ||
-                                         cmd_regno == 16'h0305 || cmd_regno == 16'h0340 ||
-                                         cmd_regno == 16'h0341 || cmd_regno == 16'h0342 ||
-                                         cmd_regno == 16'h0343 || cmd_regno == 16'h0344) begin
-                                    cmderr_sys <= CMDERR_NOTSUP;
                                 end
                                 else begin
                                     if (!cmd_write) begin
@@ -811,15 +808,9 @@ module jv32_dtm #(
                             1'b0,
                             dcsr_reg[2:0]
                         };
+                        16'h07b1: data0_result <= dpc_reg;
                         16'h07b2: data0_result <= dscratch0_reg;
                         16'h07b3: data0_result <= dscratch1_reg;
-                        16'h0301: data0_result <= 32'h40001105;  // misa RV32IMAC
-                        16'h0C22: data0_result <= 32'h0;
-                        16'h0FB0: data0_result <= 32'h0;
-                        16'h0F14: data0_result <= 32'h0;
-                        16'h0F11: data0_result <= 32'h0;
-                        16'h0F12: data0_result <= 32'h0;
-                        16'h0F13: data0_result <= 32'h0;
                         16'h07A0: data0_result <= tselect_reg;
                         16'h07A1:
                         data0_result <= {
@@ -830,7 +821,7 @@ module jv32_dtm #(
                         };
                         16'h07A2: data0_result <= tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
                         16'h07A4: data0_result <= 32'h0000_0004;
-                        default: data0_result <= 32'h0;
+                        default: data0_result <= dbg_csr_rdata_i;
                     endcase
                     data0_result_valid <= 1'b1;
                     cmd_state          <= CMD_DONE;
@@ -858,7 +849,10 @@ module jv32_dtm #(
                         16'h07A2: tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys;
                         default:  ;
                     endcase
-                    cmd_state <= CMD_DONE;
+                    dbg_csr_addr_o  <= cmd_regno[11:0];
+                    dbg_csr_wdata_o <= data0_sys;
+                    dbg_csr_we_o    <= 1'b1;
+                    cmd_state       <= CMD_DONE;
                 end
 
                 CMD_MEM_READ: begin

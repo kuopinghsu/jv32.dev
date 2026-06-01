@@ -91,6 +91,8 @@ make -C openocd jtag-sba
 make -C openocd cjtag-abstract_regs
 make -C openocd gdb-step
 make -C openocd gdb-memory
+make -C openocd gdb-csr
+make -C openocd gdb-step_past_swbp
 ```
 
 ### Override variables
@@ -108,7 +110,7 @@ make -C openocd gdb-memory
 ## Test Suite
 
 The 28 JTAG tests and 28 cJTAG tests (one extra cJTAG activation check, `test_jtag_tap.tcl` JTAG-only)
-are listed below in execution order.  The 6 GDB tests are described separately in the
+are listed below in execution order.  The 9 GDB tests are described separately in the
 [GDB Test Suite](#gdb-test-suite) section.
 
 | File | What it tests |
@@ -500,7 +502,7 @@ execution order to catch transport-level failures before running the full common
 
 ## GDB Test Suite
 
-The 6 GDB tests are driven by `riscv-gdb --batch` connecting to an OpenOCD GDB server
+The 9 GDB tests are driven by `riscv-gdb --batch` connecting to an OpenOCD GDB server
 (`GDB_PORT`, default `3333`) that sits in front of the JTAG VPI simulator. Each test script
 emits `[PASS]` / `[SKIP]` on success using the same convention as the Tcl tests.
 
@@ -511,10 +513,12 @@ persistent OpenOCD instance is required. GDB Python scripting is used for all as
 |---|---|
 | `test_gdb_load.gdb` | ELF download via `load`, entry-point PC check, `stepi`/`nexti` after load, `DCSR.cause` |
 | `test_gdb_step.gdb` | `stepi` × 3, `nexti` × 2, source-level `step`/`next` (SKIP-tolerant without DWARF) |
-| `test_gdb_breakpoint.gdb` | `hbreak` hit + `DCSR.cause=2`, two simultaneous hw breakpoints, disable/re-enable, sw `break` |
+| `test_gdb_breakpoint.gdb` | `hbreak` hit + `DCSR.cause=2`, two simultaneous hw breakpoints, disable/re-enable, sw `break` (strict PASS/FAIL) |
 | `test_gdb_memory.gdb` | 32/16/8-bit write-read-back, boundary crossing, 8-word burst, zero-fill, IRAM read, far DRAM |
 | `test_gdb_regs.gdb` | PC/SP validity, GPR write-back, `info registers`, CSRs: misa, dcsr, mstatus, mepc, x0 |
+| `test_gdb_csr.gdb` | Dedicated CSR read/write/restore checks: mscratch, mie (masked), mstatus (masked), plus baseline CSR reads |
 | `test_gdb_debug.gdb` | `info registers`, disasm, stepi×4, hw bp, backtrace, write watchpoint injection, resume/re-halt |
+| `test_gdb_step_past_swbp.gdb` | Focused compressed SW-breakpoint step-past semantics (`stepi` and `nexti` over `main:foo2/foo3`) |
 
 ### `test_gdb_load.gdb` — ELF download
 
@@ -561,10 +565,34 @@ Exercises the full GDB breakpoint lifecycle:
 | Single hw bp | `hbreak *addr` | Set at `pc + 0x10`; continue; verify hit; check `DCSR.cause == 2` |
 | Dual hw bp | `hbreak *a` + `hbreak *b` | Two simultaneous; first fires, then second; verify ordering |
 | Disable / re-enable | `disable N` / `enable N` | Disabled bp not triggered during stepi; re-enable then delete |
-| Software bp | `break *addr` | SKIP-tolerant if `ebreakm` not configured on the target |
+| Software bp | `break *addr` | Strict pass/fail: must halt at BP with `DCSR.cause ∈ {1,2,3}` |
 
 After each subtest all breakpoints are deleted and the state is verified clean with
 `info breakpoints`.
+
+---
+
+### `test_gdb_csr.gdb` — dedicated CSR read/write regression
+
+Provides focused machine-CSR verification using `monitor reg` read/write path:
+
+1. Baseline reads: `misa`, `mstatus`, `mie`, `mscratch`, `mtvec`.
+2. `misa` sanity checks: RV32 (`MXL=1`) and `I` extension bit set.
+3. `mscratch` write/read/restore with two patterns.
+4. `mie` write/read/restore on standard machine interrupt bits (`MEIE/MTIE/MSIE`) using a mask.
+5. `mstatus` write/read/restore on `MIE/MPIE` using a mask.
+
+---
+
+### `test_gdb_step_past_swbp.gdb` — compressed SW-breakpoint step-past
+
+Focused regression for software-breakpoint step-past behavior on compressed call sites in
+`sw/hello/hello.c`:
+
+1. Hit SW breakpoint at `main:foo2`.
+2. `stepi` step-past must execute original instruction and move into `foo()`.
+3. Re-hit `main:foo2`, then `nexti` must advance to `main:foo3`.
+4. Accepts `DCSR.cause=1` (immediate next SW breakpoint) or `4` (single-step completion).
 
 ---
 
@@ -765,7 +793,9 @@ build/openocd_logs/
 ├── gdb_breakpoint.gdb.log
 ├── gdb_memory.gdb.log
 ├── gdb_regs.gdb.log
-└── gdb_debug.gdb.log
+├── gdb_csr.gdb.log
+├── gdb_debug.gdb.log
+└── gdb_step_past_swbp.gdb.log
 ```
 
 On failure the log shows the OpenOCD / GDB error output and the assertion message from the failing
@@ -873,7 +903,9 @@ The table below maps `jv32_dtm.sv` features against the test scripts that exerci
 | `test_gdb_breakpoint.gdb` | GDB `break`; `continue`; stop at breakpoint |
 | `test_gdb_memory.gdb` | GDB `x/` and `set` memory read/write |
 | `test_gdb_regs.gdb` | GDB `info registers`; GPR and CSR values |
+| `test_gdb_csr.gdb` | Focused CSR read/write/restore via `monitor reg` |
 | `test_gdb_debug.gdb` | GDB remote target attach; halt/resume via continue |
+| `test_gdb_step_past_swbp.gdb` | Compressed SW-breakpoint step-past semantics (`stepi`/`nexti`) |
 
 ### Coverage Gaps (remaining)
 

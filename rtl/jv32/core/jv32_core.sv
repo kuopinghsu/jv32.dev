@@ -80,6 +80,10 @@ module jv32_core #(
     input  logic [          31:0]       dbg_reg_wdata_i,
     input  logic                        dbg_reg_we_i,
     output logic [          31:0]       dbg_reg_rdata_o,
+    input  logic [          11:0]       dbg_csr_addr_i,
+    input  logic [          31:0]       dbg_csr_wdata_i,
+    input  logic                        dbg_csr_we_i,
+    output logic [          31:0]       dbg_csr_rdata_o,
     input  logic [          31:0]       dbg_pc_wdata_i,
     input  logic                        dbg_pc_we_i,
     output logic [          31:0]       dbg_pc_o,
@@ -462,6 +466,10 @@ module jv32_core #(
         .instret_inc     (trace_valid_r),
         .mtime_i         (mtime_i),
         .dbg_halted_i    (dbg_halted_r),
+        .dbg_csr_addr_i  (dbg_csr_addr_i),
+        .dbg_csr_wdata_i (dbg_csr_wdata_i),
+        .dbg_csr_we_i    (dbg_csr_we_i),
+        .dbg_csr_rdata_o (dbg_csr_rdata_o),
         .dcsr_stopcount_i(dcsr_stopcount_i)
     );
 

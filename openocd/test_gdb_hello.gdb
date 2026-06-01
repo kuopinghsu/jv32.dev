@@ -165,18 +165,8 @@ _hello['pc_stepi2'] = pc
 end
 
 # ── 5. c — continue past remaining label breakpoints ─────────────────────────
-# Delete SW breakpoints (foo1..5) before c.  OpenOCD's step-past-SW-BP path
-# crashes the JV32 VPI when the current PC is a compressed C.JAL instruction
-# (it corrupts the DM state, triggering ndmreset and a fault at PC=0x2).
-# The hardware access watchpoint (awatch flag) remains active.
-python
-import gdb
-
-for bp in gdb.breakpoints():
-    if bp.type == gdb.BP_BREAKPOINT:
-        bp.delete()
-print('  SW breakpoints deleted before c  OK')
-end
+# Keep SW breakpoints active so this path continuously verifies step-past
+# behavior on compressed call sites (main:foo1..5).
 c
 
 python

@@ -54,6 +54,11 @@ module jtag_tap #(
     output logic        dbg_reg_we_o,
     input  logic [31:0] dbg_reg_rdata_i,
 
+    output logic [11:0] dbg_csr_addr_o,
+    output logic [31:0] dbg_csr_wdata_o,
+    output logic        dbg_csr_we_o,
+    input  logic [31:0] dbg_csr_rdata_i,
+
     output logic [31:0] dbg_pc_wdata_o,
     output logic        dbg_pc_we_o,
     input  logic [31:0] dbg_pc_i,
@@ -793,6 +798,10 @@ module jtag_tap #(
         .dbg_reg_wdata_o (dbg_reg_wdata_o),
         .dbg_reg_we_o    (dbg_reg_we_o),
         .dbg_reg_rdata_i (dbg_reg_rdata_i),
+        .dbg_csr_addr_o  (dbg_csr_addr_o),
+        .dbg_csr_wdata_o (dbg_csr_wdata_o),
+        .dbg_csr_we_o    (dbg_csr_we_o),
+        .dbg_csr_rdata_i (dbg_csr_rdata_i),
         .dbg_pc_wdata_o  (dbg_pc_wdata_o),
         .dbg_pc_we_o     (dbg_pc_we_o),
         .dbg_pc_i        (dbg_pc_i),

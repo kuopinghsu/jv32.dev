@@ -98,6 +98,13 @@ module jv32_csr #(
     // counters when dcsr.stopcount=1, per Debug Spec v1.0 §3.7.1.
     input logic dbg_halted_i,
 
+    // Direct debug CSR access path from the DTM (abstract CSR commands).
+    // Writes are only committed while halted; reads are combinational.
+    input  logic [11:0] dbg_csr_addr_i,
+    input  logic [31:0] dbg_csr_wdata_i,
+    input  logic        dbg_csr_we_i,
+    output logic [31:0] dbg_csr_rdata_o,
+
     // dcsr.stopcount from the DM's dcsr_reg[10] (jv32_dtm owns the dcsr register;
     // OpenOCD writes it via abstract CSR command, which never touches jv32_csr).
     // When 1, mcycle/minstret freeze while the hart is in Debug Mode.
@@ -192,30 +199,38 @@ module jv32_csr #(
     logic csr_we;
     assign csr_we = (csr_op != 3'b0) && !((csr_op[1:0] != 2'b01) && (csr_src == 32'd0));
 
+    logic        dbg_csr_write;
+    logic [11:0] csr_wr_addr_sel;
+    logic [31:0] csr_wd_sel;
+
+    assign dbg_csr_write   = dbg_csr_we_i && dbg_halted_i;
+    assign csr_wr_addr_sel = dbg_csr_write ? dbg_csr_addr_i : csr_addr;
+    assign csr_wd_sel      = dbg_csr_write ? dbg_csr_wdata_i : wd;
+
     always_comb begin : comb_counter_nxt
         // mcycle: free-running increment; hold when inhibited or debug-frozen.
         mcycle_cnt_en = !mcountinhibit_cy && !(dbg_halted_i && dcsr_stopcount_i);
         mcycle_cnt_d  = mcycle_cnt_en ? mcycle_cnt_nxt : mcycle_cnt;
         // CSR-write override: OR into the enable so the same wire drives all 64
         // bits, then patch only the written 32-bit half in the data path.
-        if (csr_we && csr_addr == CSR_MCYCLE) begin
-            mcycle_cnt_d[31:0] = wd;
+        if ((csr_we || dbg_csr_write) && csr_wr_addr_sel == CSR_MCYCLE) begin
+            mcycle_cnt_d[31:0] = csr_wd_sel;
             mcycle_cnt_en      = 1'b1;
         end
-        if (csr_we && csr_addr == CSR_MCYCLEH) begin
-            mcycle_cnt_d[63:32] = wd;
+        if ((csr_we || dbg_csr_write) && csr_wr_addr_sel == CSR_MCYCLEH) begin
+            mcycle_cnt_d[63:32] = csr_wd_sel;
             mcycle_cnt_en       = 1'b1;
         end
 
         // minstret: incremented once per retired instruction.
         minstret_cnt_en = instret_inc && !mcountinhibit_ir && !(dbg_halted_i && dcsr_stopcount_i);
         minstret_cnt_d  = minstret_cnt_en ? minstret_cnt_nxt : minstret_cnt;
-        if (csr_we && csr_addr == CSR_MINSTRET) begin
-            minstret_cnt_d[31:0] = wd;
+        if ((csr_we || dbg_csr_write) && csr_wr_addr_sel == CSR_MINSTRET) begin
+            minstret_cnt_d[31:0] = csr_wd_sel;
             minstret_cnt_en      = 1'b1;
         end
-        if (csr_we && csr_addr == CSR_MINSTRETH) begin
-            minstret_cnt_d[63:32] = wd;
+        if ((csr_we || dbg_csr_write) && csr_wr_addr_sel == CSR_MINSTRETH) begin
+            minstret_cnt_d[63:32] = csr_wd_sel;
             minstret_cnt_en       = 1'b1;
         end
     end
@@ -282,6 +297,44 @@ module jv32_csr #(
             // dcsr and dpc are owned by jv32_dtm and handled there via abstract
             // CSR commands (CMD_CSR_READ/WRITE).  No entries needed here.
             default: csr_rdata = 32'd0;
+        endcase
+    end
+
+    // Debug-side CSR read path used by DTM abstract CSR commands.
+    always_comb begin
+        dbg_csr_rdata_o = 32'd0;
+        case (dbg_csr_addr_i)
+            CSR_MSTATUS: dbg_csr_rdata_o = {19'd0, 2'b11, 3'd0, mstatus_mpie, 3'd0, mstatus_mie, 3'd0};
+            CSR_MSTATUSH: dbg_csr_rdata_o = 32'h0;
+            CSR_MISA: dbg_csr_rdata_o = MISA_VAL;
+            CSR_MIE: dbg_csr_rdata_o = mie_reg;
+            CSR_MTVEC: dbg_csr_rdata_o = mtvec_reg;
+            CSR_MSCRATCH: dbg_csr_rdata_o = mscratch_reg;
+            CSR_MEPC: dbg_csr_rdata_o = mepc_reg;
+            CSR_MCAUSE: dbg_csr_rdata_o = mcause_reg;
+            CSR_MTVAL: dbg_csr_rdata_o = mtval_reg;
+            CSR_MIP: dbg_csr_rdata_o = mip;
+            CSR_MTVT: dbg_csr_rdata_o = mtvt_reg;
+            CSR_MNXTI:
+            dbg_csr_rdata_o = (clic_irq && (clic_level > mintthresh_reg)) ? (mtvt_reg + {25'd0, clic_id, 2'b00}) : 32'd0;
+            CSR_MINTSTATUS: dbg_csr_rdata_o = {mintstatus_mil, 24'd0};
+            CSR_MINTTHRESH: dbg_csr_rdata_o = {24'd0, mintthresh_reg};
+            CSR_MCYCLE: dbg_csr_rdata_o = mcycle_cnt_fwd[31:0];
+            CSR_MCYCLEH: dbg_csr_rdata_o = mcycle_cnt_fwd[63:32];
+            CSR_MINSTRET: dbg_csr_rdata_o = minstret_cnt_fwd[31:0];
+            CSR_MINSTRETH: dbg_csr_rdata_o = minstret_cnt_fwd[63:32];
+            CSR_CYCLE: dbg_csr_rdata_o = mcycle_cnt_fwd[31:0];
+            CSR_TIME: dbg_csr_rdata_o = mtime_i[31:0];
+            CSR_INSTRET: dbg_csr_rdata_o = minstret_cnt_fwd[31:0];
+            CSR_CYCLEH: dbg_csr_rdata_o = mcycle_cnt_fwd[63:32];
+            CSR_TIMEH: dbg_csr_rdata_o = mtime_i[63:32];
+            CSR_INSTRETH: dbg_csr_rdata_o = minstret_cnt_fwd[63:32];
+            CSR_MCOUNTINHIBIT: dbg_csr_rdata_o = {29'd0, mcountinhibit_ir, 1'b0, mcountinhibit_cy};
+            CSR_MVENDORID: dbg_csr_rdata_o = 32'h0;
+            CSR_MARCHID: dbg_csr_rdata_o = 32'h0;
+            CSR_MIMPID: dbg_csr_rdata_o = 32'h1;
+            CSR_MHARTID: dbg_csr_rdata_o = 32'h0;
+            default: dbg_csr_rdata_o = 32'd0;
         endcase
     end
 
@@ -353,23 +406,23 @@ module jv32_csr #(
                 end
                 // ---- CSR write ----
             end
-            else if (csr_we) begin
-                case (csr_addr)
+            else if (csr_we || dbg_csr_write) begin
+                case (csr_wr_addr_sel)
                     CSR_MSTATUS: begin
-                        mstatus_mie  <= wd[3];
-                        mstatus_mpie <= wd[7];
+                        mstatus_mie  <= csr_wd_sel[3];
+                        mstatus_mpie <= csr_wd_sel[7];
                     end
-                    CSR_MIE:        mie_reg <= wd & 32'h0000_0888;
-                    CSR_MTVEC:      mtvec_reg <= {wd[31:2], 1'b0, wd[0]};
-                    CSR_MSCRATCH:   mscratch_reg <= wd;
-                    CSR_MEPC:       mepc_reg <= wd & ~32'h1;
-                    CSR_MCAUSE:     mcause_reg <= wd;
-                    CSR_MTVAL:      mtval_reg <= wd;
-                    CSR_MTVT:       mtvt_reg <= {wd[31:6], 6'd0};
-                    CSR_MINTTHRESH: mintthresh_reg <= wd[7:0];
+                    CSR_MIE:        mie_reg <= csr_wd_sel & 32'h0000_0888;
+                    CSR_MTVEC:      mtvec_reg <= {csr_wd_sel[31:2], 1'b0, csr_wd_sel[0]};
+                    CSR_MSCRATCH:   mscratch_reg <= csr_wd_sel;
+                    CSR_MEPC:       mepc_reg <= csr_wd_sel & ~32'h1;
+                    CSR_MCAUSE:     mcause_reg <= csr_wd_sel;
+                    CSR_MTVAL:      mtval_reg <= csr_wd_sel;
+                    CSR_MTVT:       mtvt_reg <= {csr_wd_sel[31:6], 6'd0};
+                    CSR_MINTTHRESH: mintthresh_reg <= csr_wd_sel[7:0];
                     CSR_MCOUNTINHIBIT: begin
-                        mcountinhibit_cy <= wd[0];
-                        mcountinhibit_ir <= wd[2];
+                        mcountinhibit_cy <= csr_wd_sel[0];
+                        mcountinhibit_ir <= csr_wd_sel[2];
                     end
                     // dcsr is owned by jv32_dtm; no case needed here.
                     // mnxti write side-effect: if a qualifying CLIC IRQ is pending,
@@ -384,7 +437,7 @@ module jv32_csr #(
                     end
                     default:        ;
                 endcase
-                `DEBUG2(`DBG_GRP_CSR, ("CSR write: addr=0x%h src=0x%h wd=0x%h", csr_addr, csr_src, wd));
+                `DEBUG2(`DBG_GRP_CSR, ("CSR write: addr=0x%h src=0x%h wd=0x%h", csr_wr_addr_sel, csr_src, csr_wd_sel));
             end
         end
     end

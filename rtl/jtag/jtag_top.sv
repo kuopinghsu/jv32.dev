@@ -83,6 +83,11 @@ module jtag_top #(
     output logic        dbg_reg_we_o,     // Register write enable
     input  logic [31:0] dbg_reg_rdata_i,  // Register read data
 
+    output logic [11:0] dbg_csr_addr_o,   // CSR address
+    output logic [31:0] dbg_csr_wdata_o,  // CSR write data
+    output logic        dbg_csr_we_o,     // CSR write enable
+    input  logic [31:0] dbg_csr_rdata_i,  // CSR read data
+
     // PC access
     output logic [31:0] dbg_pc_wdata_o,  // PC write data
     output logic        dbg_pc_we_o,     // PC write enable
@@ -209,6 +214,10 @@ module jtag_top #(
         .dbg_reg_wdata_o(dbg_reg_wdata_o),
         .dbg_reg_we_o   (dbg_reg_we_o),
         .dbg_reg_rdata_i(dbg_reg_rdata_i),
+        .dbg_csr_addr_o (dbg_csr_addr_o),
+        .dbg_csr_wdata_o(dbg_csr_wdata_o),
+        .dbg_csr_we_o   (dbg_csr_we_o),
+        .dbg_csr_rdata_i(dbg_csr_rdata_i),
 
         // PC access
         .dbg_pc_wdata_o(dbg_pc_wdata_o),
