@@ -52,6 +52,7 @@ When `RV32EC=0` (the default), each flag can be set independently:
 | `MUL_MC` | `1` | `1` = 2-stage pipelined multiply (2 cycles, better timing); `0` = 1-cycle combinatorial (requires `FAST_MUL=1`) |
 | `FAST_DIV` | `0` | `1` = combinatorial divider; `0` = serial restoring divider (variable latency) |
 | `FAST_SHIFT` | `1` | `1` = barrel shifter (1 cycle); `0` = 1-bit-per-cycle serial shifter |
+| `SCOREBOARD_EN` | `1` | `1` = enable non-blocking MUL_MC scoreboard slot and ordered writeback arbitration; `0` = disable |
 | `BP_EN` | `1` | `1` = enable branch predictor; `0` = always-not-taken |
 | `RAS_EN` | `1` | `1` = enable return address stack; `0` = disable RAS |
 | `IBUF_EN` | `1` | `1` = enable instruction buffer; `0` = disable |

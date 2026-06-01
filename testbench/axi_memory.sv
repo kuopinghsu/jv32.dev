@@ -101,22 +101,6 @@ module axi_memory #(
     assign read_limit_reached  = (current_outstanding_reads >= MAX_OUTSTANDING_READS);
     assign write_limit_reached = (current_outstanding_writes >= MAX_OUTSTANDING_WRITES);
 
-    // Initialize statistics
-    initial begin
-        stat_ar_requests            = 0;
-        stat_r_responses            = 0;
-        stat_aw_requests            = 0;
-        stat_w_data                 = 0;
-        stat_w_expected             = 0;
-        stat_b_responses            = 0;
-        stat_outstanding_reads      = 0;
-        stat_outstanding_writes     = 0;
-        stat_max_outstanding_reads  = 0;
-        stat_max_outstanding_writes = 0;
-        current_outstanding_reads   = 0;
-        current_outstanding_writes  = 0;
-    end
-
     // ============================================================================
     // State Representation for Backward Compatibility
     // ============================================================================
@@ -202,15 +186,17 @@ module axi_memory #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            write_addr_reg             <= '0;
-            write_addr_valid           <= 1'b0;
-            wr_burst_type              <= 2'b01;
-            wr_burst_size              <= 3'b011;
-            wr_burst_err               <= 1'b0;
-            stat_aw_requests           <= 0;
-            stat_outstanding_writes    <= 0;
-            stat_b_responses           <= 0;
-            current_outstanding_writes <= 0;
+            write_addr_reg              <= '0;
+            write_addr_valid            <= 1'b0;
+            wr_burst_type               <= 2'b01;
+            wr_burst_size               <= 3'b011;
+            wr_burst_err                <= 1'b0;
+            stat_aw_requests            <= 0;
+            stat_w_expected             <= 0;
+            stat_outstanding_writes     <= 0;
+            stat_max_outstanding_writes <= 0;
+            stat_b_responses            <= 0;
+            current_outstanding_writes  <= 0;
         end
         else begin
             // Handle AW acceptance
@@ -592,10 +578,11 @@ module axi_memory #(
     // Track AR/R channel handshakes and outstanding reads
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            stat_ar_requests          <= 0;
-            stat_r_responses          <= 0;
-            stat_outstanding_reads    <= 0;
-            current_outstanding_reads <= 0;
+            stat_ar_requests           <= 0;
+            stat_r_responses           <= 0;
+            stat_outstanding_reads     <= 0;
+            stat_max_outstanding_reads <= 0;
+            current_outstanding_reads  <= 0;
         end
         else begin
             // Handle simultaneous AR and R

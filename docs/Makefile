@@ -25,9 +25,9 @@ ADOC_FLAGS := -a toc \
               -a sectnums \
               -a icons=font \
               -a source-highlighter=rouge \
-	      -r asciidoctor-mathematical \
+              -r asciidoctor-mathematical \
               -a pdf-fontsdir="$(HOME)/.local/share/fonts;GEM_FONTS_DIR" \
-			  -a pdf-themesdir=themes
+              -a pdf-themesdir=themes
 
 THEME_FLAG := -a pdf-theme=$(THEMES)
 
@@ -69,6 +69,7 @@ setup:
 	@echo "=== Installing asciidoctor and asciidoctor-pdf ==="
 	gem install --user-install asciidoctor
 	gem install --user-install asciidoctor-pdf
+	gem install --user-install asciidoctor-mathematical
 	gem install --user-install asciidoctor-diagram
 	gem install --user-install rouge
 	@echo "=== Installing WaveDrom CLI (requires npm) ==="

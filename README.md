@@ -24,6 +24,7 @@ This repository is part of a family of open-source RV32 cores targeting differen
   - [Instruction Prefetch Buffer (`IBUF_EN`)](#instruction-prefetch-buffer-ibuf_en)
   - [2-Entry Store Buffer](#2-entry-store-buffer)
   - [Multiplier (`FAST_MUL`, `MUL_MC`)](#multiplier-fast_mul-mul_mc)
+  - [Scoreboard (`SCOREBOARD_EN`)](#scoreboard-scoreboard_en)
   - [Divider (`FAST_DIV`)](#divider-fast_div)
   - [Barrel Shifter (`FAST_SHIFT`)](#barrel-shifter-fast_shift)
   - [WB→EX Same-Cycle Forwarding](#wbex-same-cycle-forwarding)
@@ -155,6 +156,27 @@ Three selectable implementations for `MUL`/`MULH`/`MULHSU`/`MULHU`:
 ```bash
 make FAST_MUL=1 MUL_MC=0 build-rtl  # 1-cycle multiply
 make FAST_MUL=0 build-rtl           # serial multiply (minimum area)
+```
+
+### Scoreboard (`SCOREBOARD_EN`)
+
+A lightweight non-blocking scoreboard slot for multi-cycle multiply operations:
+
+- Lets independent instructions continue issuing while a `MUL_MC` operation is still in
+  flight, while preserving retirement order through ordered writeback arbitration.
+- The current implementation keeps `DIV`/`REM` on the blocking path; the benefit comes from
+  allowing unrelated work to overlap the outstanding multi-cycle `MUL`.
+- Improves throughput only when the multiplier is actually multi-cycle; it is automatically
+  disabled in the top-level fast-arithmetic configuration where `MUL`/`DIV`/shift are already
+  single-cycle.
+- On the current CoreMark benchmark, the serial arithmetic configuration (`FAST_DIV=0`
+  `FAST_MUL=0` `FAST_SHIFT=1`) improves from 1,461,373 cycles / 1.418 CPI / 2.890107 CoreMark/MHz
+  to 1,400,506 cycles / 1.359 CPI / 3.023669 CoreMark/MHz, which is a 4.17% cycle reduction.
+- Default setting is `SCOREBOARD_EN=1`; disable it only if you want a simpler control path for
+  experimentation or area debugging.
+
+```bash
+make SCOREBOARD_EN=0 build-rtl  # disable the non-blocking scoreboard slot
 ```
 
 ### Divider (`FAST_DIV`)

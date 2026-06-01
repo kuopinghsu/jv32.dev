@@ -104,7 +104,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 
 [ditaa, format="svg", width=400, font="Arial", align="center"]
 ....
- +-----------------------------------------------------------------------+
+ +------------------------------------------------------------------------+
  |                        JV32 SoC Top Level                              |
  |                                                                        |
  |  +-------------------------------------------------------------------+ |

@@ -18,24 +18,25 @@
 // ============================================================================
 
 module jv32_core #(
-    parameter bit                 RV32E_EN   = 1'b0,  // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
-    parameter bit                 RV32M_EN   = 1'b1,  // 1=M-extension; 0=illegal for MUL/DIV
-    parameter bit                 FAST_MUL   = 1'b1,
-    parameter bit                 MUL_MC     = 1'b1,
-    parameter bit                 FAST_DIV   = 1'b0,
-    parameter bit                 FAST_SHIFT = 1'b1,
-    parameter bit                 BP_EN      = 1'b1,
-    parameter bit                 RAS_EN     = 1'b1,  // 1=Return Address Stack enabled; 0=JALR always 1-cycle
-    parameter bit                 IBUF_EN    = 1'b1,  // 1=2-entry instruction prefetch buffer; 0=disabled
-    parameter bit                 AMO_EN     = 1'b1,  // 1=full A-extension; 0=AMO decode as illegal
-    parameter bit                 RV32B_EN   = 1'b1,  // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
-    parameter bit                 ZCMP_EN    = 1'b1,  // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
-    parameter int                 N_TRIGGERS = 2,     // number of hardware breakpoints (0..4)
-    parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
-    parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
-    parameter int unsigned        IRAM_SIZE  = 128 * 1024,
-    parameter bit          [31:0] DRAM_BASE  = 32'h9000_0000,
-    parameter int unsigned        DRAM_SIZE  = 128 * 1024
+    parameter bit RV32E_EN = 1'b0,       // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit RV32M_EN = 1'b1,       // 1=M-extension; 0=illegal for MUL/DIV
+    parameter bit FAST_MUL = 1'b1,
+    parameter bit MUL_MC = 1'b1,
+    parameter bit FAST_DIV = 1'b0,
+    parameter bit FAST_SHIFT = 1'b1,
+    parameter bit SCOREBOARD_EN = 1'b1,  // 1=enable non-blocking MUL_MC scoreboard slot
+    parameter bit BP_EN = 1'b1,
+    parameter bit RAS_EN = 1'b1,         // 1=Return Address Stack enabled; 0=JALR always 1-cycle
+    parameter bit IBUF_EN = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
+    parameter bit AMO_EN = 1'b1,         // 1=full A-extension; 0=AMO decode as illegal
+    parameter bit RV32B_EN = 1'b1,       // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit ZCMP_EN = 1'b1,        // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
+    parameter int N_TRIGGERS = 2,        // number of hardware breakpoints (0..4)
+    parameter bit [31:0] BOOT_ADDR = 32'h8000_0000,
+    parameter bit [31:0] IRAM_BASE = 32'h8000_0000,
+    parameter int unsigned IRAM_SIZE = 128 * 1024,
+    parameter bit [31:0] DRAM_BASE = 32'h9000_0000,
+    parameter int unsigned DRAM_SIZE = 128 * 1024
 ) (
     input logic clk,
     input logic rst_n,
@@ -256,6 +257,16 @@ module jv32_core #(
     logic        alu_result_hold;
     logic [31:0] alu_result;
     logic        alu_ready;
+    logic        alu_mul_mc_valid;
+    logic [31:0] alu_mul_mc_lo;
+    logic [31:0] alu_mul_mc_h;
+    logic [31:0] alu_mul_mc_hsu;
+    logic [31:0] alu_mul_mc_hu;
+    logic        alu_div_mc_valid;
+    logic [31:0] alu_div_mc_div;
+    logic [31:0] alu_div_mc_divu;
+    logic [31:0] alu_div_mc_rem;
+    logic [31:0] alu_div_mc_remu;
 
     // Forward-declared helpers used by earlier combinational blocks.
     logic [31:0] amo_load_data;
@@ -272,15 +283,29 @@ module jv32_core #(
         .FAST_SHIFT(FAST_SHIFT),
         .RV32B_EN  (ZB_ACTIVE)
     ) u_alu (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        .alu_op       (alu_op_d),
-        .operand_a    (alu_op_a),
-        .operand_b    (alu_op_b),
-        .operand_stall(alu_operand_stall),
-        .result_hold  (alu_result_hold),
-        .result       (alu_result),
-        .ready        (alu_ready)
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .alu_op        (alu_op_d),
+        .operand_a     (alu_op_a),
+        .operand_b     (alu_op_b),
+        .operand_stall (alu_operand_stall),
+        .result_hold   (alu_result_hold),
+        .result        (alu_result),
+        .ready         (alu_ready),
+        .mul_mc_valid  (alu_mul_mc_valid),
+        .mul_mc_lo     (alu_mul_mc_lo),
+        .mul_mc_h      (alu_mul_mc_h),
+        .mul_mc_hsu    (alu_mul_mc_hsu),
+        .mul_mc_hu     (alu_mul_mc_hu),
+        .div_mc_valid  (alu_div_mc_valid),
+        .div_mc_div    (alu_div_mc_div),
+        .div_mc_divu   (alu_div_mc_divu),
+        .div_mc_rem    (alu_div_mc_rem),
+        .div_mc_remu   (alu_div_mc_remu),
+        .shift_mc_valid(),
+        .shift_mc_sll  (),
+        .shift_mc_srl  (),
+        .shift_mc_sra  ()
     );
 
     // =====================================================================
@@ -363,6 +388,7 @@ module jv32_core #(
 
     // Forward declarations - defined/driven in the Trace output section below
     logic              irq_cancel;
+    logic              irq_cancel_pre;
     logic              trace_valid_r;
     logic              wb_retire;
     logic              wb_redirect;
@@ -644,6 +670,24 @@ module jv32_core #(
     logic ex_stall;  // stall EX stage (and upstream)
     logic ex_flush;  // inject bubble into EX
     logic load_use_stall;
+    logic dec_is_mul_mc_nb;
+    logic dec_is_div_mc_nb;
+    logic dec_is_nb_mc_op;
+    logic dec_uses_rs1, dec_uses_rs2;
+    logic dec_commit_sensitive;
+    logic sb_raw_hazard, sb_waw_hazard, sb_struct_hazard, sb_commit_hazard;
+    logic        sb_issue_stall;
+    logic [31:0] reg_busy_sb;
+    logic multi_issue_pulse, multi_retire_pulse;
+    logic dec_dispatch_multi;
+    logic wb_multi_ready, wb_multi_fire, wb_arb_stall;
+    logic [31:0] wb_multi_result;
+    logic        multi_slot_valid;
+    logic [ 4:0] multi_slot_rd;
+    logic [ 2:0] multi_slot_kind;
+    logic [31:0] multi_slot_pc;
+    logic [31:0] multi_slot_orig_instr;
+    logic        wb_commit_block;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -675,7 +719,7 @@ module jv32_core #(
             if (ex_flush || if_flush || dbg_enter_debug) begin
                 if_ex_r <= '0;
             end
-            else if (load_use_stall) begin
+            else if (load_use_stall || sb_issue_stall) begin
                 // Extra bubble stall: the dependent instruction must stay in the
                 // IF->EX slot while the register file is written by the load WB.
                 // Do NOT advance if_ex_r; hold it implicitly (no assignment).
@@ -1158,6 +1202,120 @@ module jv32_core #(
                              (ex_wb_r.rd_addr == dec_rs2 && dec_rs2 != 5'd0 &&
                               (!dec_alu_src || dec_mem_write || dec_branch || dec_is_amo)));
 
+    // Lightweight scoreboard for multi-cycle instruction tracking.
+    // This preserves in-order retirement while blocking dependent issue with
+    // explicit RAW/WAW/structural checks.
+    // Enable non-blocking dispatch whenever MUL is actually multi-cycle:
+    // serial MUL (FAST_MUL=0) or pipelined MUL (FAST_MUL=1, MUL_MC=1).
+    assign dec_is_mul_mc_nb = SCOREBOARD_EN && RV32M_EN && FAST_SHIFT
+                              && (!FAST_MUL || MUL_MC)
+                              && (dec_alu_op == ALU_MUL);
+    // Keep DIV/REM on the blocking path for now to preserve strict in-order
+    // retirement in trace compare. Serial MUL still benefits from non-blocking issue.
+    assign dec_is_div_mc_nb = 1'b0;
+    assign dec_is_nb_mc_op = dec_is_mul_mc_nb || dec_is_div_mc_nb;
+
+    assign dec_uses_rs1 = if_ex_r.valid &&
+                          !(dec_lui || dec_auipc || dec_jal || dec_is_mret || dec_is_ecall
+                            || dec_is_ebreak || dec_is_fence || dec_is_fence_i || dec_is_wfi);
+    assign dec_uses_rs2 = if_ex_r.valid && (dec_branch || dec_mem_write || dec_is_amo || !dec_alu_src);
+
+    // Commit-sensitive instructions must not overtake an older in-flight
+    // non-blocking multi op.  Keep them in EX until the slot retires.
+    assign dec_commit_sensitive = if_ex_r.ifetch_fault || dec_illegal
+                                                                    || dec_branch || dec_jal || dec_jalr
+                                                                    || dec_mem_read || dec_mem_write || dec_is_amo
+                                                                    || (dec_csr_op != 3'b000)
+                                                                    || dec_is_mret || dec_is_ecall || dec_is_ebreak
+                                                                    || dec_is_fence || dec_is_fence_i || dec_is_wfi;
+
+    assign sb_raw_hazard = ((dec_rs1 != 5'd0) && dec_uses_rs1 && reg_busy_sb[dec_rs1]) ||
+                           ((dec_rs2 != 5'd0) && dec_uses_rs2 && reg_busy_sb[dec_rs2]);
+    assign sb_waw_hazard = if_ex_r.valid && dec_reg_we && (dec_rd != 5'd0) && reg_busy_sb[dec_rd];
+    assign sb_struct_hazard = if_ex_r.valid && dec_is_nb_mc_op && multi_slot_valid;
+    assign sb_commit_hazard = if_ex_r.valid && multi_slot_valid && dec_commit_sensitive;
+    assign sb_issue_stall = sb_raw_hazard || sb_waw_hazard || sb_struct_hazard || sb_commit_hazard;
+
+    // Dispatch a non-blocking multi-cycle op into dedicated in-flight slot
+    // when it needs a later completion cycle (alu_ready=0).
+    assign dec_dispatch_multi = if_ex_r.valid && dec_is_nb_mc_op && !alu_ready && !sb_issue_stall
+                                && !ex_exception && !load_use_stall
+                                && !wb_redirect && !dbg_enter_debug && !trigger_match;
+
+    assign multi_issue_pulse = dec_dispatch_multi;
+    assign multi_retire_pulse = wb_multi_fire;
+
+    always_comb begin
+        case (multi_slot_kind)
+            3'd0:    wb_multi_result = alu_mul_mc_lo;
+            3'd1:    wb_multi_result = alu_mul_mc_h;
+            3'd2:    wb_multi_result = alu_mul_mc_hsu;
+            3'd3:    wb_multi_result = alu_mul_mc_hu;
+            3'd4:    wb_multi_result = alu_div_mc_div;
+            3'd5:    wb_multi_result = alu_div_mc_divu;
+            3'd6:    wb_multi_result = alu_div_mc_rem;
+            default: wb_multi_result = alu_div_mc_remu;
+        endcase
+    end
+
+    assign wb_multi_ready = multi_slot_valid
+                            && (((multi_slot_kind <= 3'd3) && alu_mul_mc_valid)
+                                || ((multi_slot_kind >= 3'd4) && alu_div_mc_valid))
+                            && !dbg_halted_r;
+    assign wb_multi_fire = wb_multi_ready;
+    assign wb_arb_stall = wb_multi_ready && ex_wb_r.valid;
+    // Small ROB-style commit lock: while an older non-blocking op is pending,
+    // freeze retirement of a younger EX/WB instruction until the slot retires.
+    assign wb_commit_block = multi_slot_valid && ex_wb_r.valid && !wb_multi_fire;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            multi_slot_valid      <= 1'b0;
+            multi_slot_rd         <= 5'd0;
+            multi_slot_kind       <= 3'd0;
+            multi_slot_pc         <= 32'd0;
+            multi_slot_orig_instr <= 32'd0;
+        end
+        else begin
+            if (multi_issue_pulse) begin
+                multi_slot_valid      <= 1'b1;
+                multi_slot_rd         <= dec_rd;
+                multi_slot_pc         <= if_ex_r.pc;
+                multi_slot_orig_instr <= if_ex_r.orig_instr;
+                case (dec_alu_op)
+                    ALU_MUL:    multi_slot_kind <= 3'd0;
+                    ALU_MULH:   multi_slot_kind <= 3'd1;
+                    ALU_MULHSU: multi_slot_kind <= 3'd2;
+                    ALU_MULHU:  multi_slot_kind <= 3'd3;
+                    ALU_DIV:    multi_slot_kind <= 3'd4;
+                    ALU_DIVU:   multi_slot_kind <= 3'd5;
+                    ALU_REM:    multi_slot_kind <= 3'd6;
+                    default:    multi_slot_kind <= 3'd7;
+                endcase
+            end
+            if (multi_retire_pulse) begin
+                multi_slot_valid <= 1'b0;
+                multi_slot_rd    <= 5'd0;
+                multi_slot_kind  <= 3'd0;
+            end
+        end
+    end
+
+    // Track destination register hazards for dispatched multi ops.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            reg_busy_sb <= 32'h0;
+        end
+        else begin
+            // Clear scoreboard bit when architectural writeback commits.
+            if (rf_we && (rf_rd != 5'd0)) reg_busy_sb[rf_rd] <= 1'b0;
+
+            if (multi_issue_pulse && (dec_rd != 5'd0)) begin
+                reg_busy_sb[dec_rd] <= 1'b1;
+            end
+        end
+    end
+
     // AMO state machine
     typedef enum logic [1:0] {
         AMO_IDLE,
@@ -1206,7 +1364,7 @@ module jv32_core #(
     // Relaxed store path: only for non-atomic stores into local TCM regions.
     // These stores can retire without waiting on dmem_resp_valid.
     // Loads/AMO and non-TCM stores remain strict and keep precise fault behavior.
-    assign sb_commit_ex = ex_wb_r.valid && ex_wb_r.mem_write && !ex_wb_r.is_amo && !irq_cancel && is_tcm_addr(
+    assign sb_commit_ex = ex_wb_r.valid && ex_wb_r.mem_write && !ex_wb_r.is_amo && !irq_cancel_pre && is_tcm_addr(
         ex_wb_r.mem_addr
     );
 
@@ -1243,7 +1401,7 @@ module jv32_core #(
     // port during the WB DRAM-load response cycle (consecutive DRAM loads).
     logic d_preload_valid_base;
     assign d_preload_valid_base = if_ex_r.valid && dec_mem_read && !ex_exception
-                                  && !ex_stall && !load_use_stall && !wb_redirect
+                                  && !ex_stall && !load_use_stall && !wb_redirect && !multi_slot_valid
                                   && !sb_valid[0]
                                   && in_dram_addr(
         mem_addr_ex
@@ -1276,12 +1434,12 @@ module jv32_core #(
             // Stall only if WB has a memory op that needs the D-bus.
             // TCM stores can retire into slot 1 (no D-bus needed), so they are
             // allowed through as long as slot 1 is free.
-            if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
+            if (ex_wb_r.valid && !alu_stall && !irq_cancel_pre && !dbg_halted_r) begin
                 if (ex_wb_r.mem_read || ex_wb_r.is_amo || (ex_wb_r.mem_write && (!sb_commit_ex || sb_valid[1])))
                     dmem_stall = 1'b1;
             end
         end
-        else if (ex_wb_r.valid && !alu_stall && !irq_cancel && !dbg_halted_r) begin
+        else if (ex_wb_r.valid && !alu_stall && !irq_cancel_pre && !dbg_halted_r) begin
             if (ex_wb_r.is_amo) begin
                 case (amo_state)
                     AMO_IDLE: begin
@@ -1474,22 +1632,22 @@ module jv32_core #(
     end
 
     // Multi-cycle ALU stall
-    assign alu_stall = if_ex_r.valid && !alu_ready;
+    assign alu_stall = if_ex_r.valid && !alu_ready && !dec_is_nb_mc_op;
 
     // Operand stall: forwarding not yet available (load in WB not done)
     assign alu_operand_stall = load_use_stall;
 
     // External EX holds can delay retirement of a completed multi-cycle ALU op.
-    assign alu_result_hold = dmem_stall || dbg_halted_r;
+    assign alu_result_hold = dmem_stall || dbg_halted_r || wb_arb_stall;
 
     // =====================================================================
     // Hazard control
     // =====================================================================
     // ex_stall: stall EX stage (freeze EX/WB, freeze IF/EX, hold IF)
-    assign ex_stall = dmem_stall || alu_stall || dbg_halted_r;
+    assign ex_stall = dmem_stall || alu_stall || dbg_halted_r || wb_arb_stall || wb_commit_block;
 
     // if_stall: hold IF (do not advance PC or consume RVC output)
-    assign if_stall = ex_stall || load_use_stall;
+    assign if_stall = ex_stall || load_use_stall || sb_issue_stall;
 
     // WB retirement pulse (single-cycle commit point for side effects).
     // Block retire at the exact cycle the step-halt fires (trace_valid_r=1 or
@@ -1498,7 +1656,7 @@ module jv32_core #(
     // IBUF pre-fetch + forwarding).  Without this gate it retires and the debugger
     // sees a spurious double-execution.  The frozen WB slot is discarded by the
     // ex_wb_r<=0 clear that fires on the subsequent resume.
-    assign wb_retire         = ex_wb_r.valid && !ex_stall && !dbg_halted_r
+    assign wb_retire         = ex_wb_r.valid && !ex_stall && !dbg_halted_r && !wb_arb_stall
                                && !(dbg_step_pending_r && (trace_valid_r || dbg_step_fire_r));
 
     // -------------------------------------------------------------------------
@@ -1508,11 +1666,13 @@ module jv32_core #(
     // because ex_wb_r.exception suppresses mem_read/mem_write in ex_wb_r.
     // -------------------------------------------------------------------------
     logic dmem_fault_active;
+    logic dmem_fault_raw;
 
-    assign dmem_fault_active = dmem_resp_fault && ex_wb_r.valid
-                             && (ex_wb_r.mem_read || ex_wb_r.mem_write)
-                             && !ex_wb_r.exception;
-    assign wb_exception = (ex_wb_r.valid && ex_wb_r.exception) || dmem_fault_active;
+    assign dmem_fault_raw = dmem_resp_fault && ex_wb_r.valid
+                          && (ex_wb_r.mem_read || ex_wb_r.mem_write)
+                          && !ex_wb_r.exception;
+    assign dmem_fault_active = dmem_fault_raw && !wb_commit_block;
+    assign wb_exception = ((ex_wb_r.valid && ex_wb_r.exception) && !wb_commit_block) || dmem_fault_active;
     assign wb_exc_cause = dmem_fault_active
                         ? (ex_wb_r.mem_write ? EXC_STORE_ACCESS_FAULT : EXC_LOAD_ACCESS_FAULT)
                         : ex_wb_r.exc_cause;
@@ -1537,13 +1697,13 @@ module jv32_core #(
             if_flush    = 1'b1;
             if_flush_pc = mtvec_csr;
         end
-        else if (ex_wb_r.valid && ex_wb_r.mret) begin
+        else if (ex_wb_r.valid && ex_wb_r.mret && !wb_commit_block) begin
             if_flush    = 1'b1;
             // Tail-chain: if a CLIC IRQ is pending above threshold, redirect
             // directly to the next handler instead of returning to mepc.
             if_flush_pc = csr_tail_chain ? csr_tail_chain_pc : mepc_csr;
         end
-        else if (csr_irq_pending && ex_wb_r.valid && !dbg_step_pending_r) begin
+        else if (csr_irq_pending && ex_wb_r.valid && !dbg_step_pending_r && !wb_commit_block) begin
             if_flush    = 1'b1;
             if_flush_pc = csr_irq_pc;
         end
@@ -1580,10 +1740,10 @@ module jv32_core #(
     // (not promoted to EX/WB), because it's on the wrong control-flow path.
     // (declared as a forward reference above, near line 313)
     assign wb_redirect = wb_exception
-                      || (ex_wb_r.valid && ex_wb_r.mret)
+                      || (ex_wb_r.valid && ex_wb_r.mret && !wb_commit_block)
                       || (csr_irq_pending && ex_wb_r.valid
                           && !ex_wb_r.exception && !dmem_fault_active && !ex_wb_r.mret
-                          && !dbg_step_pending_r);
+                          && !dbg_step_pending_r && !wb_commit_block);
 
     // RVC stall/flush
     // bp_redirect also flushes the RVC buffer to discard the instruction
@@ -1810,7 +1970,8 @@ module jv32_core #(
             ex_wb_r <= '0;
         end
         else if (!ex_stall) begin
-            if (load_use_stall || !if_ex_r.valid || wb_redirect || dbg_enter_debug || trigger_match) begin
+            if (load_use_stall || sb_issue_stall || dec_dispatch_multi
+                || !if_ex_r.valid || wb_redirect || dbg_enter_debug || trigger_match) begin
                 // inject bubble
                 ex_wb_r <= '0;
             end
@@ -1872,9 +2033,15 @@ module jv32_core #(
     // Register writeback
     always_comb begin
         rf_we    = 1'b0;
-        rf_rd    = ex_wb_r.rd_addr;
-        rf_wdata = ex_wb_r.rd_data;
-        if (wb_retire && ex_wb_r.reg_we && !irq_cancel && !dmem_fault_active) begin
+        rf_rd    = wb_multi_fire ? multi_slot_rd : ex_wb_r.rd_addr;
+        rf_wdata = wb_multi_fire ? wb_multi_result : ex_wb_r.rd_data;
+
+        // Ordered arbitration: when both older multi-slot and younger EX/WB are
+        // ready in the same cycle, multi_slot wins and EX/WB is held 1 cycle.
+        if (wb_multi_fire && (multi_slot_rd != 5'd0)) begin
+            rf_we = 1'b1;
+        end
+        else if (wb_retire && ex_wb_r.reg_we && !irq_cancel && !dmem_fault_active) begin
             rf_we = 1'b1;
             // AMO checked first: decoder sets mem_read=1 for AMO too.
             if (ex_wb_r.is_amo) begin
@@ -1899,9 +2066,13 @@ module jv32_core #(
     // During single-step (dbg_step_pending_r=1), interrupts are suppressed
     // to implement dcsr.stepie=0 (the reset / default value of dcsr.stepie):
     // the Debug Spec says "interrupt enable is cleared while in single step mode".
-    assign irq_cancel = csr_irq_pending && ex_wb_r.valid && !dbg_halted_r
-                        && !ex_wb_r.exception && !dmem_fault_active
-                        && !ex_wb_r.mret && !dbg_step_pending_r;
+    assign irq_cancel_pre = csr_irq_pending && ex_wb_r.valid && !dbg_halted_r
+                            && !ex_wb_r.exception && !dmem_fault_raw
+                            && !ex_wb_r.mret && !dbg_step_pending_r;
+
+    // Final cancel is additionally commit-locked so an older in-flight multi op
+    // still retires before a younger WB instruction can be interrupted away.
+    assign irq_cancel = irq_cancel_pre && !wb_commit_block;
 
     // =====================================================================
     // Trace output registers
@@ -1909,7 +2080,8 @@ module jv32_core #(
     // counting and debug single-step even in synthesis.
     // All other trace logic is simulation-only (excluded from synthesis).
     // =====================================================================
-    assign trace_retire = wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel;
+    assign trace_retire = (wb_retire && !ex_wb_r.exception && !dmem_fault_active && !dmem_stall && !irq_cancel)
+                       || wb_multi_fire;
 
 `ifndef SYNTHESIS
     logic [31:0] trace_mem_data_c;
@@ -1941,13 +2113,14 @@ module jv32_core #(
             // instret counting (instret_inc).  Gating by trace_en would suppress
             // both, breaking stepi on FPGA where trace_en=0.
             trace_valid_r <= trace_retire;
-            trace_reg_we  <= trace_en ? (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0)) : 1'b0;
+            trace_reg_we  <= trace_en ? (wb_multi_fire ? (multi_slot_rd != 5'd0) :
+                                         (trace_retire && ex_wb_r.reg_we && (ex_wb_r.rd_addr != 5'd0))) : 1'b0;
             // AMO instructions are logged as memory writes (matching jv32sim which
             // emits trace_is_store=true for all AMO/LR/SC). The write data is
             // amo_store_val for non-LR AMO, or the loaded value (dmem_resp_data)
             // for LR (jv32sim writes the loaded value back and logs it as a store).
-            trace_mem_we  <= trace_en ? (trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
-            trace_mem_re  <= trace_en ? (trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
+            trace_mem_we <= trace_en ? (!wb_multi_fire && trace_retire && (ex_wb_r.mem_write || ex_wb_r.is_amo)) : 1'b0;
+            trace_mem_re <= trace_en ? (!wb_multi_fire && trace_retire && ex_wb_r.mem_read && !ex_wb_r.is_amo) : 1'b0;
         end
     end
 
@@ -1963,12 +2136,22 @@ module jv32_core #(
             trace_mem_data <= 32'h0;
         end
         else if (trace_en) begin
-            trace_pc       <= ex_wb_r.pc;
-            trace_rd       <= ex_wb_r.rd_addr;
-            trace_rd_data  <= rf_wdata;
-            trace_instr    <= ex_wb_r.orig_instr;
-            trace_mem_addr <= ex_wb_r.mem_addr;
-            trace_mem_data <= trace_mem_data_c;
+            if (wb_multi_fire) begin
+                trace_pc       <= multi_slot_pc;
+                trace_rd       <= multi_slot_rd;
+                trace_rd_data  <= wb_multi_result;
+                trace_instr    <= multi_slot_orig_instr;
+                trace_mem_addr <= 32'h0;
+                trace_mem_data <= 32'h0;
+            end
+            else begin
+                trace_pc       <= ex_wb_r.pc;
+                trace_rd       <= ex_wb_r.rd_addr;
+                trace_rd_data  <= rf_wdata;
+                trace_instr    <= ex_wb_r.orig_instr;
+                trace_mem_addr <= ex_wb_r.mem_addr;
+                trace_mem_data <= trace_mem_data_c;
+            end
         end
     end
 

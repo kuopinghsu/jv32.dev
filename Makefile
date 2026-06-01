@@ -35,6 +35,7 @@ export RV32B_EN
 export ZCMP_EN
 export RAS_EN
 export IBUF_EN
+export SCOREBOARD_EN
 export SPIKE
 
 # Compute ARCH/ABI from feature flags and export so all sub-makes agree.
@@ -161,6 +162,9 @@ endif
 ifdef FAST_SHIFT
   VERILATOR_FLAGS += -pvalue+FAST_SHIFT=$(FAST_SHIFT)
 endif
+ifdef SCOREBOARD_EN
+  VERILATOR_FLAGS += -pvalue+SCOREBOARD_EN=$(SCOREBOARD_EN)
+endif
 ifdef BP_EN
   VERILATOR_FLAGS += -pvalue+BP_EN=$(BP_EN)
 endif
@@ -266,7 +270,7 @@ BUILD_TARGET = $(BUILD_DIR)/jv32soc
 # Stamp file: rebuilt only when Verilator parameters change
 RTL_PARAMS_STAMP = $(BUILD_DIR)/.build_params
 RTL_BUILD_PARAMS = RV32EC=$(RV32EC) RV32E_EN=$(RV32E_EN) RV32M_EN=$(RV32M_EN) RV32B_EN=$(RV32B_EN) ZCMP_EN=$(ZCMP_EN) JTAG_EN=$(JTAG_EN) \
-AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) BP_EN=$(BP_EN) \
+AMO_EN=$(AMO_EN) FAST_MUL=$(FAST_MUL) MUL_MC=$(MUL_MC) FAST_DIV=$(FAST_DIV) FAST_SHIFT=$(FAST_SHIFT) SCOREBOARD_EN=$(SCOREBOARD_EN) BP_EN=$(BP_EN) \
 RAS_EN=$(RAS_EN) IBUF_EN=$(IBUF_EN) IRAM_SIZE=$(IRAM_SIZE) DRAM_SIZE=$(DRAM_SIZE) BOOT_ADDR=$(BOOT_ADDR) \
 IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG_GROUP)
 
@@ -297,6 +301,7 @@ extra-tests:
 	@make -f Makefile FAST_MUL=0 MUL_MC=0 FAST_DIV=0 FAST_SHIFT=0 BP_EN=0 rtl-all sim-all compare-all
 	@make -f Makefile FAST_DIV=1 FAST_MUL=1 MUL_MC=1 rtl-all sim-all compare-all
 	@make -f Makefile FAST_DIV=0 FAST_MUL=1 MUL_MC=0 rtl-all sim-all compare-all
+	@make -f Makefile FAST_DIV=0 FAST_MUL=0 SCOREBOARD_EN=0 rtl-all compare-all
 	@make -f Makefile IBUF_EN=0 RAS_EN=0 rtl-all sim-all compare-all
 
 # ============================================================================
@@ -1674,6 +1679,7 @@ help:
 	@echo "  MUL_MC=0|1           1=2-stage pipelined (2 cyc); 0=1-cycle comb. (requires FAST_MUL=1)"
 	@echo "  FAST_DIV=0|1         Serial/combinatorial divider"
 	@echo "  FAST_SHIFT=0|1       Serial/barrel shifter"
+	@echo "  SCOREBOARD_EN=0|1    Non-blocking MUL_MC scoreboard enable"
 	@echo "  BP_EN=0|1            Branch predictor enable"
 	@echo "  RAS_EN=0|1           Return Address Stack enable (auto-off for RV32EC=1)"
 	@echo "  DRAM_SIZE=<bytes>    Data RAM size"

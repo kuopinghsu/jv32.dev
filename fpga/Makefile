@@ -14,16 +14,18 @@ FPGA_PART       ?= xcku5p-ffvb676-2-i
 JV32_CLK_HZ     ?= 50000000
 FLASH_PART      ?= mt25qu256-spi-x1_x2_x4
 USE_CJTAG       ?= 1
+SCOREBOARD_EN   ?= 1
 
 VIVADO_SCRIPT   := scripts/create_project.tcl
 
-.PHONY: help project synth impl clean
+.PHONY: help project synth impl impl-ila clean
 
 help:
 	@echo "FPGA Vivado flow targets:"
 	@echo "  make -C fpga project                # create project only"
 	@echo "  make -C fpga synth                  # create project + run synthesis"
 	@echo "  make -C fpga impl                   # create project + run impl + bitstream"
+	@echo "  make -C fpga impl-ila               # impl with ILA debug probes inserted"
 	@echo ""
 	@echo "Configurable variables:"
 	@echo "  VIVADO=<path-to-vivado>             (default: vivado)"
@@ -40,6 +42,7 @@ project:
 	TOP_MODULE=$(TOP_MODULE) \
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
+	SCOREBOARD_EN=$(SCOREBOARD_EN) \
 	USE_CJTAG=$(USE_CJTAG) \
 	RUN_SYNTH=0 RUN_IMPL=0 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
@@ -50,6 +53,7 @@ synth:
 	TOP_MODULE=$(TOP_MODULE) \
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
+	SCOREBOARD_EN=$(SCOREBOARD_EN) \
 	USE_CJTAG=$(USE_CJTAG) \
 	RUN_SYNTH=1 RUN_IMPL=0 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
@@ -61,7 +65,21 @@ impl:
 	FPGA_PART=$(FPGA_PART) \
 	JV32_CLK_HZ=$(JV32_CLK_HZ) \
 	FLASH_PART=$(FLASH_PART) \
+	SCOREBOARD_EN=$(SCOREBOARD_EN) \
 	USE_CJTAG=$(USE_CJTAG) \
+	RUN_SYNTH=1 RUN_IMPL=1 \
+	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
+
+impl-ila:
+	PROJ_NAME=$(PROJ_NAME) \
+	PROJ_DIR=$(PROJ_DIR) \
+	TOP_MODULE=$(TOP_MODULE) \
+	FPGA_PART=$(FPGA_PART) \
+	JV32_CLK_HZ=$(JV32_CLK_HZ) \
+	FLASH_PART=$(FLASH_PART) \
+	SCOREBOARD_EN=$(SCOREBOARD_EN) \
+	USE_CJTAG=$(USE_CJTAG) \
+	ILA_DEBUG=1 \
 	RUN_SYNTH=1 RUN_IMPL=1 \
 	$(VIVADO) $(VIVADO_FLAGS) -source $(VIVADO_SCRIPT)
 

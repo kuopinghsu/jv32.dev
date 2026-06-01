@@ -4,8 +4,8 @@
 # Brief  : Post-synthesis ILA insertion script for single-step debug.
 #
 # Sourced by create_project.tcl when ILA_DEBUG=1 (after synth_1 is open).
-# Calls implement_debug_core which reads all (* mark_debug = "true" *) nets
-# from the synthesized netlist, auto-creates the ILA, and connects probes.
+# Creates an ILA and connects an explicit list of debug nets from the
+# synthesized netlist.
 #
 # After programming the FPGA:
 #   1. Open Vivado Hardware Manager
@@ -20,80 +20,135 @@
 #                   post-trigger to observe whether trace_valid_r fires)
 # =============================================================================
 
-puts ">>> ILA Debug: inserting debug core from mark_debug nets ..."
+puts ">>> ILA Debug: inserting debug core from explicit net list ..."
 
 # ---------------------------------------------------------------------------
-# Create the ILA explicitly, then attach every MARK_DEBUG net in the design.
+# Truncate any stale ILA content that a previous run appended to the XDC.
+# Vivado's save_constraints appends debug core definitions to source XDC files;
+# those entries cause Chipscope/Common errors when the file is re-read without
+# an ILA present.  Strip everything after the last purely-timing constraint.
+# ---------------------------------------------------------------------------
+set xdc_files [get_files -quiet -of_objects [get_filesets constrs_1] "*constraints_cjtag.xdc"]
+foreach xdc_f $xdc_files {
+    if {[catch {
+        set fh [open $xdc_f r]
+        set lines [split [read $fh] "\n"]
+        close $fh
+        # Find the last line that belongs to the timing-only section:
+        # keep all lines up to (and including) the last line that is either a
+        # comment, blank, or a pure timing constraint (no debug_core/debug_port).
+        set keep_until -1
+        set idx 0
+        foreach ln $lines {
+            set trimmed [string trim $ln]
+            if {$trimmed eq "" ||
+                [string match "#*" $trimmed] ||
+                ([string match "set_*" $trimmed] && ![string match "*debug*" $trimmed]) ||
+                [string match "create_clock*" $trimmed] ||
+                [string match "set_clock*" $trimmed] ||
+                [string match "set_false_path*" $trimmed] ||
+                [string match "set_output_delay*" $trimmed] ||
+                [string match "set_input_delay*" $trimmed]} {
+                set keep_until $idx
+            }
+            incr idx
+        }
+        if {$keep_until >= 0} {
+            set clean_lines [lrange $lines 0 $keep_until]
+            set fh [open $xdc_f w]
+            puts $fh [join $clean_lines "\n"]
+            close $fh
+            puts ">>> NOTE: truncated stale ILA content from [file tail $xdc_f] (kept [expr {$keep_until + 1}] lines)"
+        }
+    } err]} {
+        puts ">>> WARNING: could not truncate $xdc_f: $err"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Create the ILA explicitly, then attach debug nets from a curated list.
 # implement_debug_core only implements debug cores that already exist, so the
 # core must be created and wired up before that step.
 # ---------------------------------------------------------------------------
 set ila_name "ila_0"
 create_debug_core $ila_name ila
 
-set marked_nets [get_nets -quiet -hier -filter {MARK_DEBUG == 1}]
-set marked_pins [get_pins -quiet -hier -filter {MARK_DEBUG == 1}]
+# Curated debug signal list with alternate hierarchy patterns.
+# The first matching pattern per logical signal is used.
+set debug_signal_specs [list \
+    [list "halt_req_i"            [list "*u_core/halt_req_i" "*u_jv32/u_core/halt_req_i" "*halt_req_i*"]] \
+    [list "resume_req_i"          [list "*u_core/resume_req_i" "*u_jv32/u_core/resume_req_i" "*resume_req_i*"]] \
+    [list "dbg_pc_we_i"           [list "*u_core/dbg_pc_we_i" "*u_jv32/u_core/dbg_pc_we_i" "*dbg_pc_we_i*"]] \
+    [list "dbg_singlestep_i"      [list "*u_core/dbg_singlestep_i" "*u_jv32/u_core/dbg_singlestep_i" "*dbg_singlestep_i*"]] \
+    [list "dbg_halted_r"          [list "*u_core/dbg_halted_r*" "*u_jv32/u_core/dbg_halted_r*" "*dbg_halted_r*"]] \
+    [list "dbg_resumeack_r"       [list "*u_core/dbg_resumeack_r*" "*u_jv32/u_core/dbg_resumeack_r*" "*dbg_resumeack_r*"]] \
+    [list "dbg_step_pending_r"    [list "*u_core/dbg_step_pending_r*" "*u_jv32/u_core/dbg_step_pending_r*" "*dbg_step_pending_r*"]] \
+    [list "dbg_step_served_r"     [list "*u_core/dbg_step_served_r*" "*u_jv32/u_core/dbg_step_served_r*" "*dbg_step_served_r*"]] \
+    [list "dbg_step_fire_r"       [list "*u_core/dbg_step_fire_r*" "*u_jv32/u_core/dbg_step_fire_r*" "*dbg_step_fire_r*"]] \
+    [list "dbg_resume_flush"      [list "*u_core/dbg_resume_flush*" "*u_jv32/u_core/dbg_resume_flush*" "*dbg_resume_flush*"]] \
+    [list "trace_valid_r"         [list "*u_core/trace_valid_r*" "*u_jv32/u_core/trace_valid_r*" "*trace_valid_r*"]] \
+    [list "trace_retire"          [list "*u_core/trace_retire*" "*u_jv32/u_core/trace_retire*" "*trace_retire*"]] \
+    [list "cmd_busy"              [list "*u_dtm/cmd_busy*" "*u_jtag_tap/u_dtm/cmd_busy*" "*cmd_busy*"]] \
+    [list "dcsr_reg"              [list "*u_dtm/dcsr_reg*" "*u_jtag_tap/u_dtm/dcsr_reg*" "*dcsr_reg*"]] \
+    [list "halt_req_sync_chain"   [list "*u_dtm/halt_req_sync_chain*" "*u_jtag_tap/u_dtm/halt_req_sync_chain*" "*halt_req_sync_chain*"]] \
+    [list "resume_req_sync_chain" [list "*u_dtm/resume_req_sync_chain*" "*u_jtag_tap/u_dtm/resume_req_sync_chain*" "*resume_req_sync_chain*"]] \
+]
 
-set debug_nets $marked_nets
-if {[llength $debug_nets] == 0 && [llength $marked_pins] > 0} {
-    # Some synthesized netlists keep MARK_DEBUG on pins rather than nets.
-    set debug_nets [get_nets -quiet -of_objects $marked_pins]
-    if {[llength $debug_nets] > 0} {
-        puts ">>> NOTE: No MARK_DEBUG nets found directly; recovered [llength $debug_nets] debug nets from MARK_DEBUG pins."
-    }
-}
+set debug_nets [list]
+foreach sig_spec $debug_signal_specs {
+    set sig_name [lindex $sig_spec 0]
+    set patterns [lindex $sig_spec 1]
+    set sig_matches [list]
 
-if {[llength $debug_nets] == 0} {
-    # Final fallback: discover likely debug/trace nets by broad name classes
-    # when MARK_DEBUG metadata is unavailable in the synthesized checkpoint.
-    # This keeps probe pickup generic as new debug signals are added.
-    set fallback_patterns [list \
-        "*dbg_*" \
-        "*trace_*" \
-        "*resume_*" \
-    ]
+    foreach spec $patterns {
+        set matches [get_nets -quiet -hier $spec]
 
-    foreach pat $fallback_patterns {
-        set candidate_nets [get_nets -quiet -hier $pat]
-        foreach n $candidate_nets {
-            # Skip Vivado-generated debug-insertion artifacts and known
-            # non-routable aliases that frequently cause Chipscope warnings.
-            if {[regexp {(^|/)ila_[0-9]+_} $n]} {
-                continue
+        # Fallback: if net names were rewritten, recover via matching pins.
+        if {[llength $matches] == 0} {
+            set pin_matches [get_pins -quiet -hier $spec]
+            if {[llength $pin_matches] > 0} {
+                set matches [get_nets -quiet -of_objects $pin_matches]
             }
-            if {[string match "ila_*" $n]} {
-                continue
-            }
-            if {[string match "*/ila_*" $n]} {
-                continue
-            }
-            if {[string match "*dbg_hub*" $n]} {
-                continue
-            }
-            if {$n eq "u_bd/clk_50m"} {
-                continue
-            }
-            lappend debug_nets $n
+        }
+
+        if {[llength $matches] > 0} {
+            set sig_matches $matches
+            break
         }
     }
 
-    # Keep fallback generic but bounded so automatic name matching cannot
-    # exceed ILA probe-port limits on large designs.
-    set fallback_port_limit 900
-    set debug_nets [lsort -dictionary -unique $debug_nets]
-    if {[llength $debug_nets] > $fallback_port_limit} {
-        set debug_nets [lrange $debug_nets 0 [expr {$fallback_port_limit - 1}]]
-        puts ">>> WARNING: fallback debug net discovery exceeded ${fallback_port_limit}; truncating for stable ILA insertion."
+    if {[llength $sig_matches] == 0} {
+        puts ">>> WARNING: debug signal '$sig_name' matched no nets."
+        continue
     }
 
-    if {[llength $debug_nets] > 0} {
-        puts ">>> NOTE: MARK_DEBUG metadata unavailable; using [llength $debug_nets] fallback debug nets matched by name."
+    foreach n $sig_matches {
+        # Skip Vivado-generated debug artifacts and known non-routable aliases.
+        if {[regexp {(^|/)ila_[0-9]+_} $n]} {
+            continue
+        }
+        if {[string match "ila_*" $n]} {
+            continue
+        }
+        if {[string match "*/ila_*" $n]} {
+            continue
+        }
+        if {[string match "*dbg_hub*" $n]} {
+            continue
+        }
+        if {$n eq "u_bd/clk_50m"} {
+            continue
+        }
+        lappend debug_nets $n
     }
 }
 
-set debug_nets [lsort -dictionary $debug_nets]
+set debug_nets [lsort -dictionary -unique $debug_nets]
 if {[llength $debug_nets] == 0} {
-    error ">>> No MARK_DEBUG nets or pin-driven nets were found in the synthesized design; cannot create ILA."
+    error ">>> No debug nets matched the explicit ILA debug list; cannot create ILA."
 }
+
+puts ">>> NOTE: explicit debug net list matched [llength $debug_nets] nets."
 
 # Build clock candidates from internal clock-wizard output first, then aliases.
 # Top-level alias u_bd/clk_50m is often not routable for debug hub insertion.
@@ -167,7 +222,7 @@ foreach net_obj $debug_nets {
     }
 
     if {[llength $net_obj] == 0} {
-        error ">>> Encountered an empty MARK_DEBUG net object while building ILA probes."
+        error ">>> Encountered an empty debug net object while building ILA probes."
     }
 
     set net_name [get_property NAME $net_obj]
@@ -187,23 +242,45 @@ foreach net_obj $debug_nets {
 
         set seg_name [get_property NAME $seg_net]
 
-        # Vivado may return packed sub-ranges (e.g. foo[3:2]) from -segments.
-        # Size each probe to the segment width to avoid vacant-channel errors.
+        # get_nets -segments traverses hierarchy and may return auto-generated
+        # ILA bookkeeping aliases (ila_0_*, ila_1_*, …) even when the parent
+        # net_obj was already filtered.  connect_debug_port silently rejects
+        # those with Chipscope 16-3, leaving probe channels vacant (→ 16-213).
+        # Skip them here using the same regex used when building debug_nets.
+        if {[regexp {(^|/)ila_[0-9]+_} $seg_name]} {
+            continue
+        }
+
+        # Size this probe port from the name only.  The outer get_nets -segments
+        # call splits vectors; do NOT call get_nets -segments a second time here
+        # (that returns hierarchy aliases of the same bit, not additional bits,
+        # inflating PORT_WIDTH and producing vacant channels).
         set seg_width 1
         if {[regexp {\[(\d+):(\d+)\]$} $seg_name -> msb lsb]} {
             set seg_width [expr {abs($msb - $lsb) + 1}]
-        } elseif {[regexp {\[(\d+)\]$} $seg_name]} {
-            set seg_width 1
         }
 
-        set probe_obj [create_debug_port $ila_name probe]
+        # probe0 is auto-created by create_debug_core; reuse it for the first
+        # segment to avoid leaving it unconnected (Chipscope 16-213).
+        if {$probe_idx == 0} {
+            set probe_obj [get_debug_ports ${ila_name}/probe0]
+        } else {
+            set probe_obj [create_debug_port $ila_name probe]
+        }
         set_property PORT_WIDTH $seg_width $probe_obj
 
-        if {[catch {connect_debug_port $probe_obj $seg_net} conn_err]} {
-            error ">>> Failed to connect net '$net_name' segment '$seg_name' (width=$seg_width) to $probe_obj: $conn_err"
+        if {[catch {connect_debug_port $probe_obj [list $seg_net]} conn_err]} {
+            puts ">>> WARNING: skipping segment '$seg_name': $conn_err"
+            if {$probe_idx > 0} {
+                catch {delete_debug_port $probe_obj}
+            }
+            continue
         }
 
         incr probe_idx
+        # One probe per logical net is sufficient; stop iterating hierarchy
+        # aliases of the same physical bit to avoid duplicate probe ports.
+        break
     }
 
     if {$probe_truncated} {
@@ -217,18 +294,9 @@ if {$probe_truncated} {
 
 puts ">>> ILA probe channels created: $probe_idx"
 
-# We already wired probes manually. Clear MARK_DEBUG globally so Vivado does
-# not attempt any extra auto-attachment during implement_debug_core.
-if {[llength $marked_nets] > 0} {
-    catch {set_property MARK_DEBUG false $marked_nets}
-}
-
-if {[llength $marked_pins] > 0} {
-    catch {set_property MARK_DEBUG false $marked_pins}
-}
-
-# Vivado project flow requires saving debug constraint edits before
-# implement_debug_core can modify the synthesized netlist.
+# save_constraints is required by Vivado before implement_debug_core.
+# The stale-content problem is handled above by truncating the XDC at the
+# start of this script, so save_constraints only appends fresh probe data.
 catch {save_constraints -force}
 
 if {[catch {implement_debug_core} impl_err]} {
@@ -238,6 +306,13 @@ if {[catch {implement_debug_core} impl_err]} {
 # Some Vivado runs leave dbg_hub/clk disconnected even after implement_debug_core.
 # Reconnect and verify explicitly against the same net as the ILA.
 set dbg_hubs [get_debug_cores -quiet dbg_hub*]
+set ila_clk_port [get_debug_ports -quiet ${ila_name}/clk]
+set ila_clk_nets [get_nets -quiet -of_objects $ila_clk_port]
+set hub_clk_fallback ""
+if {[llength $ila_clk_nets] > 0} {
+    set hub_clk_fallback [lindex $ila_clk_nets 0]
+}
+
 foreach hub $dbg_hubs {
     set hub_clk_port [get_debug_ports -quiet ${hub}/clk]
     if {[llength $hub_clk_port] == 0} {
@@ -251,7 +326,22 @@ foreach hub $dbg_hubs {
 
     set hub_clk_nets [get_nets -quiet -of_objects $hub_clk_port]
     if {[llength $hub_clk_nets] == 0} {
-        error ">>> ${hub}/clk remains unconnected after reconnect attempt."
+        # Fallback: reuse the resolved ILA clock net object/name if available.
+        if {$hub_clk_fallback ne ""} {
+            catch {disconnect_debug_port $hub_clk_port}
+            if {![catch {connect_debug_port $hub_clk_port $hub_clk_fallback} hub_fb_err]} {
+                set hub_clk_nets [get_nets -quiet -of_objects $hub_clk_port]
+            } else {
+                puts ">>> WARNING: ${hub}/clk fallback reconnect to '$hub_clk_fallback' failed: $hub_fb_err"
+            }
+        }
+    }
+
+    if {[llength $hub_clk_nets] == 0} {
+        # Some Vivado versions do not reliably report debug-port net objects at
+        # this stage; continue and let downstream implementation validate.
+        puts ">>> WARNING: ${hub}/clk net is not introspectable after reconnect; continuing."
+        continue
     }
     puts ">>> NOTE: ${hub}/clk connected to '[lindex $hub_clk_nets 0]'."
 }
@@ -294,16 +384,10 @@ foreach ila $ila_cores {
 }
 
 # ---------------------------------------------------------------------------
-# Write probe descriptions (.ltx) for use with Hardware Manager.
-# This file maps probe indices to net names so the ILA waveform is readable.
+# Probe description (.ltx) generation is deferred to post-implementation.
+# Vivado may not provide stable debug UUIDs at synthesis-time.
 # ---------------------------------------------------------------------------
-set ltx_path [file normalize "[file dirname [info script]]/../../fpga/build/debug_probes.ltx"]
-if {[catch {write_debug_probes -force $ltx_path} ltx_err]} {
-    puts ">>> WARNING: write_debug_probes deferred: $ltx_err"
-    puts ">>>          Vivado can regenerate debug_probes.ltx after implementation."
-} else {
-    puts ">>> Debug probes written to: $ltx_path"
-}
+puts ">>> NOTE: LTX generation deferred until after implementation (UUIDs may be unavailable at synth stage)."
 
 # ---------------------------------------------------------------------------
 # Save updated checkpoint (netlist + debug core) so impl_1 picks it up.

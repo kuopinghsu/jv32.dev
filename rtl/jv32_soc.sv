@@ -64,6 +64,7 @@ module jv32_soc #(
     parameter bit                 MUL_MC          = 1'b1,
     parameter bit                 FAST_DIV        = 1'b0,
     parameter bit                 FAST_SHIFT      = 1'b1,
+    parameter bit                 SCOREBOARD_EN   = 1'b1,        // 1=enable non-blocking MUL_MC scoreboard slot
     parameter bit                 BP_EN           = 1'b1,
     parameter bit                 RAS_EN          = 1'b1,        // 1=RAS enabled; 0=JALR always 1-cycle
     parameter bit                 IBUF_EN         = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
@@ -830,23 +831,24 @@ module jv32_soc #(
     // JV32 Core + TCM
     // =====================================================================
     jv32_top #(
-        .RV32E_EN  (RV32E_EN),
-        .RV32M_EN  (RV32M_EN),
-        .AMO_EN    (AMO_EN),
-        .FAST_MUL  (FAST_MUL),
-        .MUL_MC    (MUL_MC),
-        .FAST_DIV  (FAST_DIV),
-        .FAST_SHIFT(FAST_SHIFT),
-        .BP_EN     (BP_EN),
-        .RAS_EN    (RAS_EN),
-        .IBUF_EN   (IBUF_EN),
-        .RV32B_EN  (RV32B_EN),
-        .ZCMP_EN   (ZCMP_EN),
-        .N_TRIGGERS(N_TRIGGERS),
-        .IRAM_SIZE (IRAM_SIZE),
-        .DRAM_SIZE (DRAM_SIZE),
-        .BOOT_ADDR (BOOT_ADDR),
-        .DRAM_BASE (DRAM_BASE)
+        .RV32E_EN     (RV32E_EN),
+        .RV32M_EN     (RV32M_EN),
+        .AMO_EN       (AMO_EN),
+        .FAST_MUL     (FAST_MUL),
+        .MUL_MC       (MUL_MC),
+        .FAST_DIV     (FAST_DIV),
+        .FAST_SHIFT   (FAST_SHIFT),
+        .SCOREBOARD_EN(SCOREBOARD_EN),
+        .BP_EN        (BP_EN),
+        .RAS_EN       (RAS_EN),
+        .IBUF_EN      (IBUF_EN),
+        .RV32B_EN     (RV32B_EN),
+        .ZCMP_EN      (ZCMP_EN),
+        .N_TRIGGERS   (N_TRIGGERS),
+        .IRAM_SIZE    (IRAM_SIZE),
+        .DRAM_SIZE    (DRAM_SIZE),
+        .BOOT_ADDR    (BOOT_ADDR),
+        .DRAM_BASE    (DRAM_BASE)
     ) u_jv32 (
         .clk  (clk),
         .rst_n(soc_rst_n),

@@ -57,7 +57,21 @@ module jv32_alu #(
     input  logic           operand_stall,
     input  logic           result_hold,
     output logic    [31:0] result,
-    output logic           ready
+    output logic           ready,
+    output logic           mul_mc_valid,
+    output logic    [31:0] mul_mc_lo,
+    output logic    [31:0] mul_mc_h,
+    output logic    [31:0] mul_mc_hsu,
+    output logic    [31:0] mul_mc_hu,
+    output logic           div_mc_valid,
+    output logic    [31:0] div_mc_div,
+    output logic    [31:0] div_mc_divu,
+    output logic    [31:0] div_mc_rem,
+    output logic    [31:0] div_mc_remu,
+    output logic           shift_mc_valid,
+    output logic    [31:0] shift_mc_sll,
+    output logic    [31:0] shift_mc_srl,
+    output logic    [31:0] shift_mc_sra
 );
     import jv32_pkg::*;
 
@@ -74,12 +88,16 @@ module jv32_alu #(
             // it is zero for SRL (unsigned fill), so no extra mux is needed.
             logic [31:0] result_sr;
             logic [31:0] fill_mask;
-            assign result_sr   = operand_a >> operand_b[4:0];
-            assign fill_mask   = ~(32'hFFFF_FFFF >> operand_b[4:0]) & {32{operand_a[31]}};
-            assign result_sll  = operand_a << operand_b[4:0];
-            assign result_srl  = result_sr;
-            assign result_sra  = result_sr | fill_mask;
-            assign shift_ready = 1'b1;
+            assign result_sr      = operand_a >> operand_b[4:0];
+            assign fill_mask      = ~(32'hFFFF_FFFF >> operand_b[4:0]) & {32{operand_a[31]}};
+            assign result_sll     = operand_a << operand_b[4:0];
+            assign result_srl     = result_sr;
+            assign result_sra     = result_sr | fill_mask;
+            assign shift_ready    = 1'b1;
+            assign shift_mc_valid = 1'b0;
+            assign shift_mc_sll   = 32'h0;
+            assign shift_mc_srl   = 32'h0;
+            assign shift_mc_sra   = 32'h0;
         end
         else begin : gen_serial_shift
             logic [4:0] sh_count, sh_total;
@@ -94,9 +112,18 @@ module jv32_alu #(
             assign is_shift_op = (alu_op == ALU_SLL || alu_op == ALU_SRL || alu_op == ALU_SRA);
 
             logic [31:0] sh_next_val;
-            assign sh_next_val = sh_left ? {sh_val[30:0], 1'b0} :
-                                 sh_arith ? {sh_sign_fill[31], sh_val[31:1]} :
-                                            {1'b0, sh_val[31:1]};
+            logic [31:0] sh_next_val_1;
+            logic [31:0] sh_next_val_2;
+            logic [ 4:0] sh_step;
+
+            assign sh_step = ((sh_total - sh_count) >= 5'd2) ? 5'd2 : 5'd1;
+            assign sh_next_val_1 = sh_left ? {sh_val[30:0], 1'b0} :
+                                   sh_arith ? {sh_sign_fill[31], sh_val[31:1]} :
+                                              {1'b0, sh_val[31:1]};
+            assign sh_next_val_2 = sh_left ? {sh_next_val_1[30:0], 1'b0} :
+                                   sh_arith ? {sh_sign_fill[31], sh_next_val_1[31:1]} :
+                                              {1'b0, sh_next_val_1[31:1]};
+            assign sh_next_val = (sh_step == 5'd2) ? sh_next_val_2 : sh_next_val_1;
 
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
@@ -131,25 +158,29 @@ module jv32_alu #(
                     end
                     else if (sh_active) begin
                         sh_val <= sh_next_val;
-                        if (sh_count + 1 >= sh_total) begin
+                        if (sh_count + sh_step >= sh_total) begin
                             sh_result <= sh_next_val;
                             sh_valid  <= 1'b1;
                             sh_active <= 1'b0;
                         end
-                        else sh_count <= sh_count + 1;
+                        else sh_count <= sh_count + sh_step;
                     end
                 end
             end
 
-            assign result_sll  = sh_valid ? sh_result : sh_val;
-            assign result_srl  = sh_valid ? sh_result : sh_val;
-            assign result_sra  = sh_valid ? sh_result : sh_val;
+            assign result_sll     = sh_valid ? sh_result : sh_val;
+            assign result_srl     = sh_valid ? sh_result : sh_val;
+            assign result_sra     = sh_valid ? sh_result : sh_val;
 
             // shift_ready is only asserted once sh_valid is set.
             // The operand_b==0 shortcut was removed: it caused shift_ready to
             // fire one cycle early (before the FF latches sh_result), producing
             // stale sh_val as the result for shift-by-0 operations.
-            assign shift_ready = !is_shift_op || (!sh_active && (operand_stall || sh_valid));
+            assign shift_ready    = !is_shift_op || (!sh_active && (operand_stall || sh_valid));
+            assign shift_mc_valid = sh_valid;
+            assign shift_mc_sll   = sh_result;
+            assign shift_mc_srl   = sh_result;
+            assign shift_mc_sra   = sh_result;
         end
     endgenerate
 
@@ -166,6 +197,11 @@ module jv32_alu #(
             assign result_mulhsu_hi = 32'h0;
             assign result_mulhu_hi  = 32'h0;
             assign mul_ready        = 1'b1;
+            assign mul_mc_valid     = 1'b0;
+            assign mul_mc_lo        = 32'h0;
+            assign mul_mc_h         = 32'h0;
+            assign mul_mc_hsu       = 32'h0;
+            assign mul_mc_hu        = 32'h0;
         end
         else if (FAST_MUL == 1 && MUL_MC == 1) begin : gen_fast_mul_pipe
             // ----------------------------------------------------------------
@@ -186,8 +222,75 @@ module jv32_alu #(
             //                           op_b_r[31] x op_a_r x 2^32   (b<0)
             //   For MULHSU only the first correction applies.
             // ----------------------------------------------------------------
-            logic is_mul_op;
+            logic is_mul_op, is_mul_pipe_op;
             assign is_mul_op = (alu_op == ALU_MUL || alu_op == ALU_MULH || alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
+            assign is_mul_pipe_op = (alu_op == ALU_MULH || alu_op == ALU_MULHSU || alu_op == ALU_MULHU);
+
+            // Common-case shortcuts: avoid the stage-1 pipeline bubble for
+            // zero/one operands when the result can be derived directly.
+            logic        mul_shortcut_hit;
+            logic [31:0] mul_shortcut_lo;
+            logic [31:0] mul_shortcut_h;
+            logic [31:0] mul_shortcut_hsu;
+            logic [31:0] mul_shortcut_hu;
+
+            always_comb begin
+                mul_shortcut_hit = 1'b0;
+                mul_shortcut_lo  = 32'd0;
+                mul_shortcut_h   = 32'd0;
+                mul_shortcut_hsu = 32'd0;
+                mul_shortcut_hu  = 32'd0;
+
+                if (is_mul_op) begin
+                    // x * 0 = 0 for all MUL* variants.
+                    if (operand_a == 32'd0 || operand_b == 32'd0) begin
+                        mul_shortcut_hit = 1'b1;
+                    end
+                    else begin
+                        case (alu_op)
+                            ALU_MUL: begin
+                                if (operand_a == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_lo  = operand_b;
+                                end
+                                else if (operand_b == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_lo  = operand_a;
+                                end
+                            end
+                            ALU_MULH: begin
+                                if (operand_a == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_h   = {32{operand_b[31]}};
+                                end
+                                else if (operand_b == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_h   = {32{operand_a[31]}};
+                                end
+                            end
+                            ALU_MULHSU: begin
+                                if (operand_a == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_hsu = 32'd0;
+                                end
+                                else if (operand_b == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_hsu = {32{operand_a[31]}};
+                                end
+                            end
+                            ALU_MULHU: begin
+                                if (operand_a == 32'd1 || operand_b == 32'd1) begin
+                                    mul_shortcut_hit = 1'b1;
+                                    mul_shortcut_hu  = 32'd0;
+                                end
+                            end
+                            default: begin
+                                // no-op
+                            end
+                        endcase
+                    end
+                end
+            end
 
             // Stage-1 combinatorial partial products (unsigned 16x16 -> 32-bit)
             // (* use_dsp = "no" *): keep these in fabric; the conditional enable
@@ -216,7 +319,7 @@ module jv32_alu #(
                 end
                 else begin
                     if (s1_valid && !result_hold) s1_valid <= 1'b0;  // result consumed
-                    else if (is_mul_op && !s1_valid && !operand_stall) begin
+                    else if (is_mul_pipe_op && !mul_shortcut_hit && !s1_valid && !operand_stall) begin
                         pp_ll_r  <= pp_ll;
                         pp_lh_r  <= pp_lh;
                         pp_hl_r  <= pp_hl;
@@ -228,7 +331,9 @@ module jv32_alu #(
                 end
             end
 
-            assign mul_ready = !is_mul_op || operand_stall || s1_valid;
+            // ALU_MUL uses a direct 1-cycle low-32 product path in this mode;
+            // high-half MUL variants remain 2-cycle through the pipeline.
+            assign mul_ready = !is_mul_op || (alu_op == ALU_MUL) || operand_stall || s1_valid || mul_shortcut_hit;
 
             // Stage-2 accumulation:
             //   unsigned_product = pp_hh*2^32 + (pp_hl+pp_lh)*2^16 + pp_ll
@@ -237,13 +342,21 @@ module jv32_alu #(
 
             // Sign-correction terms (32-bit, applied to upper half of result)
             logic [31:0] corr_a, corr_b;
-            assign corr_a           = op_a_r[31] ? op_b_r : 32'b0;
-            assign corr_b           = op_b_r[31] ? op_a_r : 32'b0;
+            assign corr_a = op_a_r[31] ? op_b_r : 32'b0;
+            assign corr_b = op_b_r[31] ? op_a_r : 32'b0;
 
-            assign result_mul_lo    = acc[31:0];
-            assign result_mulhu_hi  = acc[63:32];
-            assign result_mulh_hi   = acc[63:32] - corr_a - corr_b;
-            assign result_mulhsu_hi = acc[63:32] - corr_a;
+            assign result_mul_lo    = (alu_op == ALU_MUL) ? (operand_a * operand_b)
+                                                           : (mul_shortcut_hit ? mul_shortcut_lo : acc[31:0]);
+            assign result_mulhu_hi = mul_shortcut_hit ? mul_shortcut_hu : acc[63:32];
+            assign result_mulh_hi = mul_shortcut_hit ? mul_shortcut_h : (acc[63:32] - corr_a - corr_b);
+            assign result_mulhsu_hi = mul_shortcut_hit ? mul_shortcut_hsu : (acc[63:32] - corr_a);
+
+            // Decoupled completion interface used by non-blocking core issue.
+            assign mul_mc_valid = s1_valid;
+            assign mul_mc_lo = acc[31:0];
+            assign mul_mc_hu = acc[63:32];
+            assign mul_mc_h = acc[63:32] - corr_a - corr_b;
+            assign mul_mc_hsu = acc[63:32] - corr_a;
         end
         else if (FAST_MUL == 1 && MUL_MC == 0) begin : gen_fast_mul_1c
             // ----------------------------------------------------------------
@@ -258,6 +371,11 @@ module jv32_alu #(
             assign result_mulhsu_hi = result_mulsu[63:32];
             assign result_mulhu_hi = result_mulu[63:32];
             assign mul_ready = 1'b1;
+            assign mul_mc_valid = 1'b0;
+            assign mul_mc_lo = 32'h0;
+            assign mul_mc_h = 32'h0;
+            assign mul_mc_hsu = 32'h0;
+            assign mul_mc_hu = 32'h0;
             logic _unused_mul_1c;
             assign _unused_mul_1c = &{1'b0, result_mulu[31:0], result_mulsu[31:0]};
         end
@@ -336,6 +454,11 @@ module jv32_alu #(
             assign result_mulhsu_hi = use_mul_result ? mul_result[63:32] : 32'd0;
             assign result_mulhu_hi  = use_mul_result ? mul_result[63:32] : 32'd0;
             assign mul_ready        = !is_mul_op || (!mul_active && (operand_stall || clz_b_mul == 6'd32 || mul_valid));
+            assign mul_mc_valid     = mul_valid;
+            assign mul_mc_lo        = mul_result[31:0];
+            assign mul_mc_h         = mul_result[63:32];
+            assign mul_mc_hsu       = mul_result[63:32];
+            assign mul_mc_hu        = mul_result[63:32];
         end
     endgenerate
 
@@ -347,11 +470,16 @@ module jv32_alu #(
 
     generate
         if (!RV32M_EN) begin : gen_no_div
-            assign result_div  = 32'h0;
-            assign result_divu = 32'h0;
-            assign result_rem  = 32'h0;
-            assign result_remu = 32'h0;
-            assign div_ready   = 1'b1;
+            assign result_div   = 32'h0;
+            assign result_divu  = 32'h0;
+            assign result_rem   = 32'h0;
+            assign result_remu  = 32'h0;
+            assign div_ready    = 1'b1;
+            assign div_mc_valid = 1'b0;
+            assign div_mc_div   = 32'h0;
+            assign div_mc_divu  = 32'h0;
+            assign div_mc_rem   = 32'h0;
+            assign div_mc_remu  = 32'h0;
         end
         else if (FAST_DIV == 1) begin : gen_fast_div
             assign result_div  = (operand_b==32'h0) ? 32'hffffffff :
@@ -371,6 +499,11 @@ module jv32_alu #(
                 $unsigned(operand_a) % $unsigned(operand_b)
             );
             assign div_ready = 1'b1;
+            assign div_mc_valid = 1'b0;
+            assign div_mc_div = 32'h0;
+            assign div_mc_divu = 32'h0;
+            assign div_mc_rem = 32'h0;
+            assign div_mc_remu = 32'h0;
         end
         else begin : gen_serial_div
             logic [5:0] div_count, div_total;
@@ -433,23 +566,44 @@ module jv32_alu #(
 
                     if (is_div_op && !div_active && !div_valid && !operand_stall) begin
                         if (!div_by_zero && !signed_ovf) begin
-                            div_total          <= 6'd32 - clz_a;
-                            div_count          <= 6'd0;
-                            div_q              <= abs_a << clz_a;
-                            div_r              <= 32'd0;
-                            div_abs_b          <= abs_b;
-                            div_neg_q          <= is_signed_div && (operand_a[31] ^ operand_b[31]);
-                            div_neg_r          <= is_signed_div && operand_a[31];
-                            div_by_zero_lat    <= div_by_zero;
-                            div_signed_ovf_lat <= signed_ovf;
-                            div_operand_a_lat  <= operand_a;
-                            if (clz_a == 6'd32) begin
-                                div_result_q <= 32'd0;
+                            // Early-out fast paths for the iterative divider.
+                            // These avoid entering the shift/subtract loop when
+                            // the quotient/remainder are known immediately.
+                            if (abs_b == 32'd1) begin
+                                div_by_zero_lat <= 1'b0;
+                                div_signed_ovf_lat <= 1'b0;
+                                div_operand_a_lat <= operand_a;
+                                div_result_q <= is_signed_div && (operand_a[31] ^ operand_b[31]) ? (~abs_a + 1) : abs_a;
                                 div_result_r <= 32'd0;
-                                div_valid    <= 1'b1;
+                                div_valid <= 1'b1;
+                            end
+                            else if (abs_a < abs_b) begin
+                                div_by_zero_lat    <= 1'b0;
+                                div_signed_ovf_lat <= 1'b0;
+                                div_operand_a_lat  <= operand_a;
+                                div_result_q       <= 32'd0;
+                                div_result_r       <= operand_a;
+                                div_valid          <= 1'b1;
                             end
                             else begin
-                                div_active <= 1'b1;
+                                div_total          <= 6'd32 - clz_a;
+                                div_count          <= 6'd0;
+                                div_q              <= abs_a << clz_a;
+                                div_r              <= 32'd0;
+                                div_abs_b          <= abs_b;
+                                div_neg_q          <= is_signed_div && (operand_a[31] ^ operand_b[31]);
+                                div_neg_r          <= is_signed_div && operand_a[31];
+                                div_by_zero_lat    <= div_by_zero;
+                                div_signed_ovf_lat <= signed_ovf;
+                                div_operand_a_lat  <= operand_a;
+                                if (clz_a == 6'd32) begin
+                                    div_result_q <= 32'd0;
+                                    div_result_r <= 32'd0;
+                                    div_valid    <= 1'b1;
+                                end
+                                else begin
+                                    div_active <= 1'b1;
+                                end
                             end
                         end
                     end
@@ -484,6 +638,13 @@ module jv32_alu #(
             assign result_rem = eff_by_zero ? eff_operand_a : eff_signed_ovf ? 32'h0 : div_result_r;
             assign result_remu = eff_by_zero ? eff_operand_a : div_result_r;
             assign div_ready = !is_div_op || (!div_active && (operand_stall || div_by_zero || signed_ovf || div_valid));
+
+            // Decoupled completion interface used by non-blocking core issue.
+            assign div_mc_valid = div_valid;
+            assign div_mc_div = result_div;
+            assign div_mc_divu = result_divu;
+            assign div_mc_rem = result_rem;
+            assign div_mc_remu = result_remu;
         end
     endgenerate
 

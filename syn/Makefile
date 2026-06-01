@@ -344,8 +344,8 @@ synth: check $(BUILD_DIR)
 	    echo "ERROR: macro placement file not found: $(MACRO_PLACEMENT_SRC)"; \
 	    exit 1; \
 	fi
-	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
-	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(BP_EN) $(IBUF_EN); \
+	@{ printf 'SYNTH_PARAMETERS:\n  - IRAM_SIZE=%d\n  - DRAM_SIZE=%d\n  - RV32E_EN=%d\n  - RV32M_EN=%d\n  - JTAG_EN=%d\n  - AMO_EN=%d\n  - FAST_MUL=%d\n  - MUL_MC=%d\n  - FAST_DIV=%d\n  - FAST_SHIFT=%d\n  - SCOREBOARD_EN=%d\n  - BP_EN=%d\n  - IBUF_EN=%d\n' \
+	    $(IRAM_SIZE) $(DRAM_SIZE) $(RV32E_EN) $(RV32M_EN) $(JTAG_EN) $(AMO_EN) $(FAST_MUL) $(MUL_MC) $(FAST_DIV) $(FAST_SHIFT) $(SCOREBOARD_EN) $(BP_EN) $(IBUF_EN); \
 	  printf 'VERILOG_DEFINES:\n  - SYNTHESIS\n  - NO_ASSERTION\n  - GENERIC_SRAM\n'; \
 	  } > $(TCM_PARAMS_YAML)
 	@# OpenLane 2 resolves dir:: relative to the LAST config file passed.
@@ -538,6 +538,7 @@ gate-count: check $(BUILD_DIR)
 	    export MUL_MC="$(MUL_MC)"; \
 	    export FAST_DIV="$(FAST_DIV)"; \
 	    export FAST_SHIFT="$(FAST_SHIFT)"; \
+	    export SCOREBOARD_EN="$(SCOREBOARD_EN)"; \
 	    export BP_EN="$(BP_EN)"; \
 	    export IBUF_EN="$(IBUF_EN)"; \
 	    export CG_EN="$(CG_EN)"; \

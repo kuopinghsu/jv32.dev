@@ -16,6 +16,7 @@
 #   IRAM_SIZE    — IRAM bytes (e.g. 16384)
 #   DRAM_SIZE    — DRAM bytes (e.g. 16384)
 #   FAST_MUL, MUL_MC, FAST_DIV, FAST_SHIFT, BP_EN  — pipeline feature bits
+#   SCOREBOARD_EN                                   — non-blocking scoreboard enable
 #   RV32E_EN, RV32M_EN, JTAG_EN, AMO_EN  -- ISA / feature enable bits
 #   CG_EN                                           — 1=insert CLKGATE_X1 ICG cells
 #   DFT_EN                                          — 1=DFT mode: CLKGATETST_X1 + scan FFs
@@ -34,6 +35,7 @@ set -euo pipefail
 : "${FAST_SHIFT:=1}"
 : "${BP_EN:=1}"
 : "${IBUF_EN:=1}"
+: "${SCOREBOARD_EN:=1}"
 : "${RV32E_EN:=0}"
 : "${RV32M_EN:=1}"
 : "${JTAG_EN:=1}"
@@ -69,8 +71,8 @@ YOSYS_EOF
     printf ' -PIRAM_SIZE=%s -PDRAM_SIZE=%s' "${IRAM_SIZE}" "${DRAM_SIZE}"
     printf ' -PFAST_MUL=%s -PMUL_MC=%s -PFAST_DIV=%s -PFAST_SHIFT=%s -PBP_EN=%s -PIBUF_EN=%s' \
         "${FAST_MUL}" "${MUL_MC}" "${FAST_DIV}" "${FAST_SHIFT}" "${BP_EN}" "${IBUF_EN}"
-    printf ' -PRV32E_EN=%s -PRV32M_EN=%s -PJTAG_EN=%s -PAMO_EN=%s' \
-        "${RV32E_EN}" "${RV32M_EN}" "${JTAG_EN}" "${AMO_EN}"
+    printf ' -PSCOREBOARD_EN=%s -PRV32E_EN=%s -PRV32M_EN=%s -PJTAG_EN=%s -PAMO_EN=%s' \
+        "${SCOREBOARD_EN}" "${RV32E_EN}" "${RV32M_EN}" "${JTAG_EN}" "${AMO_EN}"
     printf ' %s' \
         "${RTL_DIR}/jv32/core/jv32_pkg.sv" \
         "${RTL_DIR}/jv32/core/jv32_rvc.sv" \

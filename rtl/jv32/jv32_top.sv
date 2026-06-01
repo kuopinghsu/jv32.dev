@@ -67,24 +67,25 @@
 // ============================================================================
 
 module jv32_top #(
-    parameter bit                 RV32E_EN   = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
-    parameter bit                 RV32M_EN   = 1'b1,        // 1=M-extension; 0=illegal for MUL/DIV
-    parameter bit                 FAST_MUL   = 1'b1,
-    parameter bit                 MUL_MC     = 1'b1,
-    parameter bit                 FAST_DIV   = 1'b0,
-    parameter bit                 FAST_SHIFT = 1'b1,
-    parameter bit                 BP_EN      = 1'b1,
-    parameter bit                 RAS_EN     = 1'b1,        // 1=Return Address Stack; 0=JALR always 1-cycle
-    parameter bit                 IBUF_EN    = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
-    parameter bit                 AMO_EN     = 1'b1,
-    parameter bit                 RV32B_EN   = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
-    parameter bit                 ZCMP_EN    = 1'b1,        // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
-    parameter int                 N_TRIGGERS = 2,
-    parameter int unsigned        IRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
-    parameter int unsigned        DRAM_SIZE  = 128 * 1024,  // bytes, power-of-2 (128 KB)
-    parameter bit          [31:0] BOOT_ADDR  = 32'h8000_0000,
-    parameter bit          [31:0] IRAM_BASE  = 32'h8000_0000,
-    parameter bit          [31:0] DRAM_BASE  = 32'h9000_0000
+    parameter bit                 RV32E_EN      = 1'b0,        // 1=RV32E (16 GPRs); 0=RV32I (32 GPRs)
+    parameter bit                 RV32M_EN      = 1'b1,        // 1=M-extension; 0=illegal for MUL/DIV
+    parameter bit                 FAST_MUL      = 1'b1,
+    parameter bit                 MUL_MC        = 1'b1,
+    parameter bit                 FAST_DIV      = 1'b0,
+    parameter bit                 FAST_SHIFT    = 1'b1,
+    parameter bit                 SCOREBOARD_EN = 1'b1,        // 1=enable non-blocking MUL_MC scoreboard slot
+    parameter bit                 BP_EN         = 1'b1,
+    parameter bit                 RAS_EN        = 1'b1,        // 1=Return Address Stack; 0=JALR always 1-cycle
+    parameter bit                 IBUF_EN       = 1'b1,        // 1=2-entry instruction prefetch buffer; 0=disabled
+    parameter bit                 AMO_EN        = 1'b1,
+    parameter bit                 RV32B_EN      = 1'b1,        // 1=Zba/Zbb/Zbs; 0=illegal (synthesized away)
+    parameter bit                 ZCMP_EN       = 1'b1,        // 1=Zcmp extension (cm.push/pop/mv*); 0=illegal
+    parameter int                 N_TRIGGERS    = 2,
+    parameter int unsigned        IRAM_SIZE     = 128 * 1024,  // bytes, power-of-2 (128 KB)
+    parameter int unsigned        DRAM_SIZE     = 128 * 1024,  // bytes, power-of-2 (128 KB)
+    parameter bit          [31:0] BOOT_ADDR     = 32'h8000_0000,
+    parameter bit          [31:0] IRAM_BASE     = 32'h8000_0000,
+    parameter bit          [31:0] DRAM_BASE     = 32'h9000_0000
 ) (
     input logic clk,
     input logic rst_n,
@@ -257,6 +258,9 @@ module jv32_top #(
     localparam logic [31:0] DEBUG_ROM_BASE   = 32'h0F80_0000;
     localparam logic [31:0] DEBUG_ROM_EBREAK = 32'h0010_0073;
 
+    // Scoreboard has no practical benefit when M/div/shift are all single-cycle.
+    localparam bit SCOREBOARD_ACTIVE = SCOREBOARD_EN && !(FAST_MUL && !MUL_MC && FAST_DIV && FAST_SHIFT);
+
     // =========================================================================
     // Core memory interface
     // =========================================================================
@@ -284,24 +288,25 @@ module jv32_top #(
     assign core_rst_n = rst_n & ~dbg_hartreset_i;
 
     jv32_core #(
-        .RV32E_EN  (RV32E_EN),
-        .RV32M_EN  (RV32M_EN),
-        .FAST_MUL  (FAST_MUL),
-        .MUL_MC    (MUL_MC),
-        .FAST_DIV  (FAST_DIV),
-        .FAST_SHIFT(FAST_SHIFT),
-        .BP_EN     (BP_EN),
-        .RAS_EN    (RAS_EN),
-        .IBUF_EN   (IBUF_EN),
-        .AMO_EN    (AMO_EN),
-        .RV32B_EN  (RV32B_EN),
-        .ZCMP_EN   (ZCMP_EN),
-        .N_TRIGGERS(N_TRIGGERS),
-        .BOOT_ADDR (BOOT_ADDR),
-        .IRAM_BASE (IRAM_BASE),
-        .IRAM_SIZE (IRAM_SIZE),
-        .DRAM_BASE (DRAM_BASE),
-        .DRAM_SIZE (DRAM_SIZE)
+        .RV32E_EN     (RV32E_EN),
+        .RV32M_EN     (RV32M_EN),
+        .FAST_MUL     (FAST_MUL),
+        .MUL_MC       (MUL_MC),
+        .FAST_DIV     (FAST_DIV),
+        .FAST_SHIFT   (FAST_SHIFT),
+        .SCOREBOARD_EN(SCOREBOARD_ACTIVE),
+        .BP_EN        (BP_EN),
+        .RAS_EN       (RAS_EN),
+        .IBUF_EN      (IBUF_EN),
+        .AMO_EN       (AMO_EN),
+        .RV32B_EN     (RV32B_EN),
+        .ZCMP_EN      (ZCMP_EN),
+        .N_TRIGGERS   (N_TRIGGERS),
+        .BOOT_ADDR    (BOOT_ADDR),
+        .IRAM_BASE    (IRAM_BASE),
+        .IRAM_SIZE    (IRAM_SIZE),
+        .DRAM_BASE    (DRAM_BASE),
+        .DRAM_SIZE    (DRAM_SIZE)
     ) u_core (
         .clk                 (clk),
         .rst_n               (core_rst_n),
