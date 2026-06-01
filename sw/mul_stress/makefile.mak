@@ -1,0 +1,3 @@
+JV_IO_BACKEND = magic
+
+CFLAGS += -O3
