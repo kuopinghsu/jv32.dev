@@ -2450,12 +2450,9 @@ One-cycle pulse outputs that count branch-predictor events.  Active only with `B
 
 The toggle period in seconds is:
 
-[stem]
-++++
-T = \frac{2 \times 2^{24} \times \overline{\mathrm{CPI}}}{f_{\mathrm{clk}}}
-++++
+T = (2 x 2^24 x CPI_avg) / f_clk
 
-At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, `T ≈ 420 ms`.
+At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, T ≈ 420 ms.
 
 === External AXI Master Interface (`ext_axi_*`)
 
