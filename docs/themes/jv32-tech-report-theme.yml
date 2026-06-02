@@ -18,6 +18,11 @@ font:
       bold: GEM_FONTS_DIR/notosans-bold-subset.ttf
       italic: GEM_FONTS_DIR/notosans-italic-subset.ttf
       bold_italic: GEM_FONTS_DIR/notosans-bold_italic-subset.ttf
+    Noto Serif:
+      normal: GEM_FONTS_DIR/notoserif-regular-subset.ttf
+      bold: GEM_FONTS_DIR/notoserif-bold-subset.ttf
+      italic: GEM_FONTS_DIR/notoserif-italic-subset.ttf
+      bold_italic: GEM_FONTS_DIR/notoserif-bold_italic-subset.ttf
 
 # ── Page ──────────────────────────────────────────────────────────────────────
 page:
@@ -65,10 +70,11 @@ heading:
 #   3. abstract.title.font_size elevated to match h2 (18pt) so the Abstract
 #      heading is indistinguishable in weight from == Overview, == Conclusions.
 abstract:
+  font_family: Noto Sans
   font_size: $base_font_size
   font_style: italic
   font_color: 4A5568
-  first_line_font_style: bold_italic
+  first_line_font_style: bold
   line_height: 1.5
   title:
     font_family: Noto Sans
