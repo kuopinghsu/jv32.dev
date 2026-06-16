@@ -3,11 +3,12 @@
 #
 # Usage:
 #   cleanup                  Clean files that are modified/untracked in git
-#                            (requires a git repo; use -all otherwise)
-#   cleanup -all             Clean all files from current dir (with filter rules)
+#                            (requires a git repo; use -a/--all otherwise)
+#   cleanup -a|--all         Clean all files from current dir (with filter rules)
 #   cleanup <file1> ...      Clean the specified files only
+#   cleanup -h|--help        Show this help
 #
-# Filter rules (applied in -all mode and when checking explicit files):
+# Filter rules (applied in -a/--all mode and when checking explicit files):
 #   - Skip files named Makefile or Makefile.*
 #   - Skip binary files (detected via grep -qI)
 #   - Skip files that are ignored by git (git check-ignore)
@@ -20,6 +21,16 @@
 #   3. Collapse consecutive blank lines into a single blank line
 
 set -euo pipefail
+
+usage() {
+    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) usage; exit 0 ;;
+    esac
+done
 
 # ── Portable in-place sed ─────────────────────────────────────────────────────
 # GNU sed (Linux): sed -i -e ...
@@ -131,7 +142,7 @@ is_excluded() {
     return 1
 }
 
-# ── build excluded-dir list for reporting in -all mode ───────────────────────
+# ── build excluded-dir list for reporting in -a/--all mode ───────────────────
 # Just collects skip_dirs[] for informational printing; no find prune needed.
 build_skip_dirs() {
     skip_dirs=()
@@ -149,7 +160,7 @@ explicit_files=()
 
 for arg in "$@"; do
     case "$arg" in
-        -all) mode="all" ;;
+        -a|--all) mode="all" ;;
         *)    explicit_files+=("$arg") ;;
     esac
 done
@@ -230,7 +241,7 @@ case "$mode" in
     git)
         if ! git rev-parse --git-dir > /dev/null 2>&1; then
             echo "cleanup: not inside a git repository."
-            echo "Use 'cleanup -all' to clean all files, or 'cleanup <file> ...' for specific files."
+            echo "Use 'cleanup -a' (or '--all') to clean all files, or 'cleanup <file> ...' for specific files."
             exit 1
         fi
 
