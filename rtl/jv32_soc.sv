@@ -249,6 +249,10 @@ module jv32_soc #(
     logic [          31:0]       dbg_reg_wdata;
     logic [          31:0]       dbg_reg_rdata;
     logic                        dbg_reg_we;
+    logic [          11:0]       dbg_csr_addr;
+    logic [          31:0]       dbg_csr_wdata;
+    logic [          31:0]       dbg_csr_rdata;
+    logic                        dbg_csr_we;
     logic [          31:0]       dbg_pc_wdata;
     logic [          31:0]       dbg_pc;
     logic                        dbg_pc_we;
@@ -458,6 +462,10 @@ module jv32_soc #(
                 .dbg_reg_wdata_o (dbg_reg_wdata),
                 .dbg_reg_we_o    (dbg_reg_we),
                 .dbg_reg_rdata_i (dbg_reg_rdata),
+                .dbg_csr_addr_o  (dbg_csr_addr),
+                .dbg_csr_wdata_o (dbg_csr_wdata),
+                .dbg_csr_we_o    (dbg_csr_we),
+                .dbg_csr_rdata_i (dbg_csr_rdata),
                 .dbg_pc_wdata_o  (dbg_pc_wdata),
                 .dbg_pc_we_o     (dbg_pc_we),
                 .dbg_pc_i        (dbg_pc),
@@ -491,6 +499,9 @@ module jv32_soc #(
             assign dbg_reg_we         = 1'b0;
             assign dbg_reg_addr       = 5'd0;
             assign dbg_reg_wdata      = 32'd0;
+            assign dbg_csr_we         = 1'b0;
+            assign dbg_csr_addr       = 12'd0;
+            assign dbg_csr_wdata      = 32'd0;
             assign dbg_pc_we          = 1'b0;
             assign dbg_pc_wdata       = 32'd0;
             assign dbg_mem_req        = 1'b0;
@@ -516,7 +527,7 @@ module jv32_soc #(
             logic _unused_jtag_pins;
             assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
                                          jtag_pin1_tms_i, jtag_pin2_tdi_i,
-                                         dbg_halted, dbg_resumeack, dbg_reg_rdata,
+                                          dbg_halted, dbg_resumeack, dbg_reg_rdata, dbg_csr_rdata,
                                          dbg_pc, dbg_mem_ready, dbg_mem_error, dbg_mem_rdata,
                                          dbg_trigger_halt, dbg_ebreak_halt, dbg_trigger_hit};
         end
@@ -929,6 +940,10 @@ module jv32_soc #(
         .dbg_reg_wdata_i (dbg_reg_wdata),
         .dbg_reg_we_i    (dbg_reg_we),
         .dbg_reg_rdata_o (dbg_reg_rdata),
+        .dbg_csr_addr_i  (dbg_csr_addr),
+        .dbg_csr_wdata_i (dbg_csr_wdata),
+        .dbg_csr_we_i    (dbg_csr_we),
+        .dbg_csr_rdata_o (dbg_csr_rdata),
         .dbg_pc_wdata_i  (dbg_pc_wdata),
         .dbg_pc_we_i     (dbg_pc_we),
         .dbg_pc_o        (dbg_pc),

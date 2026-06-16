@@ -98,7 +98,7 @@ CJTAG_TESTS := cjtag dtmcs halt_resume registers memory memory_modes reset dm_st
 
 # ── GDB test names (file stem of openocd/test_gdb_<name>.gdb) ────────────────
 # Each test is run with the JTAG VPI simulator + OpenOCD GDB server.
-GDB_TESTS := load step breakpoint memory regs debug hello
+GDB_TESTS := load step breakpoint memory regs csr debug hello step_past_swbp
 
 # ── Test counts (computed from the lists above) ──────────────────────────────
 N_JTAG      := $(words $(JTAG_TESTS))

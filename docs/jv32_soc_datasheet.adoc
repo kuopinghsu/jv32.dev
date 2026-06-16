@@ -2,7 +2,7 @@
 :doctype: book
 :author: JV32 Development Team
 :revnumber: 1.3
-:revdate: 2026-05-18
+:revdate: 2026-06-02
 :toc: left
 :toclevels: 4
 :sectnums:
@@ -45,7 +45,7 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |RV32IMAC_Zicsr_Zifencei (`misa = 0x4000_1105`); optional Zba/Zbb/Zbs (`RV32B_EN=1`)
 
 |Pipeline
-|Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; BTFNT static branch predictor (`BP_EN=1`): 0-cycle penalty on correct prediction, 1-cycle penalty on misprediction
+|Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; optional single-slot non-blocking MUL scoreboard (`SCOREBOARD_EN`); BTFNT static branch predictor (`BP_EN=1`): 0-cycle penalty on correct prediction, 1-cycle penalty on misprediction
 
 |Instruction Memory
 |128 KB IRAM (TCM, 1-cycle access); out-of-TCM I-fetch via shared AXI4-Lite master
@@ -180,7 +180,8 @@ The core supports:
 * WB→EX same-cycle forwarding for RAW hazard resolution
 * 1-cycle load-use stall (EX→WB stall + IF hold)
 * 1-cycle branch/jump flush (EX squashes IF on misprediction or unconditional redirect)
-* Multi-cycle stall for slow multiply/divide/barrel-shift when `FAST_MUL=0`/`FAST_DIV=0`/`FAST_SHIFT=0`
+* Multi-cycle stall for slow divide/shift and for multiply when scoreboard dispatch is not active
+* Optional single-slot non-blocking scoreboard (`SCOREBOARD_EN`) for multi-cycle `MUL`: independent younger instructions may issue while preserving in-order retirement
 * AMO (LR/SC and AMO operations) via a 3-state machine (IDLE → LOAD_WAIT → STORE_WAIT)
 * Configurable branch predictor (`BP_EN`, static not-taken fallback when disabled)
 * CLIC-aware CSR unit with CLIC interrupt-level threshold (`mintthresh`), current level (`mintstatus`), vectored-trap base (`mtvt`), next-interrupt fast-claim (`mnxti`), and hardware tail-chaining on `mret`
@@ -397,8 +398,12 @@ The core uses a single-issue 3-stage in-order pipeline:
 |When EX detects a taken branch or unconditional jump, the IF instruction in flight is squashed (1 pipeline bubble).
 
 |Multi-cycle ALU (mul/div/shift)
-|Stall (multiple cycles)
-|When `FAST_MUL=0`, `FAST_DIV=0`, or `FAST_SHIFT=0`, the entire pipeline stalls until the operation completes. Serial multiply and divide use CLZ to reduce iteration count (1–32 cycles depending on operand magnitude); serial shift iterates 0–31 cycles depending on shift amount.
+|Stall / partial overlap
+|Without scoreboard dispatch, multi-cycle operations stall EX/IF until completion. With scoreboard active (`SCOREBOARD_EN=1` and multiply actually multi-cycle), one outstanding `MUL` can run in a dedicated slot while younger independent, non-commit-sensitive instructions continue. `DIV/REM` remain blocking.
+
+|Scoreboard issue gating (`MUL` non-blocking path)
+|Issue stall (selective)
+|Issue is blocked on RAW (`rs1`/`rs2` busy), WAW (`rd` busy), structural (slot already occupied), or commit-sensitive younger instruction while slot is active. Retirement remains strictly in-order through WB arbitration.
 
 |AMO (LR/SC, AMO operations)
 |Stall
@@ -1651,11 +1656,15 @@ suppress the Vivado LUTAR-1 methodology warning
 
 |`FAST_MUL`
 |`1`
-|`1`=single-cycle combinatorial multiply; `0`=multi-cycle serial multiply (CLZ-reduced; 1–32 cycles)
+|`1`=fast multiplier selected (mode set by `MUL_MC`); `0`=multi-cycle serial shift-and-add multiply (CLZ-reduced; 1–32 cycles)
 
 |`MUL_MC`
 |`1`
-|When `FAST_MUL=0`: `1`=CLZ-based iteration count reduction; `0`=always 32 iterations. Has no effect when `FAST_MUL=1`.
+|When `FAST_MUL=1`: `1`=2-stage pipelined multiplier (2-cycle result), `0`=1-cycle combinatorial multiplier. Ignored when `FAST_MUL=0`.
+
+|`SCOREBOARD_EN`
+|`1`
+|`1`=enable single-slot non-blocking scoreboard for multi-cycle `MUL` with ordered WB retirement. Blocks issue on RAW/WAW/structural/commit-sensitive hazards. `0`=disable scoreboard (all multi-cycle ALU ops use blocking path). In `jv32_top`, it is auto-gated off when `FAST_MUL=1`, `MUL_MC=0`, `FAST_DIV=1`, and `FAST_SHIFT=1` (all arithmetic single-cycle).
 
 |`FAST_DIV`
 |`0`
@@ -2450,12 +2459,9 @@ One-cycle pulse outputs that count branch-predictor events.  Active only with `B
 
 The toggle period in seconds is:
 
-[stem]
-++++
-T = \frac{2 \times 2^{24} \times \overline{\mathrm{CPI}}}{f_{\mathrm{clk}}}
-++++
+T = (2 x 2^24 x CPI_avg) / f_clk
 
-At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, `T ≈ 420 ms`.
+At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, T ≈ 420 ms.
 
 === External AXI Master Interface (`ext_axi_*`)
 

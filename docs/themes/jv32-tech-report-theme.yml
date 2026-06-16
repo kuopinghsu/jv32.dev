@@ -7,9 +7,7 @@ base:
   line-height: 1.5
 
 # ── Extra fonts ───────────────────────────────────────────────────────────────
-# The default theme only bundles Noto Serif and M+ 1mn.
-# We add Noto Sans (also bundled) for headings — clean sans-serif vs serif body
-# gives the contrast characteristic of product-quality technical documents.
+# We use Noto Sans (bundled with Asciidoctor PDF) for document text styles.
 font:
   catalog:
     merge: true
@@ -28,7 +26,7 @@ page:
 # ── Base (body text) ──────────────────────────────────────────────────────────
 base:
   font_color: 1A1A1A
-  font_family: Noto Serif
+  font_family: Noto Sans
   font_size: 10.5
   line_height_length: 15
   line_height: $base_line_height_length / $base_font_size
@@ -65,10 +63,11 @@ heading:
 #   3. abstract.title.font_size elevated to match h2 (18pt) so the Abstract
 #      heading is indistinguishable in weight from == Overview, == Conclusions.
 abstract:
+  font_family: Noto Sans
   font_size: $base_font_size
   font_style: italic
   font_color: 4A5568
-  first_line_font_style: bold_italic
+  first_line_font_style: bold
   line_height: 1.5
   title:
     font_family: Noto Sans
@@ -117,7 +116,7 @@ link:
 # ── Inline code (monospaced spans) ────────────────────────────────────────────
 codespan:
   font_color: B5302A
-  font_family: M+ 1mn
+  font_family: Courier
 
 # ── Code / listing / literal blocks ──────────────────────────────────────────
 code:
@@ -125,7 +124,7 @@ code:
   border_color: CBD5E1
   border_radius: 3
   border_width: 0.5
-  font_family: M+ 1mn
+  font_family: Courier
   font_size: 8.5
   line_height: 1.4
   padding: [6, 10, 6, 10]

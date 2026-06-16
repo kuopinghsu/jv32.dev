@@ -251,12 +251,11 @@ end
 
 delete breakpoints
 
-# ── 4. Software breakpoint -- SKIP-tolerant ───────────────────────────────────
-# GDB "break" inserts an EBREAK (software bp).  This only causes a debug halt
-# if DCSR.ebreakm=1.  Detect result by checking DCSR.cause after continue:
-#   cause=2 (trigger) -> hw-assisted sw bp fired.
-#   cause=3 (ebreak)  -> sw bp EBREAK + dcsr.ebreakm caused debug halt.
-#   other             -> ebreakm not set, no hw trigger; SKIP.
+# ── 4. Software breakpoint -- strict pass/fail ───────────────────────────────
+# GDB "break" inserts an EBREAK (software bp).  Depending on OpenOCD step-past
+# details and DCSR settings, a valid halt at BP_SW may report:
+#   cause=1 (ebreak), cause=2 (trigger), or cause=3 (ebreak/debug-entry path).
+# Treat any of these as PASS when PC matches BP_SW; everything else is FAIL.
 python
 import gdb
 
@@ -274,11 +273,12 @@ pc    = read_pc()
 dcsr  = parse_dcsr()
 cause = dcsr_cause(dcsr)
 print('  sw break: PC=0x{:08x}  DCSR.cause={}'.format(pc, cause))
-if pc == BP_SW and cause in (2, 3):
+if pc == BP_SW and cause in (1, 2, 3):
     print('  sw break: fired at 0x{:08x} cause={}  OK'.format(pc, cause))
 else:
-    print('[SKIP] sw break: cause={} PC=0x{:08x} (ebreakm not configured or no hw override)'.format(
-        cause, pc))
+    raise gdb.GdbError(
+        '[FAIL] sw break: unexpected stop cause={} PC=0x{:08x} (expected PC=0x{:08x}, cause in {{1,2,3}})'.format(
+            cause, pc, BP_SW))
 end
 
 delete breakpoints

@@ -10,7 +10,8 @@
 #   make jv32_soc_datasheet.pdf  # build one file
 #   make setup                   # install tools (once)
 
-ASCIIDOCTOR_PDF ?= asciidoctor-pdf
+USER_GEM_ASCIIDOCTOR_PDF := $(firstword $(wildcard $(HOME)/.local/share/gem/ruby/*/bin/asciidoctor-pdf))
+ASCIIDOCTOR_PDF ?= $(if $(USER_GEM_ASCIIDOCTOR_PDF),$(USER_GEM_ASCIIDOCTOR_PDF),asciidoctor-pdf)
 
 # Themes selection
 #THEMES          ?= riscv-pdf
@@ -26,7 +27,7 @@ ADOC_FLAGS := -a toc \
               -a icons=font \
               -a source-highlighter=rouge \
               -r asciidoctor-mathematical \
-              -a pdf-fontsdir="$(HOME)/.local/share/fonts;GEM_FONTS_DIR" \
+              -a pdf-fontsdir="$(HOME)/.local/share/fonts,GEM_FONTS_DIR" \
               -a pdf-themesdir=themes
 
 THEME_FLAG := -a pdf-theme=$(THEMES)
