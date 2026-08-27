@@ -284,7 +284,7 @@ IRAM_BASE=$(IRAM_BASE) DRAM_BASE=$(DRAM_BASE) DEBUG=$(DEBUG) DEBUG_GROUP=$(DEBUG
         rtl-freertos-% rtl-freertos-all sim-freertos-% sim-freertos-all \
         compare-freertos-% compare-freertos-all freertos-list-tests \
         rtl-zephyr-% rtl-zephyr-all sim-zephyr-% sim-zephyr-all \
-        compare-zephyr-% compare-zephyr-all zephyr-list-tests \
+        compare-zephyr-% compare-zephyr-all zephyr-list-tests zephyr-unavailable-msg \
         rtl-threadx-% rtl-threadx-all sim-threadx-% sim-threadx-all \
         compare-threadx-% compare-threadx-all threadx-list-tests \
         rtl-riot-% rtl-riot-all sim-riot-% sim-riot-all \
@@ -949,6 +949,48 @@ compare-freertos-all:
 # ============================================================================
 ZEPHYR_DIR = rtos/zephyr
 
+# Zephyr is an optional external west workspace (see env.config.template).
+# Skip all Zephyr targets when ZEPHYR_BASE is unset or the directory is missing.
+ifeq ($(strip $(ZEPHYR_BASE)),)
+  ZEPHYR_AVAILABLE := 0
+else ifeq ($(wildcard $(ZEPHYR_BASE)/.),)
+  ZEPHYR_AVAILABLE := 0
+else
+  ZEPHYR_AVAILABLE := 1
+endif
+
+ifeq ($(ZEPHYR_AVAILABLE),0)
+zephyr-unavailable-msg:
+	@echo "=========================================================="
+	@if [ -z "$(ZEPHYR_BASE)" ]; then \
+		echo "  Zephyr SKIPPED (ZEPHYR_BASE is not set)"; \
+		echo "  Set it in env.config to enable Zephyr tests."; \
+	else \
+		echo "  Zephyr SKIPPED (ZEPHYR_BASE directory not found)"; \
+		echo "  ZEPHYR_BASE=$(ZEPHYR_BASE)"; \
+	fi
+	@echo "=========================================================="
+
+$(BUILD_DIR)/zephyr-%.elf: zephyr-unavailable-msg FORCE ;
+
+zephyr-list-tests: zephyr-unavailable-msg ;
+
+__rtl-zephyr-run: zephyr-unavailable-msg ;
+
+rtl-zephyr-%: zephyr-unavailable-msg ;
+
+rtl-zephyr-all: zephyr-unavailable-msg ;
+
+sim-zephyr-%: zephyr-unavailable-msg ;
+
+sim-zephyr-all: zephyr-unavailable-msg ;
+
+compare-zephyr-%: zephyr-unavailable-msg ;
+
+compare-zephyr-all: zephyr-unavailable-msg ;
+
+else
+
 # Build a Zephyr ELF via the Zephyr Makefile
 $(BUILD_DIR)/zephyr-%.elf: FORCE
 	@$(MAKE) -C $(ZEPHYR_DIR) --no-print-directory build TEST=$* BUILD_DIR=$(BUILD_DIR_ABS)
@@ -1071,6 +1113,8 @@ compare-zephyr-all:
 		echo "compare-zephyr-all: one or more tests failed."; exit 1; \
 	fi; \
 	echo "compare-zephyr-all: all tests passed."
+
+endif
 
 # ============================================================================
 # ThreadX RTOS tests
@@ -1559,7 +1603,7 @@ cleanup:
 	@bash scripts/cleanup $(if $(FILES),$(FILES))
 
 cleanup-all:
-	@bash scripts/cleanup -all
+	@bash scripts/cleanup --all
 
 # ============================================================================
 # SystemVerilog formatting with Verible
