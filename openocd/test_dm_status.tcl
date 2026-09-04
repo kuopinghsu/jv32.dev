@@ -55,10 +55,10 @@ if {[catch {wait_halt 1000}]} {
 set dm_halt_1 [read_dmstatus]
 check_halted $dm_halt_1 "after second halt"
 
-# Validate dmstatus.version == 2 (Debug Spec 0.13)
+# Validate dmstatus.version == 3 (Debug Spec 1.0)
 set version [expr {$dm_halt_0 & 0xf}]
-if {$version != 2} {
-    error "dmstatus.version expected 2 (debug spec 0.13) got $version"
+if {$version != 3} {
+    error "dmstatus.version expected 3 (debug spec 1.0) got $version"
 }
 # Validate authenticated bit is set
 set authenticated [expr {($dm_halt_0 >> 7) & 1}]

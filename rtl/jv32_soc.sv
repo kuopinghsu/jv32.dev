@@ -252,6 +252,7 @@ module jv32_soc #(
     logic [          11:0]       dbg_csr_addr;
     logic [          31:0]       dbg_csr_wdata;
     logic [          31:0]       dbg_csr_rdata;
+    logic                        dbg_csr_illegal;
     logic                        dbg_csr_we;
     logic [          31:0]       dbg_pc_wdata;
     logic [          31:0]       dbg_pc;
@@ -466,6 +467,7 @@ module jv32_soc #(
                 .dbg_csr_wdata_o (dbg_csr_wdata),
                 .dbg_csr_we_o    (dbg_csr_we),
                 .dbg_csr_rdata_i (dbg_csr_rdata),
+                .dbg_csr_illegal_i(dbg_csr_illegal),
                 .dbg_pc_wdata_o  (dbg_pc_wdata),
                 .dbg_pc_we_o     (dbg_pc_we),
                 .dbg_pc_i        (dbg_pc),
@@ -528,6 +530,7 @@ module jv32_soc #(
             assign _unused_jtag_pins = &{1'b0, jtag_ntrst_i, jtag_pin0_tck_i,
                                          jtag_pin1_tms_i, jtag_pin2_tdi_i,
                                           dbg_halted, dbg_resumeack, dbg_reg_rdata, dbg_csr_rdata,
+                                         dbg_csr_illegal,
                                          dbg_pc, dbg_mem_ready, dbg_mem_error, dbg_mem_rdata,
                                          dbg_trigger_halt, dbg_ebreak_halt, dbg_trigger_hit};
         end
@@ -742,6 +745,15 @@ module jv32_soc #(
                               core_use_dram_wresp ? dram_tcm_bvalid_int :
                               mbus_bvalid;
 
+    // LR/SC external-writer snoop: single-cycle pulse + word address when a
+    // debug-module (SBA / abstract Access Memory) write is accepted.  Fed to
+    // the core so a debugger write to the reserved word breaks the reservation
+    // (RISC-V "A" ext).  Zero when JTAG is disabled (dbg_mem_req tied to 0).
+    logic        dbg_mem_wr_pulse;
+    logic [31:0] dbg_mem_wr_addr;
+    assign dbg_mem_wr_pulse = dbg_mem_req && !dbg_mem_req_d && (dbg_mem_we != 4'b0000);
+    assign dbg_mem_wr_addr  = map_to_canonical(dbg_mem_addr);
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dbg_tcm_state   <= DBG_TCM_IDLE;
@@ -944,12 +956,15 @@ module jv32_soc #(
         .dbg_csr_wdata_i (dbg_csr_wdata),
         .dbg_csr_we_i    (dbg_csr_we),
         .dbg_csr_rdata_o (dbg_csr_rdata),
+        .dbg_csr_illegal_o(dbg_csr_illegal),
         .dbg_pc_wdata_i  (dbg_pc_wdata),
         .dbg_pc_we_i     (dbg_pc_we),
         .dbg_pc_o        (dbg_pc),
         .dbg_singlestep_i(dbg_singlestep),
         .dbg_ebreakm_i   (dbg_ebreakm),
         .dcsr_stopcount_i(dbg_dcsr_stopcount),
+        .dbg_mem_wr_i    (dbg_mem_wr_pulse),
+        .dbg_mem_waddr_i (dbg_mem_wr_addr),
         .progbuf0_i      (progbuf0),
         .progbuf1_i      (progbuf1),
 

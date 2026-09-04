@@ -1,7 +1,7 @@
 puts "\[TEST\] DCSR field validation"
 
-# DCSR layout (Debug Spec 0.13, §4.8.1):
-#   [31:28] xdebugver  — 4 = Debug Module (external debug spec 0.13)
+# DCSR layout (Debug Spec 1.0, §4.8.1 (dcsr)):
+#   [31:28] xdebugver  — 4 = external debug support (Debug Spec 0.13 and 1.0)
 #   [15]    ebreakm    — ebreak in M-mode enters debug mode when set
 #   [8:6]   cause      — why hart entered debug mode (3=halt_req, 4=step, 2=trigger)
 #   [1:0]   prv        — privilege mode at debug entry (3 = M-mode)
@@ -30,7 +30,7 @@ set xdebugver [expr {($dcsr >> 28) & 0xf}]
 if {$xdebugver != 4} {
     error "dcsr.xdebugver expected 4 got $xdebugver"
 }
-puts "xdebugver=$xdebugver (Debug Spec 0.13) OK"
+puts "xdebugver=$xdebugver (Debug Spec 1.0) OK"
 
 # ── prv [1:0] must be 3 (M-mode) ─────────────────────────────────────────────
 set prv [expr {$dcsr & 0x3}]

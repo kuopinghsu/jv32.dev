@@ -104,6 +104,10 @@ module jv32_csr #(
     input  logic [31:0] dbg_csr_wdata_i,
     input  logic        dbg_csr_we_i,
     output logic [31:0] dbg_csr_rdata_o,
+    // 1 when dbg_csr_addr_i is a CSR the core does not implement -- the DTM
+    // turns this into abstractcs.cmderr = 3 (exception) instead of returning a
+    // bogus success, so a debugger probing for optional CSRs is not misled.
+    output logic        dbg_csr_illegal_o,
 
     // dcsr.stopcount from the DM's dcsr_reg[10] (jv32_dtm owns the dcsr register;
     // OpenOCD writes it via abstract CSR command, which never touches jv32_csr).
@@ -302,7 +306,8 @@ module jv32_csr #(
 
     // Debug-side CSR read path used by DTM abstract CSR commands.
     always_comb begin
-        dbg_csr_rdata_o = 32'd0;
+        dbg_csr_rdata_o   = 32'd0;
+        dbg_csr_illegal_o = 1'b0;
         case (dbg_csr_addr_i)
             CSR_MSTATUS: dbg_csr_rdata_o = {19'd0, 2'b11, 3'd0, mstatus_mpie, 3'd0, mstatus_mie, 3'd0};
             CSR_MSTATUSH: dbg_csr_rdata_o = 32'h0;
@@ -334,7 +339,10 @@ module jv32_csr #(
             CSR_MARCHID: dbg_csr_rdata_o = 32'h0;
             CSR_MIMPID: dbg_csr_rdata_o = 32'h1;
             CSR_MHARTID: dbg_csr_rdata_o = 32'h0;
-            default: dbg_csr_rdata_o = 32'd0;
+            default: begin
+                dbg_csr_rdata_o   = 32'd0;
+                dbg_csr_illegal_o = 1'b1;   // CSR not implemented by this core
+            end
         endcase
     end
 

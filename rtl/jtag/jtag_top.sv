@@ -48,7 +48,8 @@ module jtag_top #(
     parameter bit                 USE_CJTAG  = 1'b1,          // 0=JTAG, 1=cJTAG (default: cJTAG)
     parameter bit          [31:0] IDCODE     = 32'h1DEAD3FF,  // JTAG ID code
     parameter int unsigned        IR_LEN     = 5,             // Instruction register length
-    parameter int                 N_TRIGGERS = 2              // number of hardware triggers
+    parameter int                 N_TRIGGERS = 2,             // number of hardware triggers
+    parameter int                 DBG_BUS_TIMEOUT_W = 12      // SBA / abstract-mem response timeout counter width
 ) (
     // System clock (required for cJTAG mode)
     input logic clk_i,    // System clock (e.g., 100MHz)
@@ -87,6 +88,7 @@ module jtag_top #(
     output logic [31:0] dbg_csr_wdata_o,  // CSR write data
     output logic        dbg_csr_we_o,     // CSR write enable
     input  logic [31:0] dbg_csr_rdata_i,  // CSR read data
+    input  logic        dbg_csr_illegal_i, // 1 = CSR not implemented by the core
 
     // PC access
     output logic [31:0] dbg_pc_wdata_o,  // PC write data
@@ -188,9 +190,10 @@ module jtag_top #(
     // =========================================================================
     // Implements IEEE 1149.1 TAP state machine and instantiates jv32_dtm
     jtag_tap #(
-        .IDCODE    (IDCODE),
-        .IR_LEN    (IR_LEN),
-        .N_TRIGGERS(N_TRIGGERS)
+        .IDCODE           (IDCODE),
+        .IR_LEN           (IR_LEN),
+        .N_TRIGGERS       (N_TRIGGERS),
+        .DBG_BUS_TIMEOUT_W(DBG_BUS_TIMEOUT_W)
     ) u_jtag_tap (
         // JTAG interface
         .tck_i  (tap_tck),
@@ -218,6 +221,7 @@ module jtag_top #(
         .dbg_csr_wdata_o(dbg_csr_wdata_o),
         .dbg_csr_we_o   (dbg_csr_we_o),
         .dbg_csr_rdata_i(dbg_csr_rdata_i),
+        .dbg_csr_illegal_i(dbg_csr_illegal_i),
 
         // PC access
         .dbg_pc_wdata_o(dbg_pc_wdata_o),

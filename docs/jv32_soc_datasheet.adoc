@@ -1,8 +1,8 @@
-= JV32 RV32IMAC System-on-Chip Datasheet
+= JV32 System-on-Chip Datasheet
 :doctype: book
 :author: JV32 Development Team
-:revnumber: 1.3
-:revdate: 2026-06-02
+:revnumber: 1.4
+:revdate: 2026-08-27
 :toc: left
 :toclevels: 4
 :sectnums:
@@ -16,24 +16,90 @@
 
 [abstract]
 --
+JV32 is a compact 32-bit RISC-V System-on-Chip (SoC) for RTL simulation and FPGA prototyping. It integrates a single-issue 3-stage processor core, instruction and data TCM, AXI4-Lite interfaces, UART, CLIC/CLINT-compatible timer functions, simulation support, and JTAG/cJTAG debug connectivity.
 
-This document provides comprehensive technical specifications for the JV32 System-on-Chip (SoC), a 32-bit RISC-V processor platform targeting embedded simulation and FPGA prototyping. The SoC integrates a 3-stage single-issue RV32IMAC pipeline core with 128 KB tightly-coupled instruction RAM (IRAM) and 128 KB tightly-coupled data RAM (DRAM), a merged AXI4-Lite master for out-of-TCM accesses, an AXI slave port for debug access to TCM, and three peripherals: UART (serial I/O), CLIC (interrupt controller with CLINT-compatible timer), and a simulation Magic device. The design is optimised for straightforward simulation and FPGA implementation.
+This datasheet describes the implemented RTL behavior. Unless stated otherwise, addresses, reset values, timing, and feature descriptions refer to the default RTL parameters.
 --
 
 <<<
 
 == Introduction
 
-=== Overview
+=== SoC Overview
 
-The JV32 SoC is a complete minimal embedded processor system implementing the RISC-V RV32IMAC instruction set with Machine mode (M-mode) support. The system integrates:
+The JV32 SoC is a compact embedded processor system. The default configuration implements RV32IMAC with M-mode (M-mode). The main blocks are:
 
-* **RV32IMAC Processor Core** (`jv32_core`): Single-issue 3-stage pipeline (IF → EX → WB) with RVC expander, configurable fast multiply/divide/shift, branch predictor, and AMO state machine
-* **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0x9000_0000`, instantiated inside `jv32_top` as byte-bank SRAM primitives with 1-cycle read latency
+* **Processor core** (`jv32_core`): single-issue 3-stage pipeline (IF → EX → WB), RVC expansion, configurable multiply/divide/shift units, branch prediction, and atomic-operation support
+* **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0x9000_0000` by default, with 1-cycle read latency
 * **Merged AXI4-Lite Master**: Out-of-TCM accesses from both I-fetch and D-bus share one master port; D-bus has priority over I-fetch
 * **AXI4-Lite Slave**: External agents (debug master, testbench DPI) can read/write TCM; core has absolute priority
 * **Peripheral Subsystem** (4-slave AXI crossbar): UART, CLIC, Magic device, external catch-all
-* **Interrupt System**: CLIC with CLINT-compatible 64-bit timer (`mtime`/`mtimecmp`), software interrupt (`msip`), and 16 independently-prioritised external interrupt lines
+* **Interrupt System**: CLIC with CLINT-compatible 64-bit timer (`mtime`/`mtimecmp`), software interrupt (`msip`), and 16 independently prioritized external interrupt lines
+
+=== Document Conventions
+
+This datasheet describes the behavior implemented by the supplied RTL. Unless a section explicitly states otherwise:
+
+* Address ranges and reset values refer to the default RTL parameters unless explicitly marked as parameter-dependent.
+* `R/O`, `R/W`, and `W/O` mean read-only, read/write, and write-only.
+* Multi-byte values use little-endian byte order.
+* AXI response names use the AXI4-Lite encodings `OKAY`, `SLVERR`, and `DECERR`.
+* Signal names and RTL parameter names are shown in monospace, for example `ext_irq_i` and `IRAM_SIZE`.
+* Optional features are identified by the RTL parameter that enables them.
+* Software must not rely on undocumented or reserved register bits. Unless explicitly stated otherwise, software should write zero to reserved bits and ignore reserved bits when reading.
+* “Implemented” means that an active RTL path provides the stated behavior; a declared constant or unused encoding alone is not treated as an implemented feature.
+* `must` identifies a software or integration requirement. `should` identifies a recommended practice. Descriptive statements define RTL behavior.
+* Reset values apply to the corresponding RTL state after reset has been asserted. Software-visible state may change immediately after reset is released as counters, timers, or execution begin.
+
+=== Scope and Implementation Notes
+
+The datasheet is an RTL functional specification. It does not define FPGA- or ASIC-specific timing closure, maximum clock frequency, power, area, or electrical characteristics. Those values depend on the target technology, synthesis constraints, and physical implementation.
+
+Unless stated otherwise, sizes, counts, base addresses, and enabled features use the RTL default parameters. If an integration changes a parameter, the corresponding feature, memory size, or ISA capability may also change.
+
+Behavior outside the documented address ranges, register encodings, access sizes, or enabled feature set is not part of the software interface unless the relevant section explicitly defines it.
+
+Microarchitectural details such as pipeline timing, arbitration timing, and internal state transitions describe the current RTL implementation. Software must not depend on cycle-exact behavior unless a section explicitly defines that behavior as part of the interface.
+
+=== Default Configuration
+
+The table below summarizes the principal RTL defaults. Parameters remain the authoritative source when an integration overrides these values.
+
+[cols="2,2,4"]
+This table is a summary of the default configuration. The RTL parameter declarations remain authoritative when an integration overrides a default.
+
+.Default RTL Configuration
+|===
+|Item |Default |Notes
+
+|XLEN
+|32
+|32-bit RISC-V implementation.
+
+|Privilege mode
+|M-mode
+|The core implements M-mode operation.
+
+|Base ISA
+|RV32I
+|RV32E can be selected when enabled by the corresponding RTL parameter.
+
+|ISA extensions enabled by default
+|M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zcmp
+|`RV32M_EN`, `AMO_EN`, `RV32B_EN`, and `ZCMP_EN` control parameterized extension groups. C, Zicsr, and Zifencei are implemented by the supplied core configuration.
+
+|System clock parameter
+|100 MHz
+|Functional default only; not a defined implementation Fmax.
+
+|External interrupts
+|16
+|Handled by the CLIC interrupt path.
+
+|UART
+|115200 baud
+|Reset/default baud rate; software can change the divisor at runtime.
+|===
 
 === Key Features
 
@@ -42,10 +108,10 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |Feature |Specification
 
 |ISA
-|RV32IMAC_Zicsr_Zifencei (`misa = 0x4000_1105`); optional Zba/Zbb/Zbs (`RV32B_EN=1`)
+|Default configuration: RV32IMAC with Zicsr, Zifencei, Zba, Zbb, Zbs, and Zcmp enabled. `misa = 0x4000_1105` reports the standard MISA-visible I/M/A/C capabilities; Zba/Zbb/Zbs and Zcmp are controlled separately by RTL parameters.
 
 |Pipeline
-|Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; optional single-slot non-blocking MUL scoreboard (`SCOREBOARD_EN`); BTFNT static branch predictor (`BP_EN=1`): 0-cycle penalty on correct prediction, 1-cycle penalty on misprediction
+|Single-issue 3-stage in-order (Fetch, Execute, Writeback); WB→EX same-cycle forwarding; 1-cycle load-use stall; optional single-slot non-blocking MUL scoreboard (`SCOREBOARD_EN`); BTFNT static branch predictor (`BP_EN=1`): no EX-stage correction flush on correct prediction, one EX-stage correction/flush cycle on misprediction
 
 |Instruction Memory
 |128 KB IRAM (TCM, 1-cycle access); out-of-TCM I-fetch via shared AXI4-Lite master
@@ -60,13 +126,13 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |AXI4-Lite (32-bit address, 32-bit data)
 
 |Clock Frequency
-|100 MHz (default, parameterisable)
+|100 MHz default; parameterized
 
 |Boot Address
-|`0x8000_0000` (IRAM base, parameterisable)
+|`0x8000_0000` (IRAM base, parameterized)
 
 |TCM Sizes
-|128 KB IRAM, 128 KB DRAM (each independently parameterisable, power-of-2)
+|128 KB IRAM, 128 KB DRAM (each independently parameterized, power-of-2)
 
 |Peripherals
 |UART (8N1, 16-deep FIFOs), CLIC/CLINT (64-bit timer, 16 external IRQs), Magic (simulation I/O)
@@ -83,18 +149,6 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 |Implementation
 |RTL simulation (Verilator), FPGA synthesis supported
 |===
-
-=== Document Organisation
-
-* **Section 2**: System architecture and block diagram
-* **Section 3**: Memory map and address decode
-* **Section 4**: Processor core specification
-* **Section 5**: TCM specification
-* **Section 6**: Peripheral specifications (UART, CLIC, Magic)
-* **Section 7**: AXI interconnect
-* **Section 8**: Electrical and timing characteristics
-* **Section 9**: Programming guide
-* **Appendices**: Register quick reference, interrupt vectors, pin descriptions
 
 <<<
 
@@ -166,9 +220,11 @@ The JV32 SoC is a complete minimal embedded processor system implementing the RI
 
 === System Components
 
-==== Processor Core (`jv32_core`)
+==== Processor and Memory Integration
 
-The RV32IMAC processor core implements a single-issue 3-stage in-order pipeline:
+The processor and integrated memory-mapped interfaces use little-endian byte ordering. Bit numbering follows the RISC-V convention: bit 0 is the least-significant bit. Addresses are byte addresses.
+
+The `jv32_core` processor implements a single-issue 3-stage in-order pipeline:
 
 * **Instruction Fetch (IF)**: PC generation, RVC expansion, instruction fetch request
 * **Execute (EX)**: Decode, register read, ALU, address calculation, CSR operations, hazard detection
@@ -218,14 +274,18 @@ A 1-to-4 AXI4-Lite crossbar routes out-of-TCM transactions from `jv32_top`'s mer
 
 <<<
 
+=== Register Table Conventions
+
+Register tables use byte offsets relative to the peripheral base address unless an absolute address is explicitly shown. Reset values describe the RTL reset state before software modifies the register. For reserved fields, software should write zero and ignore the read value unless a section explicitly defines different behavior.
+
 == Memory Map
 
 === Address Space Overview
 
-The JV32 SoC implements a 32-bit address space (4 GB) with the following allocation:
+The JV32 SoC implements a 32-bit address space (4 GB). The table lists the default address map. TCM region sizes follow the `IRAM_SIZE` and `DRAM_SIZE` parameters. The `0x6000_0000` and `0x7000_0000` regions are aliases of the canonical IRAM and DRAM regions; they do not provide additional storage. Software should normally use the canonical `0x8000_0000` and `0x9000_0000` addresses unless an alias is specifically required by the integration or debug flow.
 
 [cols="2,2,1,4"]
-.Complete Memory Map
+.Default Memory Map
 |===
 |Address Range |Device |Size |Description
 
@@ -237,12 +297,22 @@ The JV32 SoC implements a 32-bit address space (4 GB) with the following allocat
 |`0x2001_0000` – `0x2001_00FF`
 |UART
 |256 B
-|Serial communication peripheral (8N1, 16-deep FIFOs); 7 registers used (0x00–0x18); 0x1C–0xFF return SLVERR
+|Serial communication peripheral (8N1, 16-deep FIFOs); 7 registers used (0x00–0x18); 0x1C–0xFF return `SLVERR`
 
 |`0x4000_0000` – `0x4FFF_FFFF`
 |Magic Device
 |256 MB (aperture)
-|Simulation console and exit control; only 8 bytes used (CONSOLE at 0x0000, EXIT at 0x0004)
+|Simulation console and exit control; only two 32-bit registers are implemented at offsets `0x0000` and `0x0004`
+
+|`0x6000_0000` – `0x6001_FFFF`
+|IRAM alias
+|128 KB
+|Alias of the default IRAM TCM region; internally mapped to `0x8000_0000` – `0x8001_FFFF`
+
+|`0x7000_0000` – `0x7001_FFFF`
+|DRAM alias
+|128 KB
+|Alias of the default DRAM TCM region; internally mapped to `0x9000_0000` – `0x9001_FFFF`
 
 |`0x8000_0000` – `0x8001_FFFF`
 |IRAM (TCM)
@@ -255,7 +325,7 @@ The JV32 SoC implements a 32-bit address space (4 GB) with the following allocat
 |Tightly-coupled data RAM (inside `jv32_top`)
 |===
 
-NOTE: TCM regions (IRAM, DRAM) are not accessible via the peripheral crossbar. They are decoded inside `jv32_top` before the AXI master port. Only accesses that miss TCM are forwarded to the crossbar.
+NOTE: The canonical TCM regions and their aliases are decoded before the peripheral crossbar. They are decoded inside `jv32_top` before the AXI master port. Only accesses that miss TCM are forwarded to the crossbar.
 
 === Address Decode Rules
 
@@ -277,7 +347,7 @@ TCM is decoded combinatorially using power-of-2 masking:
 |`DRAM_BASE=0x9000_0000`, `DRAM_SIZE=131072`
 |===
 
-Accesses that do not match either TCM region are forwarded to the merged AXI master and routed to the peripheral crossbar.
+The SoC also accepts the default alias windows at `0x6000_0000` (IRAM) and `0x7000_0000` (DRAM). Alias accesses are converted to the corresponding canonical TCM address. Accesses that do not match a canonical or alias TCM region are forwarded to the merged AXI master and peripheral crossbar.
 
 ==== Peripheral Crossbar Decode
 
@@ -304,22 +374,38 @@ The AXI crossbar (`axi_xbar`) decodes using base/mask:
 |Magic
 |`0x4000_0000`
 |`0xF000_0000`
-|256 MB aperture; only 0x1200 bytes used
+|256 MB aperture; only two 32-bit registers are implemented (`0x0000` and `0x0004`)
 
 |3
 |External catch-all
 |`0x0000_0000`
 |`0x0000_0000`
-|Matches all addresses not decoded by slaves 0–2; forwarded to `ext_axi_*` SoC ports; returns DECERR if those ports are unconnected
+|Matches all addresses not decoded by UART, CLIC, or Magic and forwards them to the `ext_axi_*` SoC ports. The final response is provided by the connected external target.
 |===
 
-Unmapped addresses return AXI `DECERR` on reads and `DECERR` on writes.
+In the default SoC map, addresses outside the internal TCM and named peripheral regions are forwarded to the external AXI target. They do not automatically produce `DECERR`; the external target determines the response.
 
 <<<
 
 == Processor Core Specification
 
-=== RV32IMAC ISA Support
+=== Data Representation
+
+The core uses 32-bit little-endian data representation. Bit 0 is the least-significant bit, and all addresses are byte addresses. Instruction alignment follows the enabled RISC-V compressed-instruction configuration.
+
+=== ISA Support
+
+=== RV32E Configuration
+
+When `RV32E_EN=1`, the architectural integer register set is reduced to x0–x15. The decoder checks register fields according to the instruction format rather than blindly checking every encoded five-bit field:
+
+* `rs1` is checked only for formats that actually use `rs1`.
+* `rs2` is checked for OP, STORE, BRANCH, and AMO formats.
+* `rd` is checked only when the decoded instruction writes a GPR.
+
+An instruction that actually references x16–x31 is illegal. Immediate fields that happen to contain bit 4 in the same bit positions are not incorrectly rejected.
+
+The core also forces Zba/Zbb/Zbs inactive and disables the RAS and instruction prefetch buffer when `RV32E_EN=1`. Compressed register-prime encodings use x8–x15 and remain within the RV32E register set.
 
 [cols="1,4"]
 .Supported ISA Extensions
@@ -336,7 +422,13 @@ Unmapped addresses return AXI `DECERR` on reads and `DECERR` on writes.
 |Atomic instructions: LR.W/SC.W, AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W
 
 |C (Zca)
-|16-bit compressed instructions; expanded to 32-bit by `jv32_rvc` before the Execute stage
+|16-bit compressed base instructions; expanded to 32-bit by `jv32_rvc` before the Execute stage
+
+|Zcb-style compressed operations
+|`jv32_rvc` also expands the implemented compressed byte/halfword load/store and compact ALU encodings controlled by its internal `RVM23_EN=1` configuration. These operations are part of the supplied RTL configuration; individual expanded instructions still depend on the corresponding base/M capability being enabled.
+
+|Zcmp (optional, `ZCMP_EN=1`)
+|Implements `cm.push`, `cm.pop`, `cm.popret`, `cm.popretz`, `cm.mvsa01`, and `cm.mva01s`; enabled in the default configuration
 
 |Zicsr
 |CSR access instructions: CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI
@@ -354,7 +446,7 @@ Unmapped addresses return AXI `DECERR` on reads and `DECERR` on writes.
 |Single-bit instructions: `BCLR`, `BEXT`, `BINV`, `BSET` and their immediate variants (`BCLRI`, `BEXTI`, `BINVI`, `BSETI`)
 |===
 
-NOTE: Machine mode (M-mode) only. User mode and Supervisor mode are not implemented.
+NOTE: M-mode (M-mode) only. User mode and Supervisor mode are not implemented.
 
 === Pipeline Architecture
 
@@ -410,81 +502,132 @@ The core uses a single-issue 3-stage in-order pipeline:
 |Two-phase read-modify-write sequence: EX issues AXI read, waits for response (LOAD_WAIT), then issues AXI write, waits for B-channel (STORE_WAIT). Pipeline stalls throughout.
 
 |FENCE / FENCE.I
-|Stall / Flush
-|`FENCE.I` flushes the IF stage and resumes from the sequential PC; `FENCE` is a no-op in the RV32IMAC single-issue in-order pipeline (all previous stores are observable before any subsequent load).
+|No-op / Fetch synchronization
+|`FENCE` is decoded but treated as a no-op. `FENCE.I` redirects to the sequential PC, flushes the RVC/instruction-prefetch path, discards an in-flight stale AXI instruction response, and suppresses the first stale registered TCM response after the redirect.
 |===
 
-=== Branch Prediction
+NOTE: `FENCE.I` is the instruction-fetch synchronization mechanism implemented by this core. `jv32_top` contains a FENCE.I-specific stale-response suppressor so that an IRAM instruction modified by a preceding TCM store is re-fetched instead of consuming the registered pre-write SRAM response. `FENCE.I` does not add general data-memory ordering semantics; `FENCE` remains a no-op. `sw/fencei_smc` verifies that every store before `FENCE.I` — including sub-word writes and writes issued while the TCM store queue is full — is visible to the subsequent instruction fetch. `sw/mem_ordering` verifies that `FENCE` never needs to add ordering on the current configuration (program order is already preserved across TCM↔TCM and TCM↔MMIO).
 
-When `BP_EN=1` (default), the core implements a **Backward-Taken / Forward-Not-Taken (BTFNT)** static branch predictor. When `BP_EN=0`, all branches are predicted not-taken and resolved in EX.
+NOTE: `WFI` is also decoded but treated as a no-op in `jv32_core`. It does not stall the hart or enter a physical low-power state.
 
-==== BTFNT Algorithm
+=== Atomic Operation Semantics
 
-The predictor operates at the output of the RVC expander (end of IF stage) before the IF→EX latch is updated:
+When `AMO_EN=1`, the decoder accepts the AMO opcode with `funct3=010` and the core executes LR.W, SC.W, and the implemented AMO.W operations through the atomic state machine.
 
-. **Opcode detection**: The 32-bit expanded instruction is inspected for `opcode == 7'b110_0011` (RISC-V BRANCH group: `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`).
-. **Direction heuristic**: The B-format immediate sign bit (`instr[31]`) is tested.  A set sign bit means a negative offset (branch target is behind the current PC) → **predict taken**.  A clear sign bit means a positive offset (branch target is ahead) → **predict not-taken**.
-. **Redirect**: When a backward branch is predicted taken, `pc_if` is steered to the computed branch target _before_ the instruction is latched into EX, and the RVC buffer is flushed to discard the speculatively fetched sequential instruction.  The `bp_taken` field in the IF→EX pipeline register records whether the prediction was taken.
-. **EX correction**: When EX resolves the branch, one of three outcomes applies:
-   * **Correct taken** (`bp_taken && branch_taken`): no redirect, 0-cycle penalty.
-   * **Correct not-taken** (`!bp_taken && !branch_taken`): no redirect, 0-cycle penalty.
-   * **Mispredicted taken** (`bp_taken && !branch_taken`): EX redirects `pc_if` to `pc_ex + instr_size` (2 for compressed, 4 for 32-bit), squashing the wrongly-fetched target instruction.  1-cycle penalty.
-   * **Mispredicted not-taken** (`!bp_taken && branch_taken`): EX redirects `pc_if` to the branch target, squashing the sequential fetch.  1-cycle penalty.
+==== LR/SC Reservation
 
-==== Performance Impact
+The RTL uses a single reservation consisting of `lr_valid` and the exact 32-bit address captured when LR.W completes successfully.
 
-Backward branches dominate loop control flow, so BTFNT improves average CPI for loop-heavy code compared to a simple predict-not-taken strategy.  The worst case is identical to predict-not-taken (1-cycle penalty).
+* LR.W returns the loaded word and records the LR address.
+* SC.W succeeds only when `lr_valid=1` and the SC address exactly matches the saved LR address.
+* Successful SC.W returns `0`.
+* SC.W without a matching reservation returns `1` and does not issue the store.
+* Executing *any* SC.W invalidates the reservation, whether it succeeds or fails. A failing SC.W (address mismatch, or no live reservation) clears `lr_valid` in the same cycle; a matching SC.W clears it when the store transaction completes. This matches the RISC-V A-extension requirement that "regardless of success or failure, executing an SC.W instruction invalidates any reservation held by this hart".
+* Ordinary loads, stores, traps, interrupts, and unrelated AMO operations by the hart itself do not clear `lr_valid`. For a single-hart system this is a legal implementation choice; a later SC.W is still bounded because the first SC.W in program order clears the reservation.
+* A debug-module memory write — SBA or an abstract Access Memory command — to the reserved word invalidates the reservation on the next cycle, so an SC.W paired with an LR.W that the debugger overwrote fails. The comparison is word-granular and on canonical (de-aliased) addresses.
 
-==== BP_EN=0 Fallback
+`aq` / `rl` bits on atomics are decoded but do not change core behaviour: the in-order single-issue pipeline and store queue already retire memory and I/O operations in an order at least as strong as every acquire/release case on this single-hart configuration (verified by `sw/mem_ordering`).
 
-When `BP_EN=0`, the predictor logic is gated: `bp_redirect` is always 0, all branches are treated as not-taken in IF, and EX redirects the PC whenever a branch is actually taken (1-cycle penalty for every taken branch).
+==== AMO Encoding Scope
 
-==== Return Address Stack (RAS)
+The supported AMO.W operations are `AMOSWAP`, `AMOADD`, `AMOXOR`, `AMOAND`, `AMOOR`, `AMOMIN`, `AMOMAX`, `AMOMINU`, and `AMOMAXU`, plus LR.W and SC.W.
 
-When `BP_EN=1` and `RAS_EN=1` (default), the core adds a **2-entry circular Return Address Stack** to predict function returns with zero penalty:
+The decoder validates `AMO_EN`, requires `funct3=010`, and WARL-checks `funct5`: only the eleven architecturally defined encodings above are accepted. Every other `funct5` value under the AMO opcode raises an illegal-instruction exception and issues no memory transaction.
 
-* **Push**: when a `JAL` or `JALR` with a link-register destination (`rd = ra` or `rd = t0`) is decoded in IF, the sequential return address is pushed onto the RAS.
-* **Pop**: when a `JALR` with a link-register source and non-link destination is decoded (`rs1 = ra`/`t0`, `rd ≠ ra`/`t0`), the top-of-stack entry is used as the predicted target PC, avoiding the 1-cycle EX flush that would otherwise occur.
-* **`RAS_EN=0`**: disables the RAS; returns fall back to the plain JALR not-taken path (1-cycle penalty on every return). Automatically disabled when `RV32EC=1` (minimum configuration).
+==== Atomic Alignment
 
-=== Performance Characteristics
+All implemented atomic operations are word operations and require a naturally aligned 32-bit address. A misaligned LR.W / SC.W / AMO.W address is detected in the EX stage and raises an address-misaligned exception before any memory transaction is issued: cause 4 (load address misaligned) for LR.W, and cause 6 (store/AMO address misaligned) for SC.W and every AMO.W. `mtval` holds the faulting address.
 
-[cols="1,3"]
-.Performance Metrics
+=== Control-Flow Prediction
+
+When `BP_EN=1` (default), the front end combines static BTFNT conditional-branch prediction, one-entry last-branch reuse, JAL predecode, and the optional Return Address Stack (RAS). `BP_EN=0` disables these speculative front-end redirects.
+
+==== Conditional Branch Prediction
+
+For a conditional branch, the front end applies the following prediction rules:
+
+. A valid one-entry last-branch (`L0`) hit for the same branch PC reuses the most recently resolved taken target.
+. Otherwise, a backward branch (negative B-immediate) is predicted taken.
+. A forward branch is predicted not taken.
+. EX resolves the actual branch condition. A mismatch between the prediction and the resolved result redirects the fetch PC and flushes the speculative path.
+
+The L0 entry is updated whenever a branch resolves and records that branch PC, resolved target, and whether the branch was taken. This allows a recently observed forward-taken branch to be predicted taken even though the normal BTFNT rule predicts forward branches as not taken.
+
+When `BP_EN=0`, conditional branches are predicted not taken and a taken branch redirects from EX.
+
+==== JAL
+
+The front end recognizes JAL after RVC expansion and computes its PC-relative target before the instruction reaches EX. When front-end prediction is active, the fetch path redirects directly to that target. EX still computes the architectural JAL target and link value.
+
+The architectural link address is `PC + 2` for a compressed call expanded by the RVC front end and `PC + 4` for a 32-bit JAL/JALR instruction.
+
+==== JALR
+
+JALR computes the architectural target in EX as:
+
+----
+target = (rs1 + immediate) & ~1
+----
+
+Bit 0 of the target is therefore always cleared.
+
+A general JALR is not target-predicted by BTFNT. Eligible return patterns can instead be predicted by the RAS. If a RAS prediction is absent or does not match the EX-computed target, EX redirects to the computed JALR target.
+
+==== Return Address Stack
+
+The RAS is active only when `BP_EN=1`, `RAS_EN=1`, and `RV32E_EN=0`. It is a two-entry circular structure.
+
+* **Push**: JAL or JALR with `rd` equal to `x1` (`ra`) or `x5` (`t0`) pushes the sequential return address.
+* **Pop**: JALR with `rs1` equal to `x1` or `x5` and `rd` not equal to either link register uses and removes the current RAS top when the stack is non-empty.
+* **Push + pop**: a JALR pattern that both reads and writes a link register is treated as a coroutine-style operation; the current top entry is replaced while the RAS pointer is unchanged.
+* **Empty RAS**: no speculative return redirect is made.
+* **Non-speculative redirect**: exception, MRET, or interrupt redirect clears the RAS state.
+* **Branch correction and FENCE.I**: these redirects do not clear the RAS.
+
+A RAS prediction is only speculative. EX always computes the JALR target and corrects the fetch path if the predicted return address is wrong.
+=== RTL Operation Timing
+
+The following timing statements are derived from the current RTL. They are not benchmark results and do not define a system-level performance guarantee.
+
+[cols="2,4"]
+.RTL Operation Timing
 |===
-|Metric |Typical Value
+|Operation |RTL Behavior
 
-|CPI (Cycles Per Instruction)
-|~1.0–1.1 (TCM hit, no branch; depends on instruction mix)
+|TCM read
+|The SRAM uses a registered read path. A granted read returns data on the following clock cycle.
 
-|TCM Read Latency (I-fetch or D-load)
-|1 cycle (registered SRAM output)
+|Load-use dependency
+|The dependent instruction incurs one pipeline stall cycle.
 
-|Load-use Penalty
-|1 cycle stall
+|Conditional branch
+|A correct BTFNT prediction requires no EX-stage correction flush. A misprediction causes one EX-stage correction/flush cycle.
 
-|Branch Flush Penalty
-|0 cycles (correct BTFNT prediction) / 1 cycle (misprediction or `BP_EN=0` taken branch)
+|`BP_EN=0` taken branch
+|A taken branch requires an EX-stage redirect because no taken prediction is made.
 
-|Multiply Latency
-|1 cycle (`FAST_MUL=1`), 1–32 cycles (`FAST_MUL=0`, CLZ-reduced on multiplier)
+|Multiply
+|`FAST_MUL=1` selects the fast multiply datapath. `FAST_MUL=0` selects the iterative implementation. `MUL_MC` further controls the fast multiply implementation.
 
-|Divide Latency
-|1 cycle (`FAST_DIV=1`), 1–32 cycles (`FAST_DIV=0`, CLZ-reduced on dividend)
+|Divide
+|`FAST_DIV=1` selects the fast divide datapath. `FAST_DIV=0` selects the iterative implementation.
 
-|Barrel Shift Latency
-|1 cycle (`FAST_SHIFT=1`), up to 31 cycles (`FAST_SHIFT=0`)
+|Shift
+|`FAST_SHIFT=1` selects the barrel shifter. `FAST_SHIFT=0` selects the iterative shifter.
 
-|AXI Out-of-TCM Read Latency
-|3–10+ cycles (depends on peripheral/AXI round-trip)
+|IRAM contention
+|A D-side IRAM access has priority over instruction fetch when both require the shared IRAM port.
 
-|IRAM contention (D vs I access)
-|1 extra cycle stall on I-fetch (D-path wins)
+|External AXI transaction
+|No fixed latency is specified. Completion depends on the connected interconnect and target.
 |===
 
+This datasheet does not define typical CPI, benchmark performance, interrupt-entry latency, or maximum clock frequency. Those values depend on the selected RTL parameters, software workload, memory placement, external-system latency, synthesis target, and physical implementation.
 === CSR (Control and Status Registers)
 
-The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11, plus CLIC extensions:
+CSR instructions are checked by the decoder before execution. Access to an unknown CSR is illegal. A write attempt to a read-only CSR is illegal; CSRRS/CSRRC and their immediate forms remain read-only accesses when the source value is zero. The core implements only the CSR addresses listed in this datasheet.
+
+The core implements M-mode CSRs and CLIC-related CSRs. `misa` reports the MISA-visible base/standard extension bits implemented by `jv32_csr`; separately parameterized Zba/Zbb/Zbs and Zcmp support is not encoded in `misa`.
 
 [cols="1,2,1,3"]
 .Implemented CSRs
@@ -499,22 +642,32 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 |0x301
 |misa
 |R/O
-|ISA and extensions: `0x4000_1105` (RV32IMAC: A[0], C[2], I[8], M[12])
+|ISA and extensions. Default value: `0x4000_1105` (RV32IMAC). The value changes with the configured ISA parameters.
 
 |0x304
 |mie
 |R/W
-|Machine interrupt-enable: MSIE[3], MTIE[7], MEIE[11]
+|Machine interrupt-enable. Only MSIE[3], MTIE[7], and MEIE[11] are writable; other bits read as zero.
 
 |0x305
 |mtvec
 |R/W
-|Machine trap-handler base address (bits[1:0] = mode: 00=Direct, 01=Vectored, 11=CLIC)
+|Machine trap-handler base. The RTL preserves only mode bit 0: `0` = Direct and `1` = Vectored. Bit 1 is forced to zero. CLIC vectoring uses `mtvt` independently.
 
 |0x307
 |mtvt
 |R/W
-|CLIC vector table base address (bit[1:0] must be 0; 64-byte aligned)
+|CLIC vector table base address. The RTL forces bits [5:0] to zero, giving 64-byte alignment.
+
+|0x310
+|mstatush
+|R/O
+|Upper machine-status view; returns zero in this RV32 implementation
+
+|0x320
+|mcountinhibit
+|R/W
+|Counter control: CY[0] inhibits `mcycle`; IR[2] inhibits `minstret`
 
 |0x340
 |mscratch
@@ -524,7 +677,7 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 |0x341
 |mepc
 |R/W
-|Machine exception program counter (PC of interrupted/excepted instruction)
+|Machine exception program counter. Bit 0 is forced to zero on CSR writes.
 
 |0x342
 |mcause
@@ -538,7 +691,7 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 
 |0x344
 |mip
-|R/W
+|R/O
 |Machine interrupt-pending: MSIP[3], MTIP[7], MEIP[11]
 
 |0x345
@@ -586,6 +739,21 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 |R/O
 |Unprivileged alias of minstret (lower 32 bits)
 
+|0xC80
+|cycleh
+|R/O
+|Unprivileged alias of `mcycleh`
+
+|0xC81
+|timeh
+|R/O
+|Upper 32 bits of CLIC `mtime`
+
+|0xC82
+|instreth
+|R/O
+|Unprivileged alias of `minstreth`
+
 |0xF11
 |mvendorid
 |R/O
@@ -616,22 +784,20 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 
 ==== Exception Types
 
+The table lists exceptions that are actively generated by the current RTL. The core uses 16-bit instruction alignment when compressed instructions are enabled.
+
 [cols="1,2,4"]
 .Exception Causes (mcause[31]=0)
 |===
 |Code |Name |Description
 
-|0
-|Instruction address misaligned
-|PC not 4-byte aligned (2-byte alignment supported for RVC; 4-byte required for non-C instructions)
-
 |1
 |Instruction access fault
-|I-fetch AXI error response (SLVERR or DECERR from the AXI master)
+|I-fetch AXI error response (`SLVERR` or `DECERR` from the AXI master)
 
 |2
 |Illegal instruction
-|Undefined or unsupported opcode
+|Undefined, unsupported, disabled-by-parameter, or otherwise rejected instruction encoding. `mtval` receives `orig_instr`; for compressed instructions this preserves the original compressed encoding supplied by the RVC front end.
 
 |3
 |Breakpoint
@@ -639,28 +805,51 @@ The core implements Machine-mode CSRs per RISC-V Privileged Specification v1.11,
 
 |4
 |Load address misaligned
-|Load address not naturally aligned to the access size
+|Load address not naturally aligned to the access size, including a misaligned LR.W address
 
 |5
 |Load access fault
 |Load AXI error response
 
 |6
-|Store/AMO address misaligned
-|Store or AMO address not naturally aligned
+|Store address misaligned
+|Store address not naturally aligned to the access size, including a misaligned SC.W or AMO.W address
 
 |7
 |Store/AMO access fault
-|Store or AMO AXI error response
-
-|8
-|Environment call from U-mode
-|ECALL executed in U-mode (not normally reached; M-mode only system)
+|Store, SC, or AMO write-side AXI error response. Atomic read-side failures are reported through the memory-fault path based on the active AMO transaction phase.
 
 |11
 |Environment call from M-mode
 |ECALL executed in M-mode
 |===
+
+NOTE: The EX-stage misalignment check covers normal loads and stores and, in this RTL, also LR.W / SC.W / AMO.W. A misaligned atomic raises cause 4 (LR.W) or cause 6 (SC.W, AMO.W) with `mtval` = faulting address, and no memory transaction is issued.
+
+==== Exception Detection Priority
+
+For an instruction reaching EX, the core checks synchronous conditions in this order:
+
+. instruction-fetch access fault;
+. illegal instruction (includes reserved AMO `funct5` encodings);
+. EBREAK that is not redirected into Debug Mode;
+. ECALL;
+. load/store/AMO address misalignment (normal loads and stores, and LR.W / SC.W / AMO.W).
+
+The first matching condition is recorded in the EX/WB pipeline state. Data-memory AXI faults are detected later in WB and become load/store access-fault exceptions. Because illegal-instruction ranks above the misalignment check, a reserved AMO encoding with a misaligned address reports illegal instruction.
+
+==== Redirect and Trap Priority
+
+At the WB redirect point, the current RTL applies the following priority:
+
+. synchronous exception or data-memory access fault;
+. MRET;
+. pending interrupt;
+. EX-stage control-flow redirect such as a branch correction, JALR correction, or FENCE.I.
+
+A pending interrupt therefore does not override an older synchronous exception or an MRET already in WB. When an interrupt is accepted, the WB instruction is canceled rather than retired; its PC is saved as the interrupt `mepc` so that it is re-executed after MRET.
+
+During single-step execution, normal interrupt acceptance is suppressed while the step is pending. CLIC MRET tail chaining is handled separately: if MRET executes while a CLIC interrupt above `mintthresh` is pending, the core redirects directly to the next CLIC vector instead of first returning to `mepc`.
 
 ==== Interrupt Types
 
@@ -756,8 +945,8 @@ Both IRAM and DRAM are physically located inside `jv32_top` as a single 32-bit w
 |Read latency
 |1 cycle (registered output: addr at cycle N → data at cycle N+1)
 
-|Write behaviour
-|Written at rising edge of cycle N; pipeline sees effect from cycle N onwards (NO_CHANGE read mode: rdata not updated on write cycles)
+|Write behavior
+|Selected byte lanes are written on the active clock edge. `sram_1rw` uses NO_CHANGE read-during-write behavior: the registered read output is not updated on a write cycle.
 
 |Data width
 |32 bits; 4-bit byte-enable write (`we[3:0]`); each byte lane independently writable
@@ -804,8 +993,8 @@ When multiple requestors target the same SRAM in the same cycle:
 |D-read (IRAM or DRAM hit)
 |Addr presented at cycle N; data available at cycle N+1; pipeline inserts 1-cycle load stall
 
-|D-write (IRAM or DRAM hit)
-|Data written at rising edge of cycle N; write acknowledged at cycle N+1 (1 AXI cycle)
+|Core D-write (IRAM or DRAM hit)
+|Selected byte lanes are written on the active clock edge. This is a core-local TCM access, not an AXI transaction.
 
 |IRAM contention (D + I both need IRAM)
 |D-path wins; I-fetch stalls 1 extra cycle
@@ -813,6 +1002,17 @@ When multiple requestors target the same SRAM in the same cycle:
 |Stale I-fetch after redirect
 |`imem_flush` signal (= `rvc_flush`) gates the TCM response; cycle N+1 response is suppressed when a branch/exception redirect occurred at cycle N
 |===
+
+=== TCM AXI Slave Semantics
+
+The TCM slave path uses `axi_ram_ctrl` and the shared single-port SRAM.
+
+* AW and W may arrive independently; each channel is held until both parts of the write transaction are available.
+* `WSTRB[3:0]` directly controls the four SRAM byte write enables.
+* The address presented to SRAM is `addr >> 2`; low address bits `[1:0]` are not checked. Software and external masters must therefore issue naturally aligned accesses.
+* A read returns AXI `OKAY`; no address-alignment error is generated by `axi_ram_ctrl`.
+* If a RAM controller instance is configured with `WR_EN=0`, writes return `SLVERR`; writable TCM instances return `OKAY`.
+* SRAM contents are not initialized by `sram_1rw` reset. Program/data initialization is supplied by the simulation/FPGA integration flow.
 
 === ELF Loading (Pre-Simulation)
 
@@ -842,7 +1042,7 @@ void mem_write_byte(uint32_t addr, uint8_t data) {
 
 === UART (Universal Asynchronous Receiver/Transmitter)
 
-==== Overview
+==== UART Overview
 
 The UART peripheral provides serial communication with configurable baud rate and 8N1 format.
 
@@ -855,16 +1055,16 @@ The UART peripheral provides serial communication with configurable baud rate an
 |`0x2001_0000`
 
 |Aperture
-|256 B (`0x2001_0000`–`0x2001_00FF`); only first 0x18 bytes used; accesses beyond 0x18 return SLVERR
+|256 B (`0x2001_0000`–`0x2001_00FF`); valid register offsets are `0x00`–`0x18`. Accesses from `0x1C` to `0xFF` return `SLVERR`.
 
 |Data Format
 |8 bits, no parity, 1 stop bit (8N1)
 
 |Baud Rate
-|Configurable via `BAUD_RATE` parameter (default `115_200`); compile-time fixed (`CLKS_PER_BIT = CLK_FREQ / BAUD_RATE`)
+|The reset/default baud rate is selected by `CLK_FREQ` and `BAUD_RATE`. Software can change the runtime divisor by writing offset `0x10`.
 
 |TX FIFO Depth
-|16 entries (parameterisable: `FIFO_DEPTH`, must be power-of-2)
+|16 entries (parameterized: `FIFO_DEPTH`, must be power-of-2)
 
 |RX FIFO Depth
 |16 entries (same as TX)
@@ -873,7 +1073,7 @@ The UART peripheral provides serial communication with configurable baud rate an
 |Level-triggered; asserted when `(IE & IS) != 0`
 |===
 
-==== Register Map
+==== UART Register Map
 
 [cols="1,2,1,4"]
 .UART Registers (base `0x2001_0000`)
@@ -883,8 +1083,8 @@ The UART peripheral provides serial communication with configurable baud rate an
 |0x00
 |DATA
 |R/W
-|**Write**: push byte (bits[7:0]) to TX FIFO (silently dropped if FIFO full) +
-**Read**: pop byte from RX FIFO (returns 0 if empty)
+|**Write**: pushes `wdata[7:0]` to the TX FIFO only when `WSTRB[0]=1` and the FIFO is not full. A write while the FIFO is full is silently dropped and still receives `OKAY`. +
+**Read**: returns the byte at the RX FIFO read pointer and pops it only when the RX FIFO is non-empty. Software must check `STATUS.rx_ready` before reading DATA; the value returned while the FIFO is empty is not a defined data value.
 
 |0x04
 |STATUS
@@ -892,15 +1092,16 @@ The UART peripheral provides serial communication with configurable baud rate an
 |**[0]** `tx_busy` — TX FIFO full / cannot accept data (same signal as `tx_full`) +
 **[1]** `tx_full` — TX FIFO full flag +
 **[2]** `rx_ready` — RX FIFO has data available (not empty) +
-**[3]** `rx_overrun` — RX FIFO full (incoming bytes will be lost)
+**[3]** `rx_full` — RX FIFO full. An incoming received byte is silently dropped while this condition is true.
 
-NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as a TX-busy / write-inhibit flag, [1] as the canonical full flag.
+NOTE: bits[1:0] reflect the same underlying `txf_full` signal. Bit 0 is therefore not a transmitter-shift-register busy indication; it only indicates that the TX FIFO cannot accept another byte.
 
 |0x08
 |IE (Interrupt Enable)
 |R/W
 |**[0]** `rx_ready_ie` — enable RX-ready interrupt +
-**[1]** `tx_empty_ie` — enable TX empty interrupt
+**[1]** `tx_empty_ie` — enable TX empty interrupt. +
+Only `WSTRB[0]` enables an IE write; the implemented value is `wdata[1:0]`.
 
 |0x0C
 |IS (Interrupt Status)
@@ -909,15 +1110,15 @@ NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as
 **[1]** `tx_empty` — TX FIFO empty (level-triggered)
 
 |0x10
-|LEVEL
+|LEVEL / BAUDDIV
 |R/W
-|**Read**: **[15:0]** `rx_count` — number of bytes in RX FIFO; **[31:16]** `tx_count` — number of bytes in TX FIFO +
-**Write**: **[15:0]** baud-rate divisor (`CLKS_PER_BIT − 1`); upper 16 bits ignored. Latched immediately; any byte in flight will be corrupted.
+|**Read**: **[15:0]** `rx_count` — number of bytes in RX FIFO; **[31:16]** `tx_count` — number of bytes in TX FIFO. +
+**Write**: **[15:0]** runtime baud-rate divisor (`CLKS_PER_BIT − 1`); upper 16 bits are ignored. The RTL does not gate this write with `WSTRB`; software should use a naturally aligned 32-bit write. The divisor takes effect immediately, so changing it during an active TX or RX character can corrupt that character.
 
 |0x14
 |CTRL
 |R/W
-|**[0]** `loopback_en` — internal TX→RX loopback (for testing)
+|**[0]** `loopback_en` — internal TX→RX loopback. Only `WSTRB[0]` enables a CTRL write.
 
 |0x18
 |CAPABILITY
@@ -929,17 +1130,22 @@ NOTE: bits[1:0] reflect the same underlying `txf_full` signal; [0] exposes it as
 
 NOTE: Interrupt asserts when `(IE & IS) != 0`. There is no explicit interrupt-clear register; the interrupt de-asserts automatically when the FIFO condition clears (e.g. RX FIFO drained, TX FIFO refilled).
 
+NOTE: The UART performs range checking using address bits `[7:2]`. Software should use the documented naturally aligned word offsets. Misaligned addresses within a valid word range are not part of the programming interface and may return `OKAY` without accessing the intended register.
+
 ==== Baud Rate Configuration
 
-The baud rate is determined at elaboration time:
+The reset value of the baud-rate divisor is derived at elaboration time:
 
 ----
 CLKS_PER_BIT = CLK_FREQ / BAUD_RATE
+baud_div_r   = CLKS_PER_BIT - 1
 ----
 
-**Hardware constraint**: `CLKS_PER_BIT >= 4` (absolute minimum for RX centre sampling).
+After reset, software may change `baud_div_r` by writing the lower 16 bits of UART offset `0x10`. The new bit period is `baud_div_r + 1` system-clock cycles.
 
-**Recommended**: `CLKS_PER_BIT >= 8` for production use.
+**RTL elaboration constraint**: `CLKS_PER_BIT >= 4`. The non-synthesis assertion in `axi_uart.sv` rejects smaller values.
+
+This datasheet does not define a production baud-rate margin beyond that RTL constraint. Board-level clock tolerance, UART peer tolerance, and implementation timing must be verified for the target system.
 
 [cols="1,1,1"]
 .Common Baud Rates at 100 MHz
@@ -964,16 +1170,16 @@ CLKS_PER_BIT = CLK_FREQ / BAUD_RATE
 
 |12.5 Mbaud
 |8
-|Very fast; minimum recommended
+|Example configuration
 
 |25 Mbaud
 |4
-|Maximum (hardware minimum; lab use only)
+|Minimum divisor accepted by the RTL elaboration check
 |===
 
-WARNING: Baud rates requiring `CLKS_PER_BIT < 4` will not be received correctly.
+WARNING: Configurations with `CLKS_PER_BIT < 4` violate the RTL elaboration constraint.
 
-==== Interrupt Behaviour
+==== Interrupt Behavior
 
 * **RX interrupt** (`IS[0]`): Fires whenever RX FIFO is non-empty. Stays asserted until all bytes are consumed.
 * **TX interrupt** (`IS[1]`): Fires whenever TX FIFO is empty. Stays asserted until software writes more data.
@@ -998,7 +1204,7 @@ WARNING: Baud rates requiring `CLKS_PER_BIT < 4` will not be received correctly.
 
 === CLIC (Core-Local Interrupt Controller)
 
-==== Overview
+==== CLIC Overview
 
 The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software interrupt registers with a 16-line external interrupt controller supporting per-interrupt enable, level, and priority.
 
@@ -1011,7 +1217,7 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |`0x0200_0000`
 
 |Aperture
-|2 MB (CLIC spec aperture; only CLINT registers + first 64 CLICINT entries used)
+|2 MB crossbar aperture. The RTL implements MSIP, MTIME, MTIMECMP, and `NUM_IRQ` CLICINT words; with the default `NUM_IRQ=16`, only CLICINT[0]–CLICINT[15] are implemented.
 
 |CLINT Compatibility
 |Full `mtime`/`mtimecmp`/`msip` register layout at standard RISC-V CLINT offsets
@@ -1032,7 +1238,7 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |`timer_irq_o`, `software_irq_o`, `clic_irq_o` (aggregated external), `clic_level_o[7:0]`, `clic_prio_o[7:0]`, `clic_id_o[4:0]` (winning IRQ index; used by CPU to compute `mtvt + 4*id`)
 |===
 
-==== Register Map
+==== CLIC Register Map
 
 [cols="1,2,1,4"]
 .CLIC / CLINT Registers (base `0x0200_0000`)
@@ -1042,7 +1248,7 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |0x0000
 |MSIP
 |R/W
-|Machine Software Interrupt Pending. `[0]=msip`: write 1 to assert software interrupt; write 0 to clear.
+|Machine Software Interrupt Pending. `[0]=msip`: write 1 to assert software interrupt; write 0 to clear. The RTL takes bit 0 directly from `wdata[0]`; `WSTRB` is not applied to MSIP, so software should use a normal aligned 32-bit write.
 
 |0x4000
 |MTIME_LO
@@ -1072,11 +1278,14 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 **[1]** `ie` — interrupt enable (1=enabled) +
 **[7:2]** reserved — read as 0, writes ignored +
 **[15:8]** reserved — read as 0, writes ignored (CLIC `attr` field **not implemented** in this RTL) +
-**[23:16]** `ctl` — interrupt priority/level (8-bit; higher value = more urgent; used as both level and priority) +
-**[31:24]** reserved — read as 0
+**[23:16]** `ctl` — interrupt control value (8-bit; higher value wins arbitration and is also reported as the current level/priority) +
+**[31:24]** reserved — read as 0. +
+Writes to `ie` are applied only when `WSTRB[0]=1`; writes to `ctl` are applied only when `WSTRB[2]=1`.
 |===
 
-NOTE: MSIP, MTIME, and MTIMECMP offsets match the standard RISC-V CLINT specification for single-hart systems (compatible with `kv_clint_*` SDK functions).
+NOTE: MSIP, MTIME, and MTIMECMP use the familiar single-hart CLINT-style offsets used by this design.
+
+NOTE: `axi_clic` always returns AXI `OKAY` for reads and writes. Unsupported offsets read as zero and writes have no effect. Software therefore must not use the AXI response code to discover whether a CLIC offset is implemented.
 
 ==== Timer Operation
 
@@ -1103,22 +1312,18 @@ Write `MSIP[0] = 1` to assert machine software interrupt immediately, `0` to cle
 
 Each `ext_irq_i[n]` input is gateable via `CLICINT[n].ie`. When any enabled and pending external interrupt has `ctl` (priority level) greater than the current `mintthresh` CSR value, `clic_irq_o` is asserted to the core as an M-mode external interrupt.
 
-The CLIC asserts `clic_id_o[4:0]` with the index of the highest-priority pending enabled interrupt (highest `ctl` value wins). Both `clic_level_o[7:0]` and `clic_prio_o[7:0]` are driven with the same value — `clicint_ctl[winner]` — since this implementation does not differentiate level from priority. The CPU uses this to compute the handler address as `mtvt + 4*clic_id` (where `mtvt` is programmed to a 4-byte-pointer table). This happens automatically on interrupt entry and on hardware tail-chain at `mret`; software can also perform the same lookup by reading `mnxti`.
+When a CLIC interrupt is eligible (`clic_irq` asserted above `mintthresh`) and global machine interrupts are enabled, the CSR interrupt selector gives the CLIC path precedence over the conventional MEI/MTI/MSI inputs. The CLIC asserts `clic_id_o[4:0]` with the index of the winning pending enabled interrupt. Arbitration scans interrupt IDs in ascending order and replaces the current winner only when a strictly greater `clicint_ctl` value is found. Therefore, when two pending interrupts have the same `ctl` value, the lower interrupt ID wins. Both `clic_level_o[7:0]` and `clic_prio_o[7:0]` carry the same `clicint_ctl[winner]` value; this RTL does not implement separate level and priority fields. The CPU uses this to compute the handler address as `mtvt + 4*clic_id` (where `mtvt` is programmed to a 4-byte-pointer table). This happens automatically on interrupt entry and on hardware tail-chain at `mret`; software can also perform the same lookup by reading `mnxti`.
 
 [NOTE]
-====
 **UART IRQ routing**: the UART `irq` output (asserted when `(IE & IS) != 0`) is OR'd into `ext_irq_i[0]` inside `jv32_soc` before being presented to the CLIC. The effective `CLICINT[0].ip` thus reflects `ext_irq_i[0] | uart_irq`. Software must enable `CLICINT[0].ie` and configure `CLICINT[0].ctl` to receive UART interrupts. The external `ext_irq_i[0]` SoC pin is still available and is ORed with the UART interrupt.
-====
-
----
 
 === Magic Device (Simulation Only)
 
-==== Overview
+==== Magic Device Overview
 
 The Magic Device provides simulation console I/O and simulation exit control.
 
-WARNING: The Magic Device is for simulation only. It must not be synthesised for FPGA/ASIC production.
+WARNING: The Magic Device is for simulation only. It must not be synthesized for FPGA/ASIC production.
 
 [cols="1,3"]
 .Magic Device Features
@@ -1135,7 +1340,7 @@ WARNING: The Magic Device is for simulation only. It must not be synthesised for
 |Offset `0x0004`: HTIF-encoded exit. Write `(exit_code << 1) \| 1` to exit with the given code; `1` = pass (exit code 0). The RTL calls `sim_request_exit(value >> 1)`. Writing `0` is ignored.
 |===
 
-==== Register Map
+==== Magic Device Register Map
 
 [cols="1,2,1,4"]
 .Magic Device Registers (base `0x4000_0000`)
@@ -1153,9 +1358,11 @@ WARNING: The Magic Device is for simulation only. It must not be synthesised for
 |HTIF-encoded exit control: `sim_request_exit(value >> 1)` is called when any non-zero value is written. Write `1` = pass (exit code 0); write `(code << 1) \| 1` = fail with `code`. Writing `0` has no effect.
 |===
 
-==== AXI Response Behaviour
+==== AXI Response Behavior
 
-`axi_magic` returns `OKAY` for `CONSOLE` and `EXIT` addresses. All other addresses within the Magic device AXI aperture return `SLVERR`.
+`axi_magic` compares addresses after clearing bits `[1:0]`; byte addresses within the 32-bit CONSOLE or EXIT word therefore select the same magic register. Recognized reads return zero with `OKAY`; unrecognized addresses return zero with `SLVERR`.
+
+For writes, a one-hot `WSTRB` selects the corresponding byte from `WDATA`. Other strobe patterns use `WDATA[7:0]` for console-character extraction. EXIT uses the selected byte for one-hot byte writes and the full 32-bit `WDATA` for other write-strobe patterns.
 
 ==== Usage Example
 
@@ -1175,6 +1382,10 @@ void sim_fail(int code) { MAGIC_EXIT = (code << 1) | 1; }
 <<<
 
 == AXI Interconnect and Bus Protocol
+
+=== Protocol Scope
+
+The integrated AXI interfaces implement the transaction behavior exposed by the supplied RTL. This datasheet documents the supported integration contract and does not imply support for AXI features that are absent from the module ports or control logic.
 
 === AXI4-Lite Overview
 
@@ -1201,7 +1412,7 @@ The JV32 SoC uses AXI4-Lite throughout (32-bit address, 32-bit data, no burst, n
 |`OKAY` (2'b00), `SLVERR` (2'b10), `DECERR` (2'b11)
 
 |Crossbar Topology
-|1 master (`jv32_top` merged output), 3 peripheral slaves
+|1 master and 4 decode targets in `jv32_soc`: UART, CLIC, Magic, and the external AXI catch-all target
 |===
 
 === `jv32_top` AXI Master Port (`m_axi_*`)
@@ -1291,8 +1502,10 @@ The TCM slave port has the same signal set as the master port (with directions f
 The `axi_xbar` module implements a 1-to-N address-decoder crossbar:
 
 * **Address decode**: `(addr & SLAVE_MASK[i]) == (SLAVE_BASE[i] & SLAVE_MASK[i])` for each slave in order; first match wins
-* **Error response**: DECERR on both read and write for unmapped addresses
-* **Peripheral protocol restriction**: All peripheral slaves are single-beat only; `ARLEN`/`AWLEN` are not forwarded; `RLAST` is hardcoded to `1'b1`
+* **Decode ordering**: slave indices are checked in ascending order and the first matching base/mask entry wins.
+* **Crossbar-local decode error**: if no configured slave entry matches, the crossbar returns `DECERR` on both reads and writes.
+* **SoC catch-all target**: the fourth `jv32_soc` decode entry uses base `0x0000_0000` and mask `0x0000_0000`, so every address not claimed by UART, CLIC, or Magic matches the external AXI target. In the default SoC integration, crossbar-local `DECERR` is therefore normally unreachable; the external target supplies the final response.
+* **Protocol scope**: the exposed interconnect is AXI4-Lite and carries only single-beat transactions; there are no burst-length, burst-type, ID, or `RLAST` ports.
 
 === Bus State Machines (inside `jv32_top`)
 
@@ -1327,7 +1540,311 @@ The merged AXI master is implemented as a state machine with the following state
 
 <<<
 
-== Electrical and Timing Characteristics
+== Debug and JTAG
+
+=== Debug Architecture
+
+When `JTAG_EN=1`, the SoC instantiates the JTAG TAP, RISC-V Debug Transport Module (DTM), Debug Module control logic, abstract-command engine, System Bus Access (SBA), and hardware trigger support.
+
+The Debug Module conforms to **RISC-V Debug Specification 1.0**: `dmstatus.version` reads 3 and `dtmcs.version` reads 1 (the DTM encoding shared by spec 0.13 and 1.0). Optional 1.0 features that JV32 does not implement read back as "absent": `dmstatus.hasresethaltreq` = 0 (no halt-on-reset), `dmstatus.confstrptrvalid` = 0 (no configuration string), `dtmcs.errinfo` = 0, and the `dmcs2`/`hawindow`/`confstrptr0-3` registers return 0. `dmstatus.ndmresetpending` tracks `dmcontrol.ndmreset`; `dmstatus.stickyunavail` = 0 (the single hart is always present). `nextdm` (DMI 0x1d) reads 0 — this is the only Debug Module.
+
+The implementation spans two clock domains:
+
+* The TAP and DMI register bank operate in the TAP clock domain.
+* Debug command execution, register access, memory access, and core control operate in the system-clock domain.
+* Clock-domain crossings use synchronizers, toggle handshakes, or stable-payload transfer mechanisms implemented in `jtag_tap.sv` and `jv32_dtm.sv`.
+
+When `JTAG_EN=0`, the debug logic is not instantiated and the associated debug outputs are tied to inactive values.
+
+=== JTAG TAP
+
+The TAP uses a 5-bit instruction register.
+
+[cols="1,1,3"]
+.Supported JTAG Instructions
+|===
+|Instruction |IR Value |Behavior
+
+|IDCODE
+|`0x01`
+|Shifts the 32-bit `IDCODE` value. The default RTL parameter is `0x1DEAD3FF`.
+
+|DTMCS
+|`0x10`
+|Accesses the Debug Transport Module Control and Status register.
+
+|DMI
+|`0x11`
+|Accesses the 41-bit DMI scan register: 7-bit address, 32-bit data, and 2-bit operation.
+
+|BYPASS
+|`0x1F`
+|Selects the one-bit bypass register.
+
+|Other IR values
+|—
+|Use the bypass data path.
+|===
+
+After TAP reset, the instruction register selects IDCODE.
+
+=== DTMCS
+
+The implemented DTMCS value reports:
+
+[cols="2,2,3"]
+.DTMCS Fields
+|===
+|Field |Value |Description
+
+|`version`
+|1
+|DTM encoding used by RISC-V Debug Spec 0.13 and 1.0.
+
+|`errinfo`
+|0
+|Optional; extended DMI error detail is not implemented.
+
+|`abits`
+|7
+|DMI uses a 7-bit address field.
+
+|`dmistat`
+|0
+|No persistent DMI status error is reported through this field.
+
+|`idle`
+|1
+|The debugger should provide at least one Run-Test/Idle TCK cycle between DMI operations.
+|===
+
+`dmihardreset` and `dmireset` are decoded from the DTMCS scan register (not from the DMI shift register). Writing `dmihardreset` clears the TAP-domain DMI soft state, including the selected DMI address, DATA registers, COMMAND, abstract-command error state, ABSTRACTAUTO state, and SBA address/data shadow registers. It does not replace the SoC system reset. `dmireset` is accepted as a no-op: this DTM keeps `dmistat` constant at 0 and never reports a sticky DMI operation error, so there is no per-operation status for `dmireset` to clear.
+
+=== DMI Register Map
+
+The DMI register bank implements the following addresses.
+
+[cols="1,2,1,4"]
+.Implemented DMI Registers
+|===
+|Address |Register |Access |Implemented Behavior
+
+|`0x04`
+|DATA0
+|R/W
+|Primary abstract-command data register and command result register.
+
+|`0x05`
+|DATA1
+|R/W
+|Secondary abstract-command data register. Access-memory commands use it as the memory address.
+
+|`0x10`
+|DMCONTROL
+|R/W
+|Implements `dmactive`, `ndmreset`, `haltreq`, `resumereq`, `hartreset`, `ackhavereset`, and `hartsello`. While `dmactive` is 0 the Debug Module is held in reset: the abstract-command and SBA engines return to idle and every DM register (DATA0/DATA1, COMMAND, PROGBUF, ABSTRACTAUTO, `abstractcs.cmderr`, the SBCS fields, SBADDRESS0/SBDATA0, and the DMCONTROL control bits `haltreq`/`resumereq`/`hartreset`/`ndmreset`/`hartsel`) takes its reset value. `dmactive` is the only DMCONTROL bit that can be written while `dmactive` is 0; other field writes in that same DMI transaction are discarded. The DMI transport itself (the selected DMI address and the TCK↔system-clock dispatch handshake) is not part of the Debug Module and is unaffected, so ordinary DMI reads keep working across a `dmactive` 0→1 cycle. The shadowed hart CSRs (`dcsr`/`dpc`/`dscratch*`) and the trigger CSRs (`tselect`/`tdata1`/`tdata2`) are also not affected by `dmactive`; they follow hart reset.
+
+|`0x11`
+|DMSTATUS
+|R/O
+|Reports single-hart halted/running/resume/nonexistent status, `authenticated`, `{any,all}havereset`, `ndmresetpending`, `impebreak`, and `version` = 3 (Debug Spec 1.0). `hasresethaltreq`, `confstrptrvalid`, and `stickyunavail` read 0.
+
+|`0x12`
+|HARTINFO
+|R/O
+|Returns the fixed RTL `HARTINFO_VALUE`.
+
+|`0x16`
+|ABSTRACTCS
+|R/W1C fields
+|Reports `progbufsize=2`, `datacount=2`, `busy`, and `cmderr`. Writing one to a `cmderr` bit clears the corresponding error state.
+
+|`0x17`
+|COMMAND
+|R/W
+|Dispatches a supported abstract command when the Debug Module is active and not busy.
+
+|`0x18`
+|ABSTRACTAUTO
+|R/W
+|Implements auto-execution controls for DATA0/DATA1 and PROGBUF0/PROGBUF1.
+
+|`0x20`
+|PROGBUF0
+|R/W
+|Program buffer word 0. Reset value is `0x0010_0073` (`EBREAK`).
+
+|`0x21`
+|PROGBUF1
+|R/W
+|Program buffer word 1. Reset value is `0x0010_0073` (`EBREAK`).
+
+|`0x38`
+|SBCS
+|R/W
+|System Bus Access (SBA) control/status. Implements 8-, 16-, and 32-bit access selection, read-on-address, read-on-data, autoincrement, busy, busy error, and SBA error reporting.
+
+|`0x39`
+|SBADDRESS0
+|R/W
+|32-bit System Bus Access (SBA) address.
+
+|`0x3C`
+|SBDATA0
+|R/W
+|32-bit System Bus Access (SBA) data register.
+
+|`0x40`
+|HALTSUM0
+|R/O
+|Bit 0 indicates that the implemented hart is halted.
+|===
+
+The RTL contains one hart. A non-zero `hartsello` value selects a non-existent hart and is reflected through the DMSTATUS `anynonexistent`/`allnonexistent` status. `hartsello` is only updated while no abstract command is in progress (`busy=0`); a write attempted during a command is ignored so hart selection stays stable for the running command.
+
+`dmstatus.anyhavereset`/`allhavereset` reset to 1: any reset that reaches the Debug Module — power-on, the external reset pin, `ndmreset`, or `hartreset` — arms the bit, and it is cleared only by writing `ackhavereset`. It survives a `dmactive` 0→1 cycle.
+
+=== Abstract Commands
+
+The Debug Module implements Access Register and Access Memory command types.
+
+==== Access Register
+
+Supported register transfers use a 32-bit abstract access size.
+
+The implemented register-number handling includes:
+
+* Integer registers `x0`–`x31` through abstract register numbers `0x1000`–`0x101F`.
+* `dpc` at CSR number `0x7B1`.
+* Debug and machine CSRs below `0x1000` through the debug CSR path.
+* `transfer=0, postexec=0` as a valid no-operation command.
+* `postexec` execution through the two-word program buffer.
+
+Commands requiring an unsupported access size report an abstract-command not-supported error (`cmderr=2`). Commands that require hart access while the hart is running report a halt/resume error (`cmderr=4`). An abstract access to a CSR the core does not implement fails with `cmderr=3` (exception) and performs no write — so a debugger probing for optional CSRs (e.g. vector `vlenb`, the AIA `mtopi`/`miselect` registers) is told the CSR is absent rather than receiving a spurious zero.
+
+==== Access Memory
+
+Access Memory supports 8-, 16-, and 32-bit transfers. `aamvirtual` is not implemented. Access sizes larger than 32 bits are reported as unsupported.
+
+DATA1 supplies the address. DATA0 supplies or receives the transfer data. Address post-increment is supported by the RTL command engine.
+
+=== System Bus Access (SBA)
+
+SBA provides direct debug memory access independently of abstract Access Memory commands.
+
+The RTL implements:
+
+* 8-bit, 16-bit, and 32-bit accesses.
+* `sbreadonaddr`.
+* `sbreadondata`.
+* `sbautoincrement`.
+* `sbbusy` and `sbbusyerror`.
+* SBA error reporting and write-one-to-clear error handling.
+
+`sbbusyerror` is set whenever the debugger writes `SBADDRESS0` or `SBDATA0`, or
+reads `SBDATA0`, while a system bus access is in progress (`sbbusy=1`); the
+interfering `SBADDRESS0`/`SBDATA0` write is discarded (the shadow register keeps
+its value). No SBA access is started while `sberror` or `sbbusyerror` is set;
+both are cleared write-one-to-clear via `SBCS`.
+
+The debug-bus response timeout (used by SBA and by abstract Access Memory) is a
+counter of parameterized width `DBG_BUS_TIMEOUT_W` (default 12 → 4095 cycles,
+about 41 µs at 100 MHz). A response later than the timeout reports `sberror=1`
+(SBA) or `abstractcs.cmderr=5` (abstract memory). Integrators with very slow
+debug targets can widen the parameter.
+
+=== Debug CSRs
+
+The Debug Module owns the debug CSRs listed below.
+
+[cols="1,2,1,4"]
+.Debug CSR Support
+|===
+|Address |CSR |Access |Behavior
+
+|`0x7B0`
+|dcsr
+|R/W, WARL/RO fields
+|Reports `xdebugver=4`. `prv` is forced to M-mode (`3`). Implemented writable controls include `ebreakm`, `stepie`, `stopcount`, `stoptime`, `mprven`, and `step`. `cause` is hardware-written and read-only to the debugger.
+
+|`0x7B1`
+|dpc
+|R/W
+|Debug program counter. Reset value is `0x8000_0000`.
+
+|`0x7B2`
+|dscratch0
+|R/W
+|Debug scratch register 0.
+
+|`0x7B3`
+|dscratch1
+|R/W
+|Debug scratch register 1.
+|===
+
+`dcsr` resets internally to `0x4000_0003`. Readback reconstructs read-only and WARL fields, including the hardware debug-entry cause.
+
+=== Hardware Triggers
+
+Trigger matching occurs in EX with timing-before behavior: a matching instruction is halted before it is promoted for normal execution. A trigger is eligible only when its type is 2, M-mode enable bit is set, and `action=1` requests Debug Mode entry.
+
+The RTL supports:
+
+* execute match against the instruction PC;
+* load match against the effective data address;
+* store match against the effective data address;
+* exact address match (`match=0`);
+* NAPOT address match (`match=1`) for load/store triggers.
+
+Execute matching is exact-PC only in the current core. Unsupported `match` values fall back to exact comparison in the RTL helper.
+
+If EBREAK debug-entry and a hardware trigger coincide, the debug-halt bookkeeping records the trigger as the halt cause (`trigger_halt`) and does not mark EBREAK as the separate halt cause. Multiple trigger slots may report hit simultaneously.
+
+The default RTL implements two trigger slots (`N_TRIGGERS=2`). `N_TRIGGERS` is fully parameterized in both the core and the debug module: the trigger register bank, its reset values, the per-trigger hit-latch, and the `tselect` index are all generated from `N_TRIGGERS`, and the design elaborates for `N_TRIGGERS` = 1, 2, or 4. `tselect` is WARL to `[0, N_TRIGGERS)`.
+
+[cols="1,2,4"]
+.Trigger CSRs
+|===
+|Address |CSR |Behavior
+
+|`0x7A0`
+|tselect
+|Selects a trigger slot. Writes outside the implemented trigger count are ignored.
+
+|`0x7A1`
+|tdata1
+|Implements an mcontrol trigger. Every field is WARL-coerced on write to a value JV32 implements, so read-back reflects only supported behaviour: `type`=2, `action`=1 (enter Debug Mode), `match` ∈ {0 exact, 1 NAPOT} (other values read back 0), and `select`/`timing`/`sizelo`/`sizehi`/`chain`/`maskmax` = 0. `dmode`, the M-mode enable, and `execute`/`store`/`load` are stored as written. The hardware `hit` state is reported in bit 20 and is write-zero-to-clear.
+
+|`0x7A2`
+|tdata2
+|Stores the trigger match value.
+
+|`0x7A4`
+|tinfo
+|Returns `0x0000_0004`, indicating support for trigger type 2.
+|===
+
+The reset value of each implemented `tdata1` entry is `0x2000_0000`; `tdata2` resets to zero.
+
+=== cJTAG Bridge
+
+When `USE_CJTAG=1`, `cjtag_bridge.sv` converts the external two-wire TCKC/TMSC interface to the internal JTAG TAP signals.
+
+The bridge implements:
+
+* Two-stage synchronization of TCKC and TMSC into the system-clock domain.
+* TCKC edge detection.
+* TMSC escape-sequence detection.
+* OScan1 serialized scan transport.
+* TAP.7 star-2 activation behavior implemented by the state machine.
+* Registered generation of the internal TAP clock and JTAG data/control signals.
+
+The RTL requires each TCKC high and low phase to remain stable long enough to pass through the two-stage synchronizer and edge detector. The source comments specify the design requirement `f_sys >= 6 × f_tckc`. This is a functional sampling requirement, not an FPGA/ASIC timing-closure guarantee.
+
+<<<
+
+== Clock, Reset, and RTL Timing
 
 === Clock and Reset
 
@@ -1342,13 +1859,13 @@ The SoC has two independent clock domains.
 
 |System (`clk`)
 |External pin
-|100 MHz (parameterisable via `CLK_FREQ`)
+|100 MHz (parameterized via `CLK_FREQ`)
 |`jv32_core`, TCM SRAM, AXI crossbar, UART, CLIC, Magic, debug system clock path
 
 |TAP (`tck` / `tap_tck`)
-|External pin (`USE_CJTAG=0`) or internally generated BUFG (`USE_CJTAG=1`)
-|≤ 10 MHz (`USE_CJTAG=0`), ≤ f~sys~/6 (`USE_CJTAG=1`)
-|`jtag_tap`, `jv32_dtm` TAP state machine
+|External TCK (`USE_CJTAG=0`) or bridge-generated TAP clock (`USE_CJTAG=1`)
+|Integration-dependent
+|`jtag_tap` and the TAP-domain DMI register bank. In cJTAG mode, the bridge samples TCKC using `clk`.
 |===
 
 The two domains are **fully asynchronous**.  All signals crossing the boundary
@@ -1370,8 +1887,8 @@ system-clock half of the debug transport module.
 |Single-ended clock input
 
 |Nominal frequency
-|100 MHz (default)
-|Parameterisable via `CLK_FREQ`; affects UART baud divisor computation
+|100 MHz RTL default
+|Parameterized via `CLK_FREQ`; affects UART baud divisor computation. The RTL default is a functional configuration value, not a defined implementation frequency.
 
 |Minimum frequency
 |No lower limit specified
@@ -1379,80 +1896,27 @@ system-clock half of the debug transport module.
 
 |Maximum frequency
 |Technology-dependent
-|FPGA (KU5P): 50 MHz demonstrated; ASIC (FreePDK45): 80 MHz post-PnR sign-off
+|Not defined by the RTL. Use synthesis, static timing analysis, and implementation results for the selected FPGA or ASIC target.
 |===
 
 ==== TAP Clock — `USE_CJTAG=0` (4-wire JTAG)
 
-In 4-wire JTAG mode the TAP clock is the external `jtag_pin0_tck_i` pin,
-driven directly by the debug probe.
+In 4-wire JTAG mode, `jtag_pin0_tck_i` directly clocks the TAP. TCK is asynchronous to the system clock. Status and command information crossing between the TAP and system-clock domains is synchronized in the debug logic.
 
-[cols="1,1,3"]
-.4-wire JTAG TAP Clock Specifications
-|===
-|Parameter |Value |Description
-
-|Source
-|`jtag_pin0_tck_i` (external pin)
-|TCK driven by the JTAG probe; asynchronous to `clk`
-
-|Maximum frequency
-|f~sys~ / 2 (hard limit), f~sys~ / 4 recommended
-|Must be slow enough for the two-stage synchronisers in `jv32_dtm` to resolve metastability; ≤ 10 MHz typical for the FPGA build
-
-|Relationship to `clk`
-|Fully asynchronous
-|`set_clock_groups -asynchronous` between `jtag_tck` and the system clock domain
-
-|Constraint file (FPGA)
-|`fpga/scripts/constraints.xdc` (primary clock), `fpga/scripts/constraints_jtag.xdc` (I/O delays)
-|TDI: `set_input_delay -clock jtag_tck`; TDO: `set_output_delay -clock jtag_tck -clock_fall` (negedge launch)
-|===
-
+The RTL does not define a universal maximum external TCK frequency. The usable TCK frequency depends on the implementation timing and on the clock-domain-crossing handshake latency. The DTMCS `idle=1` field requires the debugger to insert at least one Run-Test/Idle TCK cycle between DMI operations.
 ==== TAP Clock — `USE_CJTAG=1` (2-wire cJTAG)
 
-In 2-wire cJTAG mode the external `jtag_pin0_tck_i` pin carries the raw TCKC
-signal.  The `cjtag_bridge` module samples TCKC using the system clock and
-regenerates an internal TAP clock (`tck_int`) as a registered pulse, which
-is then buffered through a `BUFG` (`u_bufg_tck`) to become `tck_o`.
+In 2-wire cJTAG mode, `jtag_pin0_tck_i` carries TCKC and `jtag_pin1_tms_i/o` carries TMSC. `cjtag_bridge` samples both external signals using the system clock, detects synchronized TCKC edges, and generates the internal TAP clock and JTAG scan signals.
 
-[cols="1,1,3"]
-.2-wire cJTAG TAP Clock Specifications (`USE_CJTAG=1`)
-|===
-|Parameter |Value |Description
+The bridge source defines the functional sampling requirement:
 
-|TCKC source
-|`jtag_pin0_tck_i` (external pin)
-|2-wire cJTAG clock from probe; asynchronous to `clk`
+----
+f_sys >= 6 × f_tckc
+----
 
-|TAP clock source (`tck_o`)
-|`cjtag_bridge` BUFG output (`u_bufg_tck/O`)
-|`tck_int` register (clocked by `clk`) → BUFG; the TAP clock is **derived from the system clock**
+This corresponds to at least three system-clock cycles for each TCKC high or low phase, allowing the two-stage synchronizer and edge detector to observe the signal reliably at the RTL interface level.
 
-|Maximum TCKC frequency
-|f~sys~ / 6
-|`cjtag_bridge` requires ≥ 3 system clock cycles per TCKC half-period for two-stage sync + edge detection; at 100 MHz system clock, TCKC ≤ 16.7 MHz; at 50 MHz (FPGA), TCKC ≤ 8.3 MHz
-
-|Relationship to `clk`
-|Downstream of `clk` (generated by `clk`-clocked flip-flop)
-|`set_clock_groups -physically_exclusive` suppresses TIMING-3 (AR#63774); `set_clock_groups -asynchronous` separates the domains for STA
-
-|Constraint file (FPGA)
-|`fpga/scripts/constraints_cjtag.xdc` (implementation-only)
-|`create_clock` targets the `BUFG/O` pin of `u_bufg_tck`, not the external TCKC pin
-
-|Input synchronisers in bridge
-|2-stage (`ASYNC_REG = "TRUE"`)
-|TCKC and TMSC are both sampled through 2-stage synchronisers before any combinational or registered logic uses them
-|===
-
-[NOTE]
-====
-In simulation the `BUFG` macro is replaced by a plain `assign tck_o = tck_int`
-(`\`ifdef SYNTHESIS`).  The TAP clock is therefore the combinational value of
-`tck_int` in simulation and the BUFG-buffered version in synthesis.
-====
-
+The ratio above is a functional design requirement. Actual board-level and FPGA/ASIC timing margins must be established by the target implementation.
 ==== Reset Architecture
 
 The SoC implements an **asynchronous-assert / synchronous-deassert** reset
@@ -1497,7 +1961,7 @@ assign soc_rst_n = rst_sync_ff2;            // (4) clean synchronised reset to a
 }
 ....
 
-===== Reset source behaviour
+===== Reset source behavior
 
 [cols="1,1,3"]
 .Reset Sources
@@ -1538,9 +2002,9 @@ external reset is released, independent of the 2-cycle delay on `soc_rst_n`.
 |===
 |Parameter |Minimum |Description
 
-|`rst_n` assert width
-|1 ns
-|No minimum pulse width; async clear is edge-sensitive on `negedge rst_n_pre`
+|`rst_n` assertion
+|Asynchronous
+|The RTL asynchronously clears the reset synchronizer when `rst_n_pre` is low. Minimum external reset pulse width is an implementation/electrical requirement and is not specified by the RTL.
 
 |`rst_n` deassert hold (before first `clk` rising edge used for computation)
 |2 clock cycles
@@ -1556,15 +2020,15 @@ external reset is released, independent of the 2-cycle delay on `soc_rst_n`.
 |===
 
 [IMPORTANT]
-====
 The `rst_n_pre` net is a 2-input LUT driving the asynchronous clear (`CLR`) of
 `rst_sync_ff1` and `rst_sync_ff2`.  In FPGA implementations this is an
 intentional asynchronous-reset pattern; the path is marked as a false path to
 suppress the Vivado LUTAR-1 methodology warning
 (`fpga/scripts/constraints.xdc`).
-====
 
 === Timing Parameters
+
+The RTL does not define FPGA/ASIC setup time, hold time, clock-to-output time, or maximum operating frequency. Any numerical implementation timing values must come from a named synthesis/place-and-route target and timing report. Values in this section therefore describe protocol or RTL-cycle requirements only.
 
 [cols="2,1,1,3"]
 .Timing Characteristics (100 MHz, Tclk = 10 ns)
@@ -1601,10 +2065,6 @@ suppress the Vivado LUTAR-1 methodology warning
 |—
 |0 cycles on correct BTFNT prediction; 1 cycle on misprediction or when `BP_EN=0` and branch is taken
 
-|Interrupt entry latency
-|3 cycles
-|10 cycles
-|Depends on pipeline state and outstanding transactions
 |===
 
 === Top-Level Parameters
@@ -1628,7 +2088,7 @@ suppress the Vivado LUTAR-1 methodology warning
 
 |`RV32E_EN`
 |`0`
-|`1`=RV32E reduced register file (16 GPRs); `0`=RV32I full register file (32 GPRs). Also gates `misa.E`.
+|`1`=RV32E reduced register file (x0–x15); `0`=RV32I register file (x0–x31). In RV32E mode, the decoder traps an instruction as illegal when an actually-used `rs1`, `rs2`, or written `rd` selects x16–x31. RV32E mode also disables the Zba/Zbb/Zbs datapath, RAS, and instruction prefetch buffer in `jv32_core`, and changes the `misa` base-ISA indication.
 
 |`RV32M_EN`
 |`1`
@@ -1648,11 +2108,15 @@ suppress the Vivado LUTAR-1 methodology warning
 
 |`N_TRIGGERS`
 |`2`
-|Number of hardware breakpoint/watchpoint trigger registers (`tdata1`/`tdata2` pairs); range 0..4
+|Number of hardware breakpoint/watchpoint trigger registers (`tdata1`/`tdata2` pairs); verified for 1, 2, and 4
+
+|`DBG_BUS_TIMEOUT_W`
+|`12`
+|Width of the debug-bus (SBA and abstract Access Memory) response-timeout counter. Default 12 → 4095 cycles (~41 µs at 100 MHz). Increase for slower external debug targets.
 
 |`AMO_EN`
 |`1`
-|`1`=full A-extension (LR/SC + all AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W); `0`=LR.W/SC.W only
+|`1`=A-extension enabled (LR.W/SC.W and AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W); `0`=all atomic instructions using the AMO opcode, including LR.W/SC.W, trap as illegal
 
 |`FAST_MUL`
 |`1`
@@ -1676,23 +2140,23 @@ suppress the Vivado LUTAR-1 methodology warning
 
 |`BP_EN`
 |`1`
-|`1`=BTFNT static branch predictor enabled (backward branches predicted taken, forward branches predicted not-taken; 0-cycle penalty on correct prediction, 1-cycle on misprediction); `0`=all branches predicted not-taken (1-cycle penalty on every taken branch)
+|`1`=BTFNT static branch predictor enabled (backward branches predicted taken, forward branches predicted not-taken); `0`=all branches predicted not-taken. EX-stage correction behavior is described in the branch-prediction section.
 
 |`RAS_EN`
 |`1`
-|`1`=2-entry Return Address Stack enabled (zero-penalty function returns via RAS predict); `0`=JALR always causes a 1-cycle EX-stage redirect. Automatically disabled when `RV32EC=1`.
+|`1`=2-entry Return Address Stack enabled for eligible return prediction; `0`=return prediction through the RAS is disabled. The RAS is automatically disabled when `RV32E_EN=1`.
 
 |`IBUF_EN`
 |`1`
-|`1`=2-entry instruction prefetch buffer enabled (hides 1-cycle TCM latency on sequential fetch); `0`=disabled. Automatically disabled when `RV32EC=1` (`RV32E_EN=1`).
+|`1`=2-entry instruction prefetch buffer enabled; `0`=disabled. The buffer is automatically disabled when `RV32E_EN=1`.
 
 |`ZCMP_EN`
 |`1`
-|`1`=Zcmp extension enabled (`cm.push`, `cm.pop`, `cm.popret`, `cm.mva01s`, `cm.mvsa01`); `0`=these instructions trap as illegal.
+|`1`=Zcmp extension enabled (`cm.push`, `cm.pop`, `cm.popret`, `cm.popretz`, `cm.mvsa01`, `cm.mva01s`); `0`=these instructions trap as illegal.
 
 |`RV32B_EN`
 |`1`
-|`1`=Zba/Zbb/Zbs B-extension enabled (`SH1ADD`/`SH2ADD`/`SH3ADD`, bit-manipulation, etc.); `0`=all B-extension instructions trap as illegal (synthesised away).
+|`1`=Zba/Zbb/Zbs B-extension enabled (`SH1ADD`/`SH2ADD`/`SH3ADD`, bit-manipulation, etc.); `0`=all B-extension instructions trap as illegal (synthesized away).
 
 |`IRAM_SIZE`
 |`131072`
@@ -1719,6 +2183,18 @@ suppress the Vivado LUTAR-1 methodology warning
 
 == Programming Guide
 
+=== MMIO Access Rules
+
+Peripheral registers are 32-bit memory-mapped registers unless a register description states otherwise. Software should use naturally aligned 32-bit accesses for control and status registers. Reserved offsets must not be used as part of the programming interface.
+
+For device programming sequences, software should complete required configuration writes before enabling the corresponding interrupt or operation. The current RTL treats `FENCE` as a no-op, so software must not rely on it to create an additional hardware data-memory barrier. `FENCE.I` is implemented separately and flushes/refetches the instruction path for instruction-memory synchronization.
+
+=== Access and Error Handling
+
+Software must treat an AXI error response as a failed access. Error behavior is target-specific: UART and Magic can return `SLVERR` for unsupported addresses, while CLIC returns `OKAY` and zero/no-effect behavior for unsupported offsets. Addresses routed to the external AXI interface may return any response permitted by the connected target or interconnect.
+
+Software and external masters should use naturally aligned accesses. Several RTL blocks select registers or SRAM words using upper address bits and do not independently reject all misaligned accesses.
+
 === Boot Sequence
 
 The processor boots from `BOOT_ADDR` (default `0x8000_0000` = IRAM base). The reset vector is hardwired to `BOOT_ADDR & ~3` (word-aligned).
@@ -1728,8 +2204,8 @@ For simulation, the typical boot flow is:
 1. ELF loaded into TCM via DPI (`mem_write_byte`) before simulation starts
 2. Simulation starts, core fetches from `BOOT_ADDR` (mapped to IRAM, 1-cycle latency)
 3. Startup code (`startup.S`) initialises stack pointer to top of DRAM
-4. Hardware CSRs initialised: `mstatus`, `mtvec`, `mie`
-5. Peripherals initialised (UART baud rate is compile-time; CLIC `mtimecmp` programmed)
+4. Hardware CSRs initialized: `mstatus`, `mtvec`, `mie`
+5. Peripherals initialized (UART starts with the parameter-derived baud divisor; software may change it at runtime; CLIC `mtimecmp` is programmed as required)
 6. `mstatus.MIE` set to enable interrupts
 7. Jump to `main()`
 
@@ -1907,29 +2383,49 @@ diff sim_trace.txt rtl_trace.txt
 
 Trace format: `<cycle> <pc> <hex_instruction> <disassembly>`
 
-=== Performance Optimisation Tips
+=== Performance-Oriented Programming Considerations
 
-1. **Minimise out-of-TCM accesses**: Place hot code in IRAM (`BOOT_ADDR` region) and data in DRAM (`DRAM_BASE` region) — both 1-cycle access
-2. **Eliminate load-use stalls**: Reorder instructions so a load result is not used in the immediately following instruction
-3. **Use fast ALU options**: `FAST_MUL=1`, `FAST_DIV=1`, `FAST_SHIFT=1` for single-cycle operations (area trade-off)
-4. **Keep stack in DRAM**: All stack frames in DRAM ensure 1-cycle load/store latency
-5. **Avoid IRAM D-access contention**: Keep data-heavy code paths away from IRAM address range to avoid I-fetch stalls from priority resolution
+The following items are implementation-aware guidance, not architectural requirements:
 
+* Place latency-sensitive code and data in TCM when deterministic local-memory access is desired.
+* Schedule independent instructions between a load and its first consumer when practical to avoid a load-use stall.
+* Select `FAST_MUL`, `FAST_DIV`, and `FAST_SHIFT` according to the required area/latency trade-off.
+* Avoid unnecessary D-side accesses to IRAM when instruction-fetch contention matters.
+* Measure complete workloads on the target configuration; this datasheet does not define a typical CPI or system performance target.
 <<<
 
-== Conclusion
+== Revision History
 
-This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering its 3-stage TCM-based pipeline architecture, memory map, peripheral specifications, AXI interconnect, and programming guide. For additional information refer to:
+[cols="1,2,5"]
+.Revision History
+|===
+|Revision |Date |Summary
+
+|1.4
+|2026-08-27
+|Updated and reorganized the SoC datasheet to match the current RTL. Clarified ISA and CSR behavior, memory map and TCM aliases, CLIC, UART, AXI, debug/JTAG, atomic operations, exceptions, control-flow behavior, and integration requirements.
+|===
+== References
+
+=== Verification Boundary
+
+This document is intended to match the supplied RTL source set. Functional correctness, ISA compliance, AXI compliance, timing closure, and target-specific electrical behavior require their respective verification and implementation flows. The datasheet does not replace those verification results.
+
+The RTL is the implementation source of truth for this datasheet. When modifying programmer-visible behavior, update the RTL and this document in the same change set.
+
+Within this document, each detailed block section is authoritative for that block's behavior. Quick-reference tables and appendices are summaries only. If a summary omits a restriction, side effect, parameter dependency, or error condition, use the detailed block specification.
+
+The following specifications provide background for the interfaces and architecture described in this datasheet:
 
 * **RISC-V Specifications**: https://riscv.org/technical/specifications/
 * **AMBA AXI4-Lite Specification**: https://developer.arm.com/documentation/ihi0022/latest/
-* **Project Repository Source**: `/home/kuoping/Projects/jv32/`
-* **RTL Entry Point**: `rtl/jv32_soc.sv`, `rtl/jv32/jv32_top.sv`
 
 <<<
 
 [appendix]
 == Register Quick Reference
+
+This section is a lookup summary. Detailed block sections are authoritative for register behavior, reset semantics, side effects, access restrictions, parameter dependencies, and programming sequences. The summary may omit non-default behavior. When this summary and a detailed description appear to differ, use the detailed peripheral specification and verify against the RTL.
 
 === CLIC Registers
 
@@ -2030,22 +2526,19 @@ This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering
 <<<
 
 [appendix]
-== Interrupt Vector Table
+== Trap Cause Reference
+
+This section summarizes trap cause encodings implemented or recognized by the current RTL. See <<_exception_and_interrupt_handling>> for behavior and trap-entry sequencing.
 
 [cols="1,2,3,2"]
-.Machine-Mode Interrupt Vectors (mcause encoding)
+.Implemented Machine-Mode Trap Causes (`mcause` encoding)
 |===
 |Code |Type |Description |Source
-
-|0
-|Exception
-|Instruction address misaligned
-|Core
 
 |1
 |Exception
 |Instruction access fault
-|I-fetch AXI SLVERR/DECERR
+|I-fetch AXI `SLVERR`/`DECERR`
 
 |2
 |Exception
@@ -2060,27 +2553,22 @@ This datasheet provides a complete reference for the JV32 RV32IMAC SoC, covering
 |4
 |Exception
 |Load address misaligned
-|Core
+|Core; normal loads and misaligned LR.W
 
 |5
 |Exception
 |Load access fault
-|D-bus AXI SLVERR/DECERR
+|D-bus AXI `SLVERR`/`DECERR`
 
 |6
 |Exception
-|Store/AMO address misaligned
-|Core
+|Store address misaligned
+|Core; normal stores and misaligned SC.W / AMO.W
 
 |7
 |Exception
 |Store/AMO access fault
-|D-bus AXI SLVERR/DECERR
-
-|8
-|Exception
-|ECALL from U-mode
-|(not reached in M-only system)
+|D-bus AXI `SLVERR`/`DECERR`
 
 |11
 |Exception
@@ -2110,7 +2598,9 @@ NOTE: `mcause[31]=1` indicates interrupt; `mcause[30:0]` is the cause code.
 [appendix]
 == Pin Descriptions
 
-=== Clock and Reset
+This section is the integration-facing signal reference. Signal behavior is defined in the corresponding functional sections; this section provides direction, width, and interface-level purpose.
+
+=== Clock and Reset Pins
 
 [cols="1,1,1,3"]
 .Clock and Reset Pins
@@ -2125,7 +2615,7 @@ NOTE: `mcause[31]=1` indicates interrupt; `mcause[30:0]` is the cause code.
 |`rst_n`
 |Input
 |1
-|Asynchronous active-low reset
+|Asynchronous active-low reset signal
 |===
 
 === UART Interface
@@ -2404,7 +2894,7 @@ Present in simulation only (excluded from synthesis via `` `ifndef SYNTHESIS ``)
 
 === Branch Predictor Observability (`perf_bp_*`)
 
-One-cycle pulse outputs that count branch-predictor events.  Active only with `BP_EN=1`; tied to `0` otherwise.  Intended for performance counters in a testbench or external logic analyser.
+One-cycle pulse outputs that count branch-predictor events.  Active only with `BP_EN=1`; tied to `0` otherwise.  Intended for performance counters in a testbench or external logic analyzer.
 
 [cols="1,1,1,3"]
 .Branch Predictor Observability Pins
@@ -2439,12 +2929,12 @@ One-cycle pulse outputs that count branch-predictor events.  Active only with `B
 |`perf_bp_jalr`
 |Output
 |1
-|A JALR instruction retired this cycle (always causes an EX-stage redirect)
+|A JALR instruction retired this cycle (is resolved in EX; eligible returns may already have a RAS prediction)
 |===
 
 === Heartbeat Output
 
-`heartbeat_o` is a glitch-free single-bit output derived directly from bit 24 of the `minstret` counter inside `jv32_csr`.  It requires no external logic, no clock-domain crossing, and is always present regardless of `BP_EN`.
+`heartbeat_o` is a single-bit observability output derived from bit 24 of the `minstret` counter in `jv32_csr`. It changes state as instructions retire and can be connected to an LED, logic analyzer, or testbench monitor.
 
 [cols="1,1,1,3"]
 .Heartbeat Pin
@@ -2454,15 +2944,16 @@ One-cycle pulse outputs that count branch-predictor events.  Active only with `B
 |`heartbeat_o`
 |Output
 |1
-|`minstret[24]` — toggles every 2^24 retired instructions.  One complete low→high→low period spans 2 × 2^24 × CPI clock cycles (≈ 42 M cycles at CPI 2.5, 80 MHz → ~530 ms).  Can be connected to an LED or logic analyser trigger to confirm the core is retiring instructions.
+|`minstret[24]`. The output toggles every `2^24` retired instructions. One complete low-to-high-to-low period spans `2 × 2^24` retired instructions.
 |===
 
-The toggle period in seconds is:
+The period depends on the average cycles per retired instruction (CPI):
 
-T = (2 x 2^24 x CPI_avg) / f_clk
+----
+T = (2 × 2^24 × CPI_avg) / f_clk
+----
 
-At the default 80 MHz FPGA clock with CoreMark CPI ≈ 1.25, T ≈ 420 ms.
-
+For example, at the default 100 MHz system clock and `CPI_avg = 1.0`, one complete period is approximately 336 ms. Real software may have a longer period because stalls, memory accesses, branches, and multi-cycle operations increase CPI.
 === External AXI Master Interface (`ext_axi_*`)
 
 The external AXI master port carries transactions that fall outside all TCM and peripheral apertures (crossbar slave 3 catch-all). Connect to an external memory or MMIO fabric, or tie `ext_axi_arready`, `ext_axi_rvalid`, `ext_axi_awready`, `ext_axi_wready`, `ext_axi_bvalid` all to 0 if no external master is needed (the core will stall until reset).
@@ -2557,3 +3048,20 @@ The external AXI master port carries transactions that fall outside all TCM and 
 |1
 |Write response ready
 |===
+
+== Release and Integration Checklist
+
+Before releasing an RTL configuration or software package, verify:
+
+* ISA feature parameters and the resulting programmer-visible instruction set.
+* `misa` against the enabled MISA-visible extensions.
+* IRAM/DRAM sizes, linker-script regions, and canonical/alias address use.
+* UART clock assumptions and the reset/default baud divisor.
+* CLIC interrupt count, vector base, `mintthresh`, and enabled interrupt controls.
+* External AXI address ownership and expected responses for non-internal addresses.
+* JTAG/cJTAG mode selection, TAP connectivity, debug reset behavior, and supported DMI flow.
+* SRAM/TCM initialization mechanism for the selected simulation, FPGA, or ASIC environment.
+* Software headers and register definitions against the detailed block sections in this datasheet.
+* Verification results for ISA compliance, AXI protocol compliance, target timing closure, and any target-specific electrical requirements.
+
+Any parameter change that affects software-visible behavior should update the RTL, this datasheet, software headers, linker configuration, and verification environment together.

@@ -174,6 +174,10 @@ struct Elf32_Sym {
 // ============================================================================
 static uint32_t regs[32];
 static uint32_t pc;
+// LR/SC reservation (RV32A).  Sticky: set by LR.W, cleared only by SC.W
+// (matches the JV32 RTL model -- an ordinary store does not clear it).
+static bool     g_lr_valid;
+static uint32_t g_lr_addr;
 static bool     running;
 static int      exit_code;
 static uint64_t insn_count;
@@ -1736,6 +1740,7 @@ static void step() {
     uint32_t trace_mem_val  = 0;
     bool     trace_has_mem  = false;
     bool     trace_is_store = false;
+    bool     amo_sc_failed  = false;  // SC.W with no live matching reservation
 
     // I-type immediate (sign-extended)
     auto imm_i = [&]() -> uint32_t {
@@ -2066,7 +2071,24 @@ static void step() {
     case 0x2F: {
         uint32_t amo_op = (instr >> 27) & 0x1Fu;
         uint32_t addr   = a;
-        if (!check_align(addr, 4, true)) break;
+        // Reserved funct5 encodings are illegal instructions.  Checked before
+        // the alignment test to match the RTL exception priority
+        // (illegal-instruction ranks above load/store address-misaligned).
+        {
+            bool amo_legal =
+                amo_op == 0x00u || amo_op == 0x01u || amo_op == 0x02u ||
+                amo_op == 0x03u || amo_op == 0x04u || amo_op == 0x08u ||
+                amo_op == 0x0Cu || amo_op == 0x10u || amo_op == 0x14u ||
+                amo_op == 0x18u || amo_op == 0x1Cu;
+            if (!amo_legal) {
+                exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN;
+                exc_tval = instr; do_write = false; break;
+            }
+        }
+        // RISC-V "A" extension: a misaligned atomic raises an
+        // address-misaligned exception -- load-misaligned for LR.W,
+        // store/AMO-misaligned for SC.W and every AMO<op>.W.
+        if (!check_align(addr, 4, /*is_load=*/amo_op == 0x02u)) break;
         uint32_t val    = mem_read(addr, 4);
         result   = val;
         do_write = true;
@@ -2081,16 +2103,31 @@ static void step() {
         case 0x14: new_val = ((int32_t)val > (int32_t)b) ? val : b; break; // AMOMAX
         case 0x18: new_val = (val < b) ? val : b;                break; // AMOMINU
         case 0x1C: new_val = (val > b) ? val : b;                break; // AMOMAXU
-        case 0x02: // LR.W
-            result = val; do_write = true; new_val = val; break;
-        case 0x03: // SC.W — always succeeds in software sim
-            new_val = b; result = 0; break;
+        case 0x02: // LR.W — take a reservation on the (aligned) word
+            result = val; do_write = true; new_val = val;
+            g_lr_valid = true; g_lr_addr = addr & ~3u;
+            break;
+        case 0x03: { // SC.W — succeeds only against a live matching reservation
+            // RISC-V "A" ext: executing an SC invalidates the reservation
+            // regardless of success or failure.  JV32's reservation is sticky
+            // (only an SC clears it -- an ordinary store does not), so this
+            // matches the RTL model.
+            bool sc_ok = g_lr_valid && (g_lr_addr == (addr & ~3u));
+            g_lr_valid = false;
+            new_val = b; result = sc_ok ? 0u : 1u;
+            amo_sc_failed = !sc_ok;
+            break;
+        }
         default:
             exc_pending = true; exc_cause = CAUSE_ILLEGAL_INSN; exc_tval = instr;
             do_write = false; break;
         }
         if (!exc_pending) {
-            mem_write(addr, new_val, 4);
+            // A failing SC does not modify memory, but -- like the RTL trace --
+            // it is still logged as a store of the would-be data so the two
+            // instruction streams stay aligned.
+            if (!amo_sc_failed)
+                mem_write(addr, new_val, 4);
             trace_has_mem  = true;
             trace_mem_addr = addr;
             trace_mem_val  = new_val;

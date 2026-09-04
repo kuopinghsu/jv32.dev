@@ -71,6 +71,7 @@ docs/stem*.png
 # Temporary files
 *.tmp
 .*.swp
+*.bak
 
 .Xil
 

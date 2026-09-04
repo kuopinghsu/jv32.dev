@@ -133,7 +133,7 @@ puts "restored IR=0x11 (DMI)"
 set dmstatus [as_u32 [riscv dmi_read 0x11]]
 set version  [expr {$dmstatus & 0xf}]
 set authed   [expr {($dmstatus >> 7) & 1}]
-if {$version != 2 || !$authed} {
+if {$version != 3 || !$authed} {
     error "DM not reachable after IR restore: dmstatus=[format 0x%08x $dmstatus]"
 }
 puts "DM reachable after IR=0x11 restore: OK"

@@ -4,7 +4,7 @@ puts "\[TEST\] CMD_ACCESS_MEM aampostincrement — address auto-advance after ea
 # When bit 19 of COMMAND is set, the address in DATA1 is automatically incremented
 # by the access size (1/2/4 bytes for aamsize=0/1/2) after each completed operation.
 #
-# CMD_ACCESS_MEM COMMAND encoding (Debug Spec 0.13 §3.7.1.2):
+# CMD_ACCESS_MEM COMMAND encoding (Debug Spec 1.0, Access Memory):
 #   [31:24] = 0x02   cmdtype = memory access
 #   [22:20] = aamsize: 0=byte, 1=halfword, 2=word
 #   [19]    = aampostincrement

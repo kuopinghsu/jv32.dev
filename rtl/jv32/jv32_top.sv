@@ -184,6 +184,7 @@ module jv32_top #(
     input  logic [31:0] dbg_csr_wdata_i,
     input  logic        dbg_csr_we_i,
     output logic [31:0] dbg_csr_rdata_o,
+    output logic        dbg_csr_illegal_o,
     input  logic [31:0] dbg_pc_wdata_i,
     input  logic        dbg_pc_we_i,
     output logic [31:0] dbg_pc_o,
@@ -192,6 +193,12 @@ module jv32_top #(
     input  logic        dcsr_stopcount_i,  // dcsr[10] from DM: freeze counters during halt
     input  logic [31:0] progbuf0_i,
     input  logic [31:0] progbuf1_i,
+
+    // Debug-module memory-write snoop: pulse + word address of an SBA /
+    // abstract Access-Memory write, used to invalidate an LR/SC reservation
+    // that the debugger's write hit.
+    input  logic        dbg_mem_wr_i,
+    input  logic [31:0] dbg_mem_waddr_i,
 
     // Trigger interface (Debug Spec 0.13 Sec.5.2)
     output logic                        dbg_trigger_halt_o,
@@ -341,12 +348,15 @@ module jv32_top #(
         .dbg_csr_wdata_i     (dbg_csr_wdata_i),
         .dbg_csr_we_i        (dbg_csr_we_i),
         .dbg_csr_rdata_o     (dbg_csr_rdata_o),
+        .dbg_csr_illegal_o   (dbg_csr_illegal_o),
         .dbg_pc_wdata_i      (dbg_pc_wdata_i),
         .dbg_pc_we_i         (dbg_pc_we_i),
         .dbg_pc_o            (dbg_pc_o),
         .dbg_singlestep_i    (dbg_singlestep_i),
         .dbg_ebreakm_i       (dbg_ebreakm_i),
         .dcsr_stopcount_i    (dcsr_stopcount_i),
+        .dm_mem_wr_i         (dbg_mem_wr_i),
+        .dm_mem_waddr_i      (dbg_mem_waddr_i),
         .trigger_halt_o      (dbg_trigger_halt_o),
         .ebreak_halt_o       (dbg_ebreak_halt_o),
         .trigger_hit_o       (dbg_trigger_hit_o),

@@ -84,12 +84,20 @@ module jv32_core #(
     input  logic [          31:0]       dbg_csr_wdata_i,
     input  logic                        dbg_csr_we_i,
     output logic [          31:0]       dbg_csr_rdata_o,
+    output logic                        dbg_csr_illegal_o,
     input  logic [          31:0]       dbg_pc_wdata_i,
     input  logic                        dbg_pc_we_i,
     output logic [          31:0]       dbg_pc_o,
     input  logic                        dbg_singlestep_i,
     input  logic                        dbg_ebreakm_i,
     input  logic                        dcsr_stopcount_i,  // dcsr[10] from DM: freeze counters during debug halt
+
+    // Debug-module memory-write snoop (SBA / abstract Access Memory): a pulse
+    // with the written word address.  An LR/SC reservation covering that word
+    // is invalidated so a later SC fails, per the A-extension requirement that
+    // an observable external store to the reservation set breaks it.
+    input  logic                        dm_mem_wr_i,
+    input  logic [31:0]                 dm_mem_waddr_i,
     // Trigger interface (Debug Spec 0.13 Sec.5.2 Trigger Module)
     output logic                        trigger_halt_o,  // trigger caused current halt
     output logic                        ebreak_halt_o,   // ebreak (with ebreakm=1) caused current halt
@@ -469,7 +477,8 @@ module jv32_core #(
         .dbg_csr_addr_i  (dbg_csr_addr_i),
         .dbg_csr_wdata_i (dbg_csr_wdata_i),
         .dbg_csr_we_i    (dbg_csr_we_i),
-        .dbg_csr_rdata_o (dbg_csr_rdata_o),
+        .dbg_csr_rdata_o   (dbg_csr_rdata_o),
+        .dbg_csr_illegal_o (dbg_csr_illegal_o),
         .dcsr_stopcount_i(dcsr_stopcount_i)
     );
 
@@ -1063,6 +1072,18 @@ module jv32_core #(
                 ex_exc_cause = dec_mem_write ? EXC_STORE_ADDR_MISALIGNED : EXC_LOAD_ADDR_MISALIGNED;
                 ex_exc_tval  = mem_addr_ex;
             end
+            else if (dec_is_amo && mem_addr_ex[1:0] != 2'b00) begin
+                // RISC-V "A" extension: LR.W / SC.W / AMO<op>.W require a
+                // naturally aligned (4-byte) address.  A misaligned atomic
+                // must raise an address-misaligned exception rather than
+                // reach memory: load-address-misaligned for LR, and
+                // store/AMO-address-misaligned for SC and every AMO<op>.
+                // (mem_addr_ex == fwd_rs1 for AMO: the decoder forces imm=0.)
+                ex_exception = 1'b1;
+                ex_exc_cause = (dec_amo_op == AMO_LR) ? EXC_LOAD_ADDR_MISALIGNED
+                                                      : EXC_STORE_ADDR_MISALIGNED;
+                ex_exc_tval  = mem_addr_ex;
+            end
         end
     end
 
@@ -1605,6 +1626,7 @@ module jv32_core #(
             lr_addr       <= 32'h0;
         end
         else if (ex_wb_r.valid && ex_wb_r.is_amo && !(|sb_valid)) begin
+            // (external-writer snoop handled after the case; see below)
             case (amo_state)
                 AMO_IDLE: begin
                     if (ex_wb_r.amo_op == AMO_LR && dmem_resp_valid) begin
@@ -1613,7 +1635,22 @@ module jv32_core #(
                         amo_state <= AMO_IDLE;  // done
                     end
                     else if (ex_wb_r.amo_op == AMO_SC) begin
-                        if (lr_valid && dmem_resp_valid) lr_valid <= 1'b0;
+                        // RISC-V "A" extension: executing an SC.W invalidates
+                        // this hart's reservation regardless of whether the SC
+                        // succeeds or fails.
+                        if (lr_valid && (lr_addr == ex_wb_r.mem_addr)) begin
+                            // Matching SC: a store was issued; retire (and drop
+                            // the reservation) once it is acknowledged.  Holding
+                            // lr_valid until then keeps the store request from
+                            // being gated off mid-flight.
+                            if (dmem_resp_valid) lr_valid <= 1'b0;
+                        end
+                        else begin
+                            // Failing SC (address mismatch or no reservation):
+                            // no store issued, completes this cycle, but the
+                            // reservation is still invalidated.
+                            lr_valid <= 1'b0;
+                        end
                         amo_state <= AMO_IDLE;
                     end
                     else if (ex_wb_r.amo_op != AMO_LR && ex_wb_r.amo_op != AMO_SC) begin
@@ -1637,7 +1674,22 @@ module jv32_core #(
             endcase
         end
         else if (!ex_wb_r.valid) amo_state <= AMO_IDLE;
+
+        // External-writer snoop: a debug-module (SBA / abstract Access Memory)
+        // write to the reserved word breaks the reservation.  Placed last so it
+        // wins over a same-cycle LR that would otherwise re-arm it.
+        if (dm_mem_wr_i && lr_valid && (dm_mem_waddr_i[31:2] == lr_addr[31:2]))
+            lr_valid <= 1'b0;
     end
+
+`ifndef SYNTHESIS
+    // A debug-module write to the reserved word must clear the reservation by
+    // the next cycle (RISC-V "A" ext: an observable external store to the
+    // reservation set breaks it, so the paired SC fails).
+    a_lrsc_ext_writer_snoop: assert property (@(posedge clk) disable iff (!rst_n)
+        (dm_mem_wr_i && lr_valid && (dm_mem_waddr_i[31:2] == lr_addr[31:2])) |=> !lr_valid)
+        else $error("LR/SC: debug-module write to reserved word did not break the reservation");
+`endif
 
     // Multi-cycle ALU stall
     assign alu_stall = if_ex_r.valid && !alu_ready && !dec_is_nb_mc_op;
@@ -2218,7 +2270,8 @@ module jv32_core #(
     logic _unused;
     assign _unused = &{1'b0, dec_is_wfi, dec_is_fence,
                        ex_wb_r.csr_op, ex_wb_r.csr_addr, ex_wb_r.csr_wdata, ex_wb_r.csr_zimm,
-                       ex_wb_r.redirect, ex_wb_r.redirect_pc};
+                       ex_wb_r.redirect, ex_wb_r.redirect_pc,
+                       dm_mem_waddr_i[1:0]};  // reservation snoop is word-granular
 
 `ifndef SYNTHESIS
     // =====================================================================

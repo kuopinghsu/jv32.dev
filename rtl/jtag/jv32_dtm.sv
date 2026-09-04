@@ -19,7 +19,11 @@
 `include "jv32_dbgmsg.svh"
 
 module jv32_dtm #(
-    parameter int N_TRIGGERS = 2
+    parameter int N_TRIGGERS        = 2,
+    // Width of the debug-bus (SBA + abstract-memory) response timeout counter.
+    // Old fixed value was 4 bits (~15 cycles) -- far too short for real AXI
+    // slaves.  Integrators can widen this for very slow debug targets.
+    parameter int DBG_BUS_TIMEOUT_W = 12
 ) (
     // -- Core clock / reset -------------------------------------------------
     input logic clk,
@@ -87,6 +91,7 @@ module jv32_dtm #(
     output logic [31:0] dbg_csr_wdata_o,
     output logic        dbg_csr_we_o,
     input  logic [31:0] dbg_csr_rdata_i,
+    input  logic        dbg_csr_illegal_i,  // 1 = cmd_regno is a CSR the core does not implement
 
     output logic [31:0] dbg_pc_wdata_o,
     output logic        dbg_pc_we_o,
@@ -176,6 +181,13 @@ module jv32_dtm #(
     // by the toggle-sync handshake.  Data is latched directly on the toggle edge
     // (safe: by the time toggle_sync[1] propagates, payload has been stable >=4 CLK cycles).
 
+    // dmactive level, synchronised into the CLK domain.  While low, the abstract
+    // command / SBA engine is held idle so a dmactive=0 pulse resets DM state
+    // (RISC-V Debug Spec).  dcsr/dpc/dscratch/trigger CSRs are hart state and
+    // are intentionally left untouched here.
+    (* ASYNC_REG = "TRUE" *) logic [1:0] dmactive_sync;
+    wire dm_soft_rst = ~dmactive_sync[1];
+
     // =========================================================================
     // CLK-domain working registers
     // =========================================================================
@@ -217,6 +229,12 @@ module jv32_dtm #(
     logic [N_TRIGGERS-1:0][31:0] tdata1_reg;
     logic [N_TRIGGERS-1:0][31:0] tdata2_reg;
     logic [N_TRIGGERS-1:0]       trigger_hit_latch;
+
+    // Width of the tselect index into the trigger arrays.  $clog2(1)==0, so
+    // clamp to 1 to keep the slice legal when N_TRIGGERS==1.  tselect is WARL
+    // to [0, N_TRIGGERS), so the index is always in range regardless.
+    localparam int TSEL_W = (N_TRIGGERS < 2) ? 1 : $clog2(N_TRIGGERS);
+    wire [TSEL_W-1:0] tsel_idx = tselect_reg[TSEL_W-1:0];
 
     localparam [5:0] HARDWARE_MASKMAX = 6'd0;
 
@@ -261,11 +279,11 @@ module jv32_dtm #(
     logic        read_after_exec;
     logic        exec_phase_done;
     logic        mem_req_pending;
-    logic [ 3:0] mem_wait_cnt;
+    logic [DBG_BUS_TIMEOUT_W-1:0] mem_wait_cnt;
     logic        mem_aarpostincrement_r;
     logic [ 2:0] mem_aamsize_r;
     logic [31:0] mem_addr;
-    logic [ 3:0] sba_wait_cnt;
+    logic [DBG_BUS_TIMEOUT_W-1:0] sba_wait_cnt;
     logic        cmd_busy;
 
     wire         cmd_is_access_reg = (command_reg_sys[31:24] == CMD_ACCESS_REG);
@@ -427,6 +445,7 @@ module jv32_dtm #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // Toggle-sync state
+            dmactive_sync              <= 2'b0;
             cmd_wr_toggle_sync         <= 2'b0;
             cmd_wr_toggle_r            <= 1'b0;
             command_reg_sys            <= 32'b0;
@@ -439,7 +458,7 @@ module jv32_dtm #(
             sba_rd_toggle_sync         <= 2'b0;
             sba_rd_toggle_r            <= 1'b0;
             sba_rd_pending_clk         <= 1'b0;
-            sba_wait_cnt               <= 4'b0;
+            sba_wait_cnt               <= '0;
             sbdata0_clr_toggle_sync    <= 2'b0;
             sbdata0_clr_toggle_r       <= 1'b0;
             sbaddress0_clr_toggle_sync <= 2'b0;
@@ -487,7 +506,7 @@ module jv32_dtm #(
             read_after_exec            <= 1'b0;
             exec_phase_done            <= 1'b0;
             mem_req_pending            <= 1'b0;
-            mem_wait_cnt               <= 4'b0;
+            mem_wait_cnt               <= '0;
             mem_aarpostincrement_r     <= 1'b0;
             mem_aamsize_r              <= 3'b0;
             mem_addr                   <= '0;
@@ -506,16 +525,19 @@ module jv32_dtm #(
             dscratch1_reg              <= 32'b0;
             dpc_reg                    <= 32'h8000_0000;
             tselect_reg                <= 32'b0;
-            tdata1_reg[0]              <= 32'h2000_0000;
-            tdata2_reg[0]              <= 32'b0;
-            tdata1_reg[1]              <= 32'h2000_0000;
-            tdata2_reg[1]              <= 32'b0;
+            // All N_TRIGGERS slots reset to type=2 (mcontrol), disabled.
+            for (int ti = 0; ti < N_TRIGGERS; ti++) begin
+                tdata1_reg[ti] <= 32'h2000_0000;
+                tdata2_reg[ti] <= 32'b0;
+            end
             trigger_hit_latch          <= '0;
         end
         else begin
             // ----------------------------------------------------------------
             // Synchronizer advances (unconditional)
             // ----------------------------------------------------------------
+            dmactive_sync <= {dmactive_sync[0], dmactive_i};
+
             // Command dispatch
             cmd_wr_toggle_sync <= {cmd_wr_toggle_sync[0], cmd_wr_toggle_i};
             cmd_wr_toggle_r    <= cmd_wr_toggle_sync[1];
@@ -565,8 +587,8 @@ module jv32_dtm #(
 
             // Trigger hit latch
             if (trigger_halt_pulse) begin
-                if (trigger_hit_i[0]) trigger_hit_latch[0] <= 1'b1;
-                if (trigger_hit_i[1]) trigger_hit_latch[1] <= 1'b1;
+                for (int ti = 0; ti < N_TRIGGERS; ti++)
+                    if (trigger_hit_i[ti]) trigger_hit_latch[ti] <= 1'b1;
             end
             if (!halted_i && dbg_halted_prev_fsm) trigger_hit_latch <= '0;
 
@@ -729,7 +751,7 @@ module jv32_dtm #(
                                 sb_access_latched    <= sb_access_i;
                                 sb_autoincr_latched  <= sb_autoincr_i;
                                 cmd_state            <= CMD_SBA_READ;
-                                sba_wait_cnt         <= 4'b0;
+                                sba_wait_cnt         <= '0;
                             end
                         end
                         else if ((sba_wr_toggle_sync[1] != sba_wr_toggle_r || sba_wr_pending_clk)
@@ -746,7 +768,7 @@ module jv32_dtm #(
                                 sb_access_latched       <= sb_access_i;
                                 sb_autoincr_latched     <= sb_autoincr_i;
                                 cmd_state               <= CMD_SBA_WRITE;
-                                sba_wait_cnt            <= 4'b0;
+                                sba_wait_cnt            <= '0;
                             end
                         end
                     end
@@ -814,14 +836,25 @@ module jv32_dtm #(
                         16'h07A0: data0_result <= tselect_reg;
                         16'h07A1:
                         data0_result <= {
-                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]][31:27],
+                            tdata1_reg[tsel_idx][31:27],
                             HARDWARE_MASKMAX,
-                            trigger_hit_latch[tselect_reg[$clog2(N_TRIGGERS)-1:0]],
-                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]][19:0]
+                            trigger_hit_latch[tsel_idx],
+                            tdata1_reg[tsel_idx][19:0]
                         };
-                        16'h07A2: data0_result <= tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]];
+                        16'h07A2: data0_result <= tdata2_reg[tsel_idx];
                         16'h07A4: data0_result <= 32'h0000_0004;
-                        default: data0_result <= dbg_csr_rdata_i;
+                        default: begin
+                            // A CSR the core does not implement -> the implied
+                            // csrr raises illegal-instruction, so the abstract
+                            // command fails with cmderr = 3 (exception).  This
+                            // keeps a debugger probing for optional CSRs
+                            // (vector, AIA, ...) from being misled by a bogus
+                            // "success, value 0".
+                            if (dbg_csr_illegal_i && cmderr_sys == 3'b0)
+                                cmderr_sys <= CMDERR_EXCEPTION;
+                            else
+                                data0_result <= dbg_csr_rdata_i;
+                        end
                     endcase
                     data0_result_valid <= 1'b1;
                     cmd_state          <= CMD_DONE;
@@ -841,17 +874,52 @@ module jv32_dtm #(
                         16'h07b3: dscratch1_reg <= data0_sys;
                         16'h07A0: if (data0_sys < 32'(N_TRIGGERS)) tselect_reg <= data0_sys;
                         16'h07A1: begin
-                            tdata1_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= {4'd2, data0_sys[27:0]};
+                            // WARL-coerce every mcontrol field to a value JV32
+                            // actually implements, so the debugger reads back
+                            // only supported behaviour (Debug Spec / Sdtrig):
+                            //   type      = 2  (mcontrol, fixed)
+                            //   dmode     = kept (M-mode-only core)
+                            //   maskmax   = 0  (exact / NAPOT only)
+                            //   hit       = reported from trigger_hit_latch
+                            //   select    = 0  (address match only, no data value)
+                            //   timing    = 0  (fire before the instruction)
+                            //   sizelo/hi = 0  (any access size)
+                            //   action    = 1  (enter Debug Mode -- the only one)
+                            //   chain     = 0  (not implemented)
+                            //   match     = 0 or 1 (exact / NAPOT); others -> 0
+                            //   m         = kept ; execute/store/load = kept
+                            tdata1_reg[tsel_idx] <= {
+                                4'd2,                 // [31:28] type
+                                data0_sys[27],        // [27]    dmode
+                                6'd0,                 // [26:21] maskmax
+                                1'b0,                 // [20]    hit
+                                1'b0,                 // [19]    select
+                                1'b0,                 // [18]    timing
+                                2'd0,                 // [17:16] sizelo
+                                4'd1,                 // [15:12] action
+                                1'b0,                 // [11]    chain
+                                (data0_sys[10:7] == 4'd1) ? 4'd1 : 4'd0,  // [10:7] match
+                                data0_sys[6],         // [6]     m
+                                1'b0,                 // [5]     reserved
+                                2'd0,                 // [4:3]   sizehi
+                                data0_sys[2:0]        // [2:0]   execute/store/load
+                            };
                             // hit (tdata1[20]) is write-0-to-clear only (Debug Spec §5.2.2);
                             // writing 1 has no effect (WARL, set only by hardware trigger).
-                            if (!data0_sys[20]) trigger_hit_latch[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= 1'b0;
+                            if (!data0_sys[20]) trigger_hit_latch[tsel_idx] <= 1'b0;
                         end
-                        16'h07A2: tdata2_reg[tselect_reg[$clog2(N_TRIGGERS)-1:0]] <= data0_sys;
-                        default:  ;
+                        16'h07A2: tdata2_reg[tsel_idx] <= data0_sys;
+                        default:
+                            // Unimplemented CSR write -> illegal instruction ->
+                            // abstract command fails with cmderr = 3.
+                            if (dbg_csr_illegal_i && cmderr_sys == 3'b0)
+                                cmderr_sys <= CMDERR_EXCEPTION;
                     endcase
+                    // Only drive the core CSR write strobe for a CSR the core
+                    // actually implements.
                     dbg_csr_addr_o  <= cmd_regno[11:0];
                     dbg_csr_wdata_o <= data0_sys;
-                    dbg_csr_we_o    <= 1'b1;
+                    dbg_csr_we_o    <= !dbg_csr_illegal_i;
                     cmd_state       <= CMD_DONE;
                 end
 
@@ -863,7 +931,7 @@ module jv32_dtm #(
                         };  // word-aligned; byte/half extracted from response using mem_addr[1:0]
                         dbg_mem_we_o <= 4'b0;
                         mem_req_pending <= 1'b1;
-                        mem_wait_cnt <= 4'b0;
+                        mem_wait_cnt <= '0;
                     end
                     else if (dbg_mem_ready_i) begin
                         if (dbg_mem_error_i) begin
@@ -891,7 +959,7 @@ module jv32_dtm #(
                     end
                     else begin
                         mem_wait_cnt <= mem_wait_cnt + 1;
-                        if (mem_wait_cnt == 4'b1111) begin
+                        if (mem_wait_cnt == {DBG_BUS_TIMEOUT_W{1'b1}}) begin
                             cmderr_sys      <= CMDERR_BUS;
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
@@ -907,7 +975,7 @@ module jv32_dtm #(
                         dbg_mem_wdata_o <= mem_wdata_positioned;
                         dbg_mem_we_o    <= mem_wstrb;
                         mem_req_pending <= 1'b1;
-                        mem_wait_cnt    <= 4'b0;
+                        mem_wait_cnt    <= '0;
                     end
                     else if (dbg_mem_ready_i) begin
                         dbg_mem_req_o   <= 1'b0;
@@ -923,7 +991,7 @@ module jv32_dtm #(
                     end
                     else begin
                         mem_wait_cnt <= mem_wait_cnt + 1;
-                        if (mem_wait_cnt == 4'b1111) begin
+                        if (mem_wait_cnt == {DBG_BUS_TIMEOUT_W{1'b1}}) begin
                             cmderr_sys      <= CMDERR_BUS;
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
@@ -938,7 +1006,7 @@ module jv32_dtm #(
                         dbg_mem_addr_o          <= {sbaddress0_clk[31:2], 2'b00};
                         dbg_mem_we_o            <= 4'b0;
                         mem_req_pending         <= 1'b1;
-                        sba_wait_cnt            <= 4'b0;
+                        sba_wait_cnt            <= '0;
                         sbaddress0_result_valid <= 1'b0;
                     end
                     else if (dbg_mem_ready_i) begin
@@ -971,7 +1039,7 @@ module jv32_dtm #(
                     end
                     else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
-                        if (sba_wait_cnt == 4'b1111) begin
+                        if (sba_wait_cnt == {DBG_BUS_TIMEOUT_W{1'b1}}) begin
                             sb_err          <= 3'd1;  // timeout (Debug Spec §3.12.11)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
@@ -987,7 +1055,7 @@ module jv32_dtm #(
                         dbg_mem_wdata_o <= sba_wdata_positioned;
                         dbg_mem_we_o    <= sba_wstrb;
                         mem_req_pending <= 1'b1;
-                        sba_wait_cnt    <= 4'b0;
+                        sba_wait_cnt    <= '0;
                     end
                     else if (dbg_mem_ready_i) begin
                         dbg_mem_req_o   <= 1'b0;
@@ -1017,7 +1085,7 @@ module jv32_dtm #(
                     end
                     else begin
                         sba_wait_cnt <= sba_wait_cnt + 1;
-                        if (sba_wait_cnt == 4'b1111) begin
+                        if (sba_wait_cnt == {DBG_BUS_TIMEOUT_W{1'b1}}) begin
                             sb_err          <= 3'd1;  // timeout (Debug Spec §3.12.11)
                             dbg_mem_req_o   <= 1'b0;
                             mem_req_pending <= 1'b0;
@@ -1080,6 +1148,43 @@ module jv32_dtm #(
 
                 default: cmd_state <= CMD_IDLE;
             endcase
+
+            // ----------------------------------------------------------------
+            // dmactive = 0 : hold the abstract-command / SBA engine and all
+            // DM-owned status at reset values (RISC-V Debug Spec).  Overrides
+            // the FSM above.  Hart state (dcsr/dpc/dscratch, tselect/tdataN)
+            // is deliberately preserved -- it follows hart reset, not DM reset.
+            // ----------------------------------------------------------------
+            if (dm_soft_rst) begin
+                cmd_state               <= CMD_IDLE;
+                cmd_busy                <= 1'b0;
+                command_valid_sys       <= 1'b0;
+                cmderr_sys              <= 3'b0;
+                sb_err                  <= 3'b0;
+                data0_result_valid      <= 1'b0;
+                data1_result_valid      <= 1'b0;
+                sbdata0_result_valid    <= 1'b0;
+                sbaddress0_result_valid <= 1'b0;
+                sba_wr_pending_clk      <= 1'b0;
+                sba_rd_pending_clk      <= 1'b0;
+                mem_req_pending         <= 1'b0;
+                dbg_mem_req_o           <= 1'b0;
+                dbg_reg_we_o            <= 1'b0;
+                dbg_csr_we_o            <= 1'b0;
+                exec_resume_req         <= 1'b0;
+                exec_halt_req           <= 1'b0;
+                exec_waiting_halt       <= 1'b0;
+                exec_phase_done         <= 1'b0;
+                read_after_exec         <= 1'b0;
+                sb_access_latched       <= SBA_ACCESS32;
+                sb_autoincr_latched     <= 1'b0;
+                // The dispatch-toggle shadow regs (cmd_wr_toggle_r etc.) are
+                // NOT reset: the TCK side keeps its toggles across a dmactive=0
+                // window, so letting the shadows track them naturally keeps the
+                // handshake in sync.  Any stale edge that slips through while
+                // dm_soft_rst is asserted is harmless -- command_valid_sys is
+                // forced to 0 here and cmd_state is held at CMD_IDLE.
+            end
         end
     end  // always_ff
 
@@ -1100,7 +1205,41 @@ module jv32_dtm #(
         endcase
     end
 
+    // =========================================================================
+    // Bundled-data CDC checks (JTAG_DEBUG_TODO P2 s6)
+    // -------------------------------------------------------------------------
+    // The TCK->CLK dispatch handshakes are bundled-data: jtag_tap toggles a
+    // single-bit "go" and holds the wide payload stable until the next toggle.
+    // These assertions catch any payload that moves while its dispatch toggle
+    // is still propagating through the 2-FF synchroniser (i.e. a broken
+    // hold on the jtag_tap side).
+    // =========================================================================
 `ifndef SYNTHESIS
+    wire _cmd_disp_edge = (cmd_wr_toggle_sync[1] != cmd_wr_toggle_r);
+    wire _sba_wr_edge   = (sba_wr_toggle_sync[1] != sba_wr_toggle_r);
+    wire _sba_rd_edge   = (sba_rd_toggle_sync[1] != sba_rd_toggle_r);
+
+    a_cmd_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
+        _cmd_disp_edge |-> $stable(command_reg_i) && $stable(data0_i) && $stable(data1_i))
+        else $error("CDC: abstract-command payload changed during dispatch toggle sync");
+
+    a_sba_wr_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
+        _sba_wr_edge |-> $stable(sbaddress0_i) && $stable(sbdata0_i)
+                      && $stable(sb_access_i) && $stable(sb_autoincr_i))
+        else $error("CDC: SBA write payload changed during dispatch toggle sync");
+
+    a_sba_rd_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
+        _sba_rd_edge |-> $stable(sbaddress0_i) && $stable(sb_access_i) && $stable(sb_autoincr_i))
+        else $error("CDC: SBA read payload changed during dispatch toggle sync");
+
+    // W1C clear toggles carry a bundled mask; it must be stable at the edge.
+    a_cmderr_clr_mask_stable: assert property (@(posedge clk) disable iff (!rst_n)
+        (cmderr_clr_tog_sync[1] != cmderr_clr_tog_r) |-> $stable(cmderr_clr_mask_i))
+        else $error("CDC: cmderr W1C mask changed during clear toggle sync");
+    a_sberr_clr_mask_stable: assert property (@(posedge clk) disable iff (!rst_n)
+        (sb_err_clr_tog_sync[1] != sb_err_clr_tog_r) |-> $stable(sb_err_clr_mask_i))
+        else $error("CDC: sberror W1C mask changed during clear toggle sync");
+
     logic _unused_dtm;
     assign _unused_dtm = &{1'b0, dcsr_reg[31:28],  // xdebugver: stored at reset (=4) but hardcoded in read
         dcsr_reg[27:16],           // reserved WIRI: always 0 after DCSR_WRITE_MASK

@@ -15,14 +15,14 @@ proc as_u32 {v} {
 }
 
 # ── dmstatus (DMI 0x11) ────────────────────────────────────────────────────
-# Bits [3:0] = version: 2 means Debug Spec 0.13 compliant.
+# Bits [3:0] = version: 3 means Debug Spec 1.0 compliant.
 # Bit 7      = authenticated: must be 1 for any debug operations to work.
 set dmstatus [as_u32 [riscv dmi_read 0x11]]
 set version       [expr {$dmstatus & 0xf}]
 set authenticated [expr {($dmstatus >> 7) & 1}]
 
-if {$version != 2} {
-    error "dmstatus.version=$version; expected 2 (Debug Spec 0.13)"
+if {$version != 3} {
+    error "dmstatus.version=$version; expected 3 (Debug Spec 1.0)"
 }
 if {!$authenticated} {
     error "dmstatus.authenticated=0; debug module is locked"
@@ -74,13 +74,13 @@ set dtmcs_base [expr {0x0 | (6 << 4) | 1}]  ;# abits=7 => 0x71 typical; just ver
 # the DM is still fully functional after OpenOCD's own init sequence touched DTMCS.
 set dmstatus_after [as_u32 [riscv dmi_read 0x11]]
 set dmactive_after [as_u32 [riscv dmi_read 0x10]]
-if {($dmstatus_after & 0xf) != 2} {
+if {($dmstatus_after & 0xf) != 3} {
     error "DM version changed after init: [format 0x%08x $dmstatus_after]"
 }
 if {($dmactive_after & 1) != 1} {
     error "dmactive=0 after init: DM not responsive"
 }
-puts "DTMCS write acceptance: DM still active and version=2 after init (dmireset handled by OpenOCD)"
+puts "DTMCS write acceptance: DM still active and version=3 after init (dmireset handled by OpenOCD)"
 
 # ── abstractcs (DMI 0x16) ────────────────────────────────────────────────
 # Bits [28:24] = progbufsize (should be >= 2 for progbuf operations).

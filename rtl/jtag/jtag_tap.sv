@@ -27,9 +27,10 @@
 `include "jv32_dbgmsg.svh"
 
 module jtag_tap #(
-    parameter bit          [31:0] IDCODE     = 32'h1DEAD3FF,
-    parameter int unsigned        IR_LEN     = 5,
-    parameter int                 N_TRIGGERS = 2
+    parameter bit          [31:0] IDCODE           = 32'h1DEAD3FF,
+    parameter int unsigned        IR_LEN           = 5,
+    parameter int                 N_TRIGGERS       = 2,
+    parameter int                 DBG_BUS_TIMEOUT_W = 12
 ) (
     // -- JTAG interface (TCK domain) -----------------------------------------
     input  logic tck_i,
@@ -58,6 +59,7 @@ module jtag_tap #(
     output logic [31:0] dbg_csr_wdata_o,
     output logic        dbg_csr_we_o,
     input  logic [31:0] dbg_csr_rdata_i,
+    input  logic        dbg_csr_illegal_i,
 
     output logic [31:0] dbg_pc_wdata_o,
     output logic        dbg_pc_we_o,
@@ -205,8 +207,9 @@ module jtag_tap #(
 
     // =========================================================================
     // DTMCS shift register -- TCK domain
-    // abits=7, version=1 (DTM 0.13), idle=1, dmistat=0 (constant read-only)
-    // idle=1: probe must spend ≥1 TCK cycle in Run-Test/Idle (RISC-V Debug 0.13 §3.8)
+    // abits=7, version=1 (DTM version described by Debug Spec 0.13 AND 1.0),
+    // idle=1, dmistat=0 (constant read-only), errinfo=0 (optional, not impl).
+    // idle=1: probe must spend >=1 TCK cycle in Run-Test/Idle (RISC-V Debug 1.0).
     // =========================================================================
     localparam [31:0] DTMCS_VALUE = {14'b0, 1'b0, 1'b0, 1'b0, 3'd1, 2'b00, 6'd7, 4'd1};
 
@@ -353,29 +356,49 @@ module jtag_tap #(
     // =========================================================================
     // DMI register read mux -- combinational
     // =========================================================================
-    wire [31:0] dmcontrol_rdata = {1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, hartsello, 10'b0, 4'b0, ndmreset, dmactive};
+    // DMCONTROL read-back (RISC-V Debug Spec 1.0, DM 0x10).
+    //   [31] haltreq / [30] resumereq are write-only -> read 0
+    //   [29] hartreset is optional and implemented -> reflect the reg
+    //   [28:26] ackhavereset / ackunavail / hasel are write-1/RO-0 here
+    wire [31:0] dmcontrol_rdata = {
+        1'b0, 1'b0,      // [31] haltreq, [30] resumereq  (WARZ / W1 -> read 0)
+        hartreset,       // [29] hartreset (optional, implemented)
+        1'b0, 1'b0,      // [28] ackhavereset, [27] ackunavail (W1)
+        1'b0,            // [26] hasel (single hart)
+        hartsello,       // [25:16] hartsello
+        10'b0,           // [15:6]  hartselhi (single hart)
+        4'b0,            // [5:2]   setkeepalive/clrkeepalive/set-clr-resethaltreq
+        ndmreset,        // [1]
+        dmactive         // [0]
+    };
 
+    // DMSTATUS (RISC-V Debug Spec 1.0, DM 0x11).  version=3 advertises 1.0.
+    // ndmresetpending [24] tracks dmcontrol.ndmreset; stickyunavail [23]=0
+    // (the per-hart unavail bits are not sticky here -- the single hart is
+    // always present).
     wire [31:0] dmstatus_rdata = {
-        9'b0,
-        1'b1,         // [22] impebreak
-        2'b00,
-        havereset_r,
-        havereset_r,  // all/any_havereset
-        all_resumeack,
-        any_resumeack,
-        all_noexist,
-        any_noexist,
-        1'b0,
-        1'b0,         // allunavail, anyunavail
-        all_running,
-        any_running,
-        all_halted,
-        any_halted,
-        1'b1,
-        1'b0,
-        1'b0,
-        1'b0,         // authenticated, authbusy, hasresethaltreq, confstrptrvalid
-        4'b0010       // version=2
+        7'b0,          // [31:25]
+        ndmreset,      // [24] ndmresetpending
+        1'b0,          // [23] stickyunavail
+        1'b1,          // [22] impebreak
+        2'b00,         // [21:20]
+        havereset_r,   // [19] allhavereset
+        havereset_r,   // [18] anyhavereset
+        all_resumeack, // [17]
+        any_resumeack, // [16]
+        all_noexist,   // [15] allnonexistent
+        any_noexist,   // [14] anynonexistent
+        1'b0,          // [13] allunavail
+        1'b0,          // [12] anyunavail
+        all_running,   // [11]
+        any_running,   // [10]
+        all_halted,    // [9]
+        any_halted,    // [8]
+        1'b1,          // [7] authenticated
+        1'b0,          // [6] authbusy
+        1'b0,          // [5] hasresethaltreq (halt-on-reset not implemented)
+        1'b0,          // [4] confstrptrvalid
+        4'b0011        // [3:0] version = 3 (Debug Spec 1.0)
     };
 
     wire [31:0] abstractcs_rdata = {
@@ -460,17 +483,12 @@ module jtag_tap #(
             case (dmi_address)
                 DMI_DATA0: if (autoexec_data[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                 DMI_DATA1: if (autoexec_data[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
-                DMI_SBDATA0:
-                if (sb_readondata && sb_err_tck == 3'b0) begin
-                    if (sba_busy_tck) sb_busyerr_nx = 1'b1;
-                    else sba_rd_toggle_tck_nx = ~sba_rd_toggle_tck;
-                end
                 default:   ;
             endcase
         end
         else if (update_dr && ir_reg == IR_DMI) begin
 
-            if (dmi_shift[1:0] == 2'b10) begin
+            if (dmi_shift[1:0] == 2'b10) begin  // Write operation
                 case (dmi_shift[40:34])
                     DMI_DATA0: if (!busy_tck && autoexec_data[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                     DMI_DATA1: if (!busy_tck && autoexec_data[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
@@ -479,9 +497,29 @@ module jtag_tap #(
                     DMI_PROGBUF0: if (!busy_tck && autoexec_pbuf[0]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                     DMI_PROGBUF1: if (!busy_tck && autoexec_pbuf[1]) cmd_wr_toggle_tck_nx = ~cmd_wr_toggle_tck;
                     DMI_SBCS: if (dmi_shift[24]) sb_busyerr_nx = 1'b0;
+                    // Writing SBADDRESS0 or SBDATA0 while sbbusy is a protocol
+                    // error -> sbbusyerror (RISC-V Debug Spec SBA).
+                    DMI_SBADDRESS0,
                     DMI_SBDATA0: if (sb_err_tck == 3'b0 && sba_busy_tck) sb_busyerr_nx = 1'b1;
                     default: ;
                 endcase
+            end
+            else if (dmi_shift[1:0] == 2'b01) begin  // Read operation
+                // A read of SBDATA0 (the DMI read op that requests the value)
+                // while a system bus access is in progress is a protocol error
+                // -> sbbusyerror, and no new bus read.  Otherwise honour
+                // sbreadondata: each SBDATA0 read starts the next bus read.
+                // Keyed on the read op (not the capture) so the address-latch
+                // capture that follows a plain SBDATA0 write is not mistaken
+                // for the debugger reading sbdata.
+                if (dmi_shift[40:34] == DMI_SBDATA0) begin
+                    if (sba_busy_tck) begin
+                        if (sb_err_tck == 3'b0) sb_busyerr_nx = 1'b1;
+                    end
+                    else if (sb_readondata && sb_err_tck == 3'b0) begin
+                        sba_rd_toggle_tck_nx = ~sba_rd_toggle_tck;
+                    end
+                end
             end
         end
     end
@@ -499,7 +537,12 @@ module jtag_tap #(
             ndmreset                  <= 1'b0;
             dmactive                  <= 1'b0;
             hartsello                 <= 10'b0;
-            havereset_r               <= 1'b0;
+            // havereset resets to 1: this reset is reached by power-on and the
+            // external reset pin (jtag_top wires jtag_tap.ntrst_i from the raw
+            // rst_n), both of which also reset the hart.  RISC-V Debug Spec:
+            // dmstatus.{any,all}havereset is set after the hart is reset by
+            // anything -- DM-driven or not -- until ackhavereset is written.
+            havereset_r               <= 1'b1;
             data0                     <= 32'b0;
             data1                     <= 32'b0;
             progbuf0                  <= 32'h0010_0073;  // EBREAK
@@ -568,7 +611,12 @@ module jtag_tap #(
             end
 
             // -- DTMCS write handling ---------------------------------------
-            if (update_dr && ir_reg == IR_DTMCS && dmi_shift[17]) begin
+            // When IR == DTMCS the shifted-in value lives in dtmcs_shift, not
+            // dmi_shift (which still holds the last DMI transaction).  DTMCS
+            // bit 17 = dmihardreset, bit 16 = dmireset (RISC-V Debug Spec).
+            // This DTM has no sticky DMI op-status state, so dmireset alone is
+            // a no-op; only dmihardreset wipes TCK-domain soft state.
+            if (update_dr && ir_reg == IR_DTMCS && dtmcs_shift[17]) begin
                 // dmihardreset: wipe TCK-domain soft state
                 dmi_address   <= 7'b0;
                 data0         <= 32'b0;
@@ -596,7 +644,12 @@ module jtag_tap #(
                             haltreq   <= dmi_shift[33];
                             resumereq <= dmi_shift[32];
                             hartreset <= dmi_shift[31];
-                            hartsello <= dmi_shift[27:18];
+                            // Keep hart selection stable while an abstract
+                            // command is in progress (Debug Spec: the debugger
+                            // must not change hartsel during a command; the DM
+                            // ignores the change rather than corrupting it).
+                            if (!busy_tck && !cmd_busy_tck_pending)
+                                hartsello <= dmi_shift[27:18];
                             if (dmi_shift[31] || dmi_shift[3]) havereset_r <= 1'b1;
                             if (dmi_shift[30]) havereset_r <= 1'b0;  // ackhavereset W1C
                         end
@@ -635,22 +688,67 @@ module jtag_tap #(
                             end
                         end
 
+                        // An SBA register write while sbbusy or sbbusyerror is
+                        // set must not take effect (RISC-V Debug Spec SBA); the
+                        // comb block above raises sbbusyerror for that case.
                         DMI_SBADDRESS0: begin
-                            sbaddress0 <= dmi_shift[33:2];
-                            // Fire SBA read immediately if sb_readonaddr is set
-                            if (sb_readonaddr && sb_err_tck == 3'b0 && !sba_busy_tck)
-                                sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
+                            if (!sba_busy_tck && !sb_busyerr) begin
+                                sbaddress0 <= dmi_shift[33:2];
+                                // Fire SBA read immediately if sb_readonaddr is set
+                                if (sb_readonaddr && sb_err_tck == 3'b0)
+                                    sba_rd_toggle_tck <= ~sba_rd_toggle_tck;
+                            end
                         end
 
                         DMI_SBDATA0: begin
-                            sbdata0 <= dmi_shift[33:2];
-                            if (sb_err_tck == 3'b0 && !sba_busy_tck) sba_wr_toggle_tck <= ~sba_wr_toggle_tck;
+                            if (!sba_busy_tck && !sb_busyerr) begin
+                                sbdata0 <= dmi_shift[33:2];
+                                if (sb_err_tck == 3'b0) sba_wr_toggle_tck <= ~sba_wr_toggle_tck;
+                            end
                         end
 
                         default: ;
                     endcase
                 end
             end  // update_dr && IR_DMI
+
+            // -- dmactive = 0 : hold the Debug Module registers at their reset
+            //    values (RISC-V Debug Spec: while dmactive is 0 the module's
+            //    state takes its reset values; dmactive is the only writable
+            //    bit).  Placed after the DMI write above so field writes made
+            //    in the same scan that clears dmactive do not take effect.
+            //
+            //    Only genuine DM register state is reset here.  DTM transport
+            //    state -- the selected `dmi_address` and the TCK<->CLK dispatch
+            //    toggles / busy-holdoff -- is NOT touched: it belongs to the
+            //    DMI transport, not the Debug Module, and continuously forcing
+            //    it would break the two-scan DMI read protocol and desync the
+            //    toggle handshake with the CLK side.  Core CSRs shadowed by the
+            //    DM (dcsr/dpc/dscratch) and the trigger CSRs are likewise not
+            //    reset -- those follow hart reset.  `havereset_r` is sticky
+            //    reset-notification state cleared only by ackhavereset.
+            if (!dmactive) begin
+                data0             <= 32'b0;
+                data1             <= 32'b0;
+                progbuf0          <= 32'h0010_0073;  // EBREAK
+                progbuf1          <= 32'h0010_0073;
+                command_reg       <= 32'b0;
+                cmderr_tck        <= 3'b0;
+                autoexec_data     <= 2'b0;
+                autoexec_pbuf     <= 2'b0;
+                sb_readonaddr     <= 1'b1;
+                sb_access         <= SBA_ACCESS32;
+                sb_autoincr       <= 1'b0;
+                sb_readondata     <= 1'b0;
+                sb_busyerr        <= 1'b0;
+                sbaddress0        <= 32'b0;
+                sbdata0           <= 32'b0;
+                haltreq           <= 1'b0;
+                resumereq         <= 1'b0;
+                hartreset         <= 1'b0;
+                ndmreset          <= 1'b0;
+                hartsello         <= 10'b0;
+            end
         end
     end  // always_ff TCK
 
@@ -735,7 +833,8 @@ module jtag_tap #(
     // jv32_dtm instantiation (CLK domain only, no TCK port)
     // =========================================================================
     jv32_dtm #(
-        .N_TRIGGERS(N_TRIGGERS)
+        .N_TRIGGERS       (N_TRIGGERS),
+        .DBG_BUS_TIMEOUT_W(DBG_BUS_TIMEOUT_W)
     ) u_dtm (
         // Core clock / reset
         .clk  (clk),
@@ -802,6 +901,7 @@ module jtag_tap #(
         .dbg_csr_wdata_o (dbg_csr_wdata_o),
         .dbg_csr_we_o    (dbg_csr_we_o),
         .dbg_csr_rdata_i (dbg_csr_rdata_i),
+        .dbg_csr_illegal_i(dbg_csr_illegal_i),
         .dbg_pc_wdata_o  (dbg_pc_wdata_o),
         .dbg_pc_we_o     (dbg_pc_we_o),
         .dbg_pc_i        (dbg_pc_i),

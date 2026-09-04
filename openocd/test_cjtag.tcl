@@ -43,12 +43,12 @@ if {$idcode != 0x1DEAD3FF} {
 puts "cJTAG IDCODE OK: [format 0x%08x $idcode]"
 
 # ── 2. Verify DM is reachable through the OScan1 bridge ──────────────────────
-# Read dmstatus: version must be 2 (Debug Spec 0.13), authenticated must be 1.
+# Read dmstatus: version must be 3 (Debug Spec 1.0), authenticated must be 1.
 set dmstatus      [as_u32 [riscv dmi_read 0x11]]
 set version       [expr {$dmstatus & 0xf}]
 set authenticated [expr {($dmstatus >> 7) & 1}]
-if {$version != 2} {
-    error "dmstatus.version=$version over cJTAG; expected 2"
+if {$version != 3} {
+    error "dmstatus.version=$version over cJTAG; expected 3"
 }
 if {!$authenticated} {
     error "dmstatus.authenticated=0 over cJTAG; DM locked"

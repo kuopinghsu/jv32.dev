@@ -1459,6 +1459,47 @@ arch-test-%:
 openocd-test: build-vpi-jtag build-vpi-cjtag
 	@$(MAKE) -C openocd --no-print-directory all-with-gdb
 
+# ============================================================================
+# Focused TAP/DTM/DMI testbench (no OpenOCD needed).
+#   make jtag-tb                             # build + run all groups
+#   make jtag-tb JTAG_TB_ARGS=+TEST=dtmcs_reset
+#   make jtag-tb-elab NTRIG=1                # elaboration-only sweep helper
+# ============================================================================
+JTAG_TB_SRC   = testbench/jtag/tb_jtag_dtm.sv
+JTAG_TB_HDR   = $(JV32_DIR)/jv32_dbgmsg.svh
+JTAG_TB_RTL   = $(wildcard $(JTAG_DIR)/*.sv)
+JTAG_TB_BIN   = $(BUILD_DIR)/tb_jtag_dtm
+JTAG_TB_ARGS ?=
+NTRIG        ?= 2
+# Debug-bus timeout counter width used for the harness build.  16 bits keeps the
+# SBA engine "busy" long enough to race a DMI scan against it (sba_busy group);
+# override low (e.g. TMO_W=5) for the sba_timeout boundary group.
+TMO_W        ?= 16
+
+.PHONY: jtag-tb jtag-tb-elab
+jtag-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_jtag_tb
+	$(VERILATOR) --binary --timing -sv -Wno-fatal -Wno-TIMESCALEMOD -Wno-PROCASSINIT \
+	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+	    -Wno-UNUSEDPARAM -Wno-PINCONNECTEMPTY \
+	    --top-module tb_jtag_dtm -GDBG_BUS_TIMEOUT_W=$(TMO_W) \
+	    -I$(JV32_DIR) -I$(JTAG_DIR) -I$(RTL_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_jtag_tb -o ../tb_jtag_dtm \
+	    $(JTAG_TB_HDR) $(JTAG_TB_RTL) $(JTAG_TB_SRC)
+	@echo "=========================================="
+	$(JTAG_TB_BIN) +TMO_W=$(TMO_W) $(JTAG_TB_ARGS)
+
+# Elaboration-only check across N_TRIGGERS values (P1 s4 regression).
+jtag-tb-elab:
+	@mkdir -p $(BUILD_DIR)/objdir_jtag_elab_$(NTRIG)
+	$(VERILATOR) --lint-only -sv -Wno-fatal \
+	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-WIDTHEXPAND -Wno-UNUSEDPARAM \
+	    -GN_TRIGGERS=$(NTRIG) --top-module jtag_top \
+	    -I$(JV32_DIR) -I$(JTAG_DIR) -I$(RTL_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_jtag_elab_$(NTRIG) \
+	    $(JTAG_TB_HDR) $(JTAG_TB_RTL)
+	@echo "jtag_top elaborated OK with N_TRIGGERS=$(NTRIG)"
+
 # ASIC synthesis and place-and-route (OpenLane2 + Nangate 45nm).
 # Configure OPENRAM, OPENLANE, NANGATE_HOME in env.config before running.
 syn:

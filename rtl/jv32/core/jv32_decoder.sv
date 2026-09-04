@@ -453,6 +453,26 @@ module jv32_decoder #(
                         mem_read = 1'b1;
                         alu_src  = 1'b1;
                         if (funct3 != 3'b010) illegal = 1'b1;
+                        // WARL: only the 11 architecturally defined RV32A
+                        // funct5 encodings are legal.  Every other funct5 is
+                        // reserved and must raise an illegal-instruction
+                        // exception instead of executing as an unintended
+                        // read-modify-write (RISC-V Unpriv. ISA, "A" ext).
+                        case (funct5)
+                            5'b00010,  // LR.W
+                            5'b00011,  // SC.W
+                            5'b00001,  // AMOSWAP.W
+                            5'b00000,  // AMOADD.W
+                            5'b00100,  // AMOXOR.W
+                            5'b01100,  // AMOAND.W
+                            5'b01000,  // AMOOR.W
+                            5'b10000,  // AMOMIN.W
+                            5'b10100,  // AMOMAX.W
+                            5'b11000,  // AMOMINU.W
+                            5'b11100:  // AMOMAXU.W
+                                ;  // legal
+                            default: illegal = 1'b1;
+                        endcase
 `ifndef SYNTHESIS
                         amo_op = amo_op_e'(funct5);
 `else

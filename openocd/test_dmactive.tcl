@@ -1,7 +1,7 @@
 puts "\[TEST\] dmcontrol.dmactive — DM reset and re-activate"
 
 # Tests the dmactive bit in DMCONTROL (DMI 0x10).
-# Per Debug Spec 0.13 §3.12.6:
+# Per RISC-V Debug Spec 1.0 (dmactive semantics):
 #   dmactive=0 resets the debug module.
 #   dmactive=1 brings it out of reset and makes it operational.
 #
@@ -9,7 +9,7 @@ puts "\[TEST\] dmcontrol.dmactive — DM reset and re-activate"
 #   1. On entry, dmactive=1 and DM is functional.
 #   2. Write dmactive=0: DMCONTROL.dmactive reads back 0.
 #   3. Write dmactive=1: DM re-activates.
-#   4. After re-activation: dmstatus.authenticated=1, version=2, DM usable.
+#   4. After re-activation: dmstatus.authenticated=1, version=3, DM usable.
 #   5. Verify halt/read/resume cycle works after re-activation.
 #
 # During dmactive=0 the hart may lose debug state.  We re-halt after
@@ -90,13 +90,13 @@ set authed   [expr {($dmstatus >> 7) & 1}]
 
 puts "  dmstatus=[format 0x%08x $dmstatus] version=$version authenticated=$authed"
 
-if {$version != 2} {
-    error "dmstatus.version=$version after re-activation; expected 2"
+if {$version != 3} {
+    error "dmstatus.version=$version after re-activation; expected 3"
 }
 if {!$authed} {
     error "dmstatus.authenticated=0 after re-activation"
 }
-puts "DM functional: version=2, authenticated=1 OK"
+puts "DM functional: version=3, authenticated=1 OK"
 
 # ── 5. Halt / read register / resume cycle after re-activation ─────────────────
 puts "\[SUBTEST\] Halt/read/resume cycle after re-activation"

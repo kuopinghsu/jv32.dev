@@ -84,6 +84,14 @@ VPI_PORT ?= 5555
 # ── OpenOCD GDB server port (used by the GDB test suite) ─────────────────────
 GDB_PORT ?= 3333
 
+# ── Portable TCP-port helpers ────────────────────────────────────────────────
+# Linux `ss` / `fuser -k <port>/tcp` are not available on macOS.  `lsof` ships
+# on both macOS and mainstream Linux, so use it for both probes.
+#   $(call port-listening,PORT) — succeeds when some process holds PORT in LISTEN
+#   $(call port-kill,PORT)      — SIGKILLs whatever holds PORT (no-op if free)
+port-listening = lsof -nP -iTCP:$(1) -sTCP:LISTEN >/dev/null 2>&1
+port-kill      = for p in $$(lsof -tnP -iTCP:$(1) 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done
+
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
 JTAG_TESTS  := dtmcs halt_resume registers memory memory_modes reset dm_status programbuf step \
@@ -174,11 +182,11 @@ ftdi-cjtag-activate: $(REPLAYER_BIN) $(VPI_CJTAG) $(BOOT_ELF)
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/ftdi_cjtag_activate.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
 	    sleep 0.1; \
 	done; \
-	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' \
+	$(call port-listening,$(VPI_PORT)) \
 	    || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
 	"$(REPLAYER_BIN)" $(VPI_PORT) >"$$LOG.rep.log" 2>&1; \
 	REP_RC=$$?; \
@@ -209,26 +217,35 @@ test-jtag: $(VPI_JTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	    if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	    LOG="$(LOG_DIR)/jtag_$$t"; \
 	    printf "  [jtag] %d/$(N_JTAG) %-20s ... " "$$N" "test_$$t"; \
-	    "$(VPI_JTAG)" "$$ELF" --port $(VPI_PORT) \
-	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
-	    for _i in $$(seq 1 50); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
-	        sleep 0.1; \
-	    done; \
-	    ( cd "$(OPENOCD_DIR)" && \
-	      $(OPENOCD) -d0 \
-	          -c "gdb port disabled" \
-	          -f jv32.cfg \
-	          -c "jtag_vpi set_port $(VPI_PORT)" \
-	          -c init \
-	          -c "source test_$$t.tcl" \
-	          -c shutdown \
-	    ) >"$$LOG.ocd.log" 2>&1; \
-	    OCD_RC=$$?; \
-	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
-	    for _j in $$(seq 1 30); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || break; \
-	        sleep 0.1; \
+	    for _attempt in 1 2 3; do \
+	        "$(VPI_JTAG)" "$$ELF" --port $(VPI_PORT) \
+	            >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	        for _i in $$(seq 1 80); do \
+	            $(call port-listening,$(VPI_PORT)) && break; \
+	            kill -0 $$VPI_PID 2>/dev/null || break; \
+	            sleep 0.1; \
+	        done; \
+	        sleep 0.3; \
+	        ( cd "$(OPENOCD_DIR)" && \
+	          $(OPENOCD) -d0 \
+	              -c "gdb port disabled" \
+	              -f jv32.cfg \
+	              -c "jtag_vpi set_port $(VPI_PORT)" \
+	              -c init \
+	              -c "source test_$$t.tcl" \
+	              -c shutdown \
+	        ) >"$$LOG.ocd.log" 2>&1; \
+	        OCD_RC=$$?; \
+	        kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	        for _j in $$(seq 1 30); do \
+	            $(call port-listening,$(VPI_PORT)) || break; \
+	            sleep 0.1; \
+	        done; \
+	        if [ $$OCD_RC -eq 0 ] || \
+	           ! grep -Eq 'Error on socket|Connection reset by peer|jtag_vpi.*(connect|recv)|scan chain interrogation failed|IR capture error' "$$LOG.ocd.log" 2>/dev/null; then \
+	            break; \
+	        fi; \
+	        printf "(vpi-retry) "; \
 	    done; \
 	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
@@ -269,26 +286,35 @@ test-cjtag: $(VPI_CJTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	    if [ "$$t" = "semihost" ]; then ELF="$(SEMIHOST_ELF)"; fi; \
 	    LOG="$(LOG_DIR)/cjtag_$$t"; \
 	    printf "  [cjtag] %d/$(N_CJTAG) %-20s ... " "$$N" "test_$$t"; \
-	    "$(VPI_CJTAG)" "$$ELF" --port $(VPI_PORT) \
-	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
-	    for _i in $$(seq 1 50); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
-	        sleep 0.1; \
-	    done; \
-	    ( cd "$(OPENOCD_DIR)" && \
-	      $(OPENOCD) -d0 \
-	          -c "gdb port disabled" \
-	          -f jv32_cjtag.cfg \
-	          -c "jtag_vpi set_port $(VPI_PORT)" \
-	          -c init \
-	          -c "source test_$$t.tcl" \
-	          -c shutdown \
-	    ) >"$$LOG.ocd.log" 2>&1; \
-	    OCD_RC=$$?; \
-	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
-	    for _j in $$(seq 1 30); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || break; \
-	        sleep 0.1; \
+	    for _attempt in 1 2 3; do \
+	        "$(VPI_CJTAG)" "$$ELF" --port $(VPI_PORT) \
+	            >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
+	        for _i in $$(seq 1 80); do \
+	            $(call port-listening,$(VPI_PORT)) && break; \
+	            kill -0 $$VPI_PID 2>/dev/null || break; \
+	            sleep 0.1; \
+	        done; \
+	        sleep 0.3; \
+	        ( cd "$(OPENOCD_DIR)" && \
+	          $(OPENOCD) -d0 \
+	              -c "gdb port disabled" \
+	              -f jv32_cjtag.cfg \
+	              -c "jtag_vpi set_port $(VPI_PORT)" \
+	              -c init \
+	              -c "source test_$$t.tcl" \
+	              -c shutdown \
+	        ) >"$$LOG.ocd.log" 2>&1; \
+	        OCD_RC=$$?; \
+	        kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	        for _j in $$(seq 1 30); do \
+	            $(call port-listening,$(VPI_PORT)) || break; \
+	            sleep 0.1; \
+	        done; \
+	        if [ $$OCD_RC -eq 0 ] || \
+	           ! grep -Eq 'Error on socket|Connection reset by peer|jtag_vpi.*(connect|recv)|scan chain interrogation failed|IR capture error' "$$LOG.ocd.log" 2>/dev/null; then \
+	            break; \
+	        fi; \
+	        printf "(vpi-retry) "; \
 	    done; \
 	    if [ $$OCD_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.ocd.log" 2>/dev/null; then \
 	        if grep -q '\[SKIP\]' "$$LOG.ocd.log" 2>/dev/null; then \
@@ -323,7 +349,7 @@ jtag-%: $(VPI_JTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/jtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
@@ -364,7 +390,7 @@ cjtag-%: $(VPI_CJTAG) $(BOOT_ELF) $(SEMIHOST_ELF)
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/cjtag_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
@@ -423,7 +449,7 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	        --max-cycles 0 \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	    for _i in $$(seq 1 50); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	        $(call port-listening,$(VPI_PORT)) && break; \
 	        sleep 0.1; \
 	    done; \
 	    ( cd "$(OPENOCD_DIR)" && \
@@ -437,7 +463,7 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	          -c init \
 	    ) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	    for _i in $$(seq 1 80); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	        $(call port-listening,$(GDB_PORT)) && break; \
 	        sleep 0.1; \
 	    done; \
 	    $(GDB) --batch \
@@ -452,11 +478,11 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	    kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	    for _j in $$(seq 1 30); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || break; \
+	        $(call port-listening,$(VPI_PORT)) || break; \
 	        sleep 0.1; \
 	    done; \
 	    for _j in $$(seq 1 30); do \
-	        ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' || break; \
+	        $(call port-listening,$(GDB_PORT)) || break; \
 	        sleep 0.1; \
 	    done; \
 	    if [ $$GDB_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.gdb.log" 2>/dev/null; then \
@@ -502,8 +528,8 @@ gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 	echo "--- [gdb] test_gdb_$$t (GDB debug test + ISS trace compare) ---"; \
 	pkill -x jv32vpi_jtag 2>/dev/null || true; \
 	pkill -x openocd      2>/dev/null || true; \
-	fuser -k $(VPI_PORT)/tcp 2>/dev/null || true; \
-	fuser -k $(GDB_PORT)/tcp 2>/dev/null || true; \
+	$(call port-kill,$(VPI_PORT)); \
+	$(call port-kill,$(GDB_PORT)); \
 	sleep 0.3; \
 	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	    --max-cycles 0 \
@@ -511,11 +537,11 @@ gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 	    --rtl-trace "$(RTL_TRACE_FILE)" \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
 	    sleep 0.1; \
 	done; \
-	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
+	$(call port-listening,$(VPI_PORT)) || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
@@ -527,7 +553,7 @@ gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	    $(call port-listening,$(GDB_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	$(GDB) --batch \
@@ -588,7 +614,7 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
@@ -602,7 +628,7 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	    $(call port-listening,$(GDB_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	$(GDB) --batch \
@@ -646,7 +672,7 @@ jtag-no-trace-step: $(VPI_JTAG) $(BOOT_ELF)
 	    $(if $(filter vcd,$(WAVE)),--trace "$(BUILD_DIR)/jtag_no_trace_$$t.vcd") \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	( cd "$(OPENOCD_DIR)" && \
@@ -691,8 +717,8 @@ gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 	echo "--- [gdb] test_gdb_$$t (Zcmp instruction test + ISS trace compare) ---"; \
 	pkill -x jv32vpi_jtag 2>/dev/null || true; \
 	pkill -x openocd      2>/dev/null || true; \
-	fuser -k $(VPI_PORT)/tcp 2>/dev/null || true; \
-	fuser -k $(GDB_PORT)/tcp 2>/dev/null || true; \
+	$(call port-kill,$(VPI_PORT)); \
+	$(call port-kill,$(GDB_PORT)); \
 	sleep 0.3; \
 	"$(VPI_JTAG)" "$(ZCMP_ELF)" --port $(VPI_PORT) \
 	    --max-cycles 0 \
@@ -700,11 +726,11 @@ gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 	    --rtl-trace "$(RTL_TRACE_FILE)" \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' && break; \
+	    $(call port-listening,$(VPI_PORT)) && break; \
 	    kill -0 $$VPI_PID 2>/dev/null || { echo "[FAIL] VPI failed to start — see $$LOG.sim.log:"; cat "$$LOG.sim.log"; exit 1; }; \
 	    sleep 0.1; \
 	done; \
-	ss -tnl 2>/dev/null | grep -q ':$(VPI_PORT) ' || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
+	$(call port-listening,$(VPI_PORT)) || { echo "[FAIL] VPI port $(VPI_PORT) never opened"; cat "$$LOG.sim.log"; kill $$VPI_PID 2>/dev/null; exit 1; }; \
 	( cd "$(OPENOCD_DIR)" && \
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
@@ -716,7 +742,7 @@ gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
-	    ss -tnl 2>/dev/null | grep -q ':$(GDB_PORT) ' && break; \
+	    $(call port-listening,$(GDB_PORT)) && break; \
 	    sleep 0.1; \
 	done; \
 	$(GDB) --batch \
