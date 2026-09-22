@@ -1,0 +1,478 @@
+{
+  "utc": "20260917T012150Z",
+  "revision": "e144336cf129d108a3aa57a1b60b9ac8811e7a8f",
+  "rtl_sha256": "c309f7dacbfc7bee6a39d95021a193d245443f1dc9235a64ebd28916d5fb347e",
+  "groups": [
+    "smoke",
+    "isa",
+    "csr",
+    "trap",
+    "interrupt",
+    "timer",
+    "amo",
+    "memory",
+    "axi",
+    "uart",
+    "debug",
+    "jtag",
+    "cdc",
+    "reset",
+    "parameter"
+  ],
+  "results": [
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-hello",
+        "rtl-simple"
+      ],
+      "returncode": 0,
+      "seconds": 2.832,
+      "log": "000.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "disabled-isa-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.089,
+      "log": "001.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "arch-test-run"
+      ],
+      "returncode": 0,
+      "seconds": 4.842,
+      "log": "002.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "scripts/isa_matrix.py"
+      ],
+      "returncode": 0,
+      "seconds": 144.663,
+      "log": "003.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "csr-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.089,
+      "log": "004.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-trap"
+      ],
+      "returncode": 0,
+      "seconds": 0.513,
+      "log": "005.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-trap",
+        "rtl-trap_contract",
+        "rtl-atomic_compat"
+      ],
+      "returncode": 0,
+      "seconds": 1.759,
+      "log": "006.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "clic-tb"
+      ],
+      "returncode": 0,
+      "seconds": 1.576,
+      "log": "007.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-clic",
+        "rtl-nested_irq",
+        "rtl-uart_route"
+      ],
+      "returncode": 0,
+      "seconds": 2.068,
+      "log": "008.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/amo0",
+        "AMO_EN=0",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.281,
+      "log": "009.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/amo1",
+        "AMO_EN=1",
+        "rtl-amo_config",
+        "rtl-atomic",
+        "rtl-atomic_compat"
+      ],
+      "returncode": 0,
+      "seconds": 4.571,
+      "log": "010.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-memory_map",
+        "rtl-tcm_alias",
+        "rtl-extram",
+        "rtl-mem_ordering",
+        "rtl-fence",
+        "rtl-fencei_smc"
+      ],
+      "returncode": 0,
+      "seconds": 3.187,
+      "log": "011.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "xbar-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.093,
+      "log": "012.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=0"
+      ],
+      "returncode": 0,
+      "seconds": 0.576,
+      "log": "013.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=1"
+      ],
+      "returncode": 0,
+      "seconds": 0.567,
+      "log": "014.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=2"
+      ],
+      "returncode": 0,
+      "seconds": 0.58,
+      "log": "015.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=3"
+      ],
+      "returncode": 0,
+      "seconds": 0.588,
+      "log": "016.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=4"
+      ],
+      "returncode": 0,
+      "seconds": 2.704,
+      "log": "017.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "axi-slave-tb",
+        "SLAVE_KIND=5"
+      ],
+      "returncode": 0,
+      "seconds": 2.594,
+      "log": "018.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-extram",
+        "rtl-mem_ordering",
+        "rtl-uart"
+      ],
+      "returncode": 0,
+      "seconds": 2.178,
+      "log": "019.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/stalls",
+        "RTL_PLUSARGS=+AXI_STALLS",
+        "rtl-extram",
+        "rtl-mem_ordering",
+        "rtl-atomic_compat"
+      ],
+      "returncode": 0,
+      "seconds": 2.729,
+      "log": "020.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-uart",
+        "rtl-uart_route"
+      ],
+      "returncode": 0,
+      "seconds": 1.542,
+      "log": "021.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.224,
+      "log": "022.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "-C",
+        "openocd",
+        "all-with-gdb",
+        "VPI_PORT=15555",
+        "GDB_PORT=13333"
+      ],
+      "returncode": 0,
+      "seconds": 196.618,
+      "log": "023.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb",
+        "TMO_W=5",
+        "JTAG_TB_ARGS=+TEST=sba_timeout"
+      ],
+      "returncode": 0,
+      "seconds": 2.581,
+      "log": "024.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb",
+        "JTAG_TB_ARGS=+TCK_LOW=31 +TCK_HIGH=37 +TCK_SETTLE=3"
+      ],
+      "returncode": 0,
+      "seconds": 2.621,
+      "log": "025.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb",
+        "JTAG_TB_ARGS=+TCK_LOW=2 +TCK_HIGH=2 +TCK_SETTLE=1 +TCK_JITTER"
+      ],
+      "returncode": 0,
+      "seconds": 0.127,
+      "log": "026.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "scripts/check_debug_tieoffs.py"
+      ],
+      "returncode": 0,
+      "seconds": 0.104,
+      "log": "027.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-default",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 1.936,
+      "log": "028.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-noamo",
+        "AMO_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 1.719,
+      "log": "029.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-nodebug",
+        "JTAG_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.408,
+      "log": "030.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-minimal",
+        "RV32EC=1",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.402,
+      "log": "031.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-serial",
+        "FAST_MUL=0",
+        "MUL_MC=0",
+        "FAST_DIV=0",
+        "FAST_SHIFT=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.593,
+      "log": "032.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-nob",
+        "RV32B_EN=0",
+        "ZCMP_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.404,
+      "log": "033.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "BUILD_DIR=build/compliance/param-smalltcm",
+        "IRAM_SIZE=65536",
+        "DRAM_SIZE=65536",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.54,
+      "log": "034.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "clic-tb",
+        "CLIC_IRQ_COUNT=2"
+      ],
+      "returncode": 0,
+      "seconds": 1.135,
+      "log": "035.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "clic-tb",
+        "CLIC_IRQ_COUNT=16"
+      ],
+      "returncode": 0,
+      "seconds": 0.948,
+      "log": "036.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "clic-tb",
+        "CLIC_IRQ_COUNT=32"
+      ],
+      "returncode": 0,
+      "seconds": 0.483,
+      "log": "037.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb-elab",
+        "NTRIG=0"
+      ],
+      "returncode": 0,
+      "seconds": 0.104,
+      "log": "038.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb-elab",
+        "NTRIG=1"
+      ],
+      "returncode": 0,
+      "seconds": 0.101,
+      "log": "039.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb-elab",
+        "NTRIG=2"
+      ],
+      "returncode": 0,
+      "seconds": 0.099,
+      "log": "040.log"
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/gmake",
+        "jtag-tb-elab",
+        "NTRIG=4"
+      ],
+      "returncode": 0,
+      "seconds": 0.1,
+      "log": "041.log"
+    }
+  ]
+}

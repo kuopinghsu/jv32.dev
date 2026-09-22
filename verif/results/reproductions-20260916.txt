@@ -1,0 +1,78 @@
+
+jv32-slave0-before.log
+
+[1440000] %Fatal: tb_axi_slave.sv:35: Assertion failed in tb_axi_slave.check: KIND=0: read got 00000000/0 expected 00000001/0
+%Error: testbench/compliance/tb_axi_slave.sv:35: Verilog $stop
+
+jv32-slave0-stage2.log
+
+[200000000] %Fatal: tb_axi_slave.sv:141: Assertion failed in tb_axi_slave: slave timeout KIND=0 AW/W/B=119/119/118 AR/R=118/118
+%Error: testbench/compliance/tb_axi_slave.sv:141: Verilog $stop
+
+jv32-slave2-before.log
+
+[200000000] %Fatal: tb_axi_slave.sv:133: Assertion failed in tb_axi_slave: slave timeout KIND=2
+%Error: testbench/compliance/tb_axi_slave.sv:133: Verilog $stop
+
+jv32-slave2-stage3.log
+
+[1350000] %Fatal: tb_axi_slave.sv:46: Assertion failed in tb_axi_slave.check: KIND=2: zero-strobe baud write
+%Error: testbench/compliance/tb_axi_slave.sv:46: Verilog $stop
+
+jv32-slave2-stage4.log
+
+[1595000] %Error: tb_axi_slave.sv:90: Assertion failed in tb_axi_slave: 'assert' failed.
+%Error: testbench/compliance/tb_axi_slave.sv:90: Verilog $stop
+
+jv32-slave3-before.log
+
+[555000] %Error: axi_magic.sv:340: Assertion failed in tb_axi_slave.axi_magic_case.dut: [AXI_MAGIC] RRESP must remain stable while RVALID is high
+%Error: rtl/axi/axi_magic.sv:340: Verilog $stop
+
+jv32-tcm4-stage1.log
+
+[200000000] %Fatal: tb_axi_slave.sv:226: Assertion failed in tb_axi_slave: slave timeout KIND=4 AW/W/B=116/116/116 AR/R=116/116
+%Error: testbench/compliance/tb_axi_slave.sv:226: Verilog $stop
+
+jv32-tcm5-stage1.log
+
+[200000000] %Fatal: tb_axi_slave.sv:226: Assertion failed in tb_axi_slave: slave timeout KIND=5 AW/W/B=116/116/116 AR/R=116/116
+%Error: testbench/compliance/tb_axi_slave.sv:226: Verilog $stop
+
+jv32-xbar-before.log
+
+[120000] %Fatal: tb_xbar.sv:67: Assertion failed in tb_xbar: duplicate AR: 2 slave requests for one master read
+%Error: testbench/compliance/tb_xbar.sv:67: Verilog $stop
+
+jv32-xbar-stage1.log
+
+[140000] %Fatal: tb_xbar.sv:72: Assertion failed in tb_xbar.unnamedblk1_4: DECERR before W accepted
+%Error: testbench/compliance/tb_xbar.sv:72: Verilog $stop
+
+jv32-independent-reset-before.log
+
+  [FAIL] system reset cannot replay a completed command
+  [FAIL] TAP reset cannot dispatch a phantom command
+[22890000] %Fatal: tb_jtag_dtm.sv:1060: Assertion failed in tb_jtag_dtm: JTAG directed checks failed
+%Error: testbench/jtag/tb_jtag_dtm.sv:1060: Verilog $stop
+
+jv32-debug-alias-before.log (2026-09-17)
+[VPI] Listening on port 15555
+Loading ELF file: /Users/kuoping/Projects/jv32.dev/build/hello.elf
+Entry point: 0x80000000
+Loaded 9732 bytes from ELF segments
+Parsed 87 symbols from ELF file
+[VPI] ELF loaded: /Users/kuoping/Projects/jv32.dev/build/hello.elf
+[VPI] Running 2000 boot clocks...
+Hello via printf (semihost path)
+Hel[VPI] Waiting for OpenOCD on port 15555...
+lo, JV32!
+misa=0x[VPI] sim_request_exit(code=0) — ignored; hart will spin in _spin loop
+40001105
+1000000/7=142857 rem=1
+mcycle=0x00000c00
+PASS
+[VPI] OpenOCD connected
+[0] %Error: tb_jv32_soc.sv:496: Assertion failed in TOP.tb_jv32_soc: 'assert' failed.
+%Error: testbench/tb_jv32_soc.sv:496: Verilog $stop
+Aborting...

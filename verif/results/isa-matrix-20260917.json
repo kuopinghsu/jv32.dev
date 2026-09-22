@@ -1,0 +1,362 @@
+[
+  {
+    "name": "e0m0a0b0z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a0b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 74,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a0b0z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a0b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 74,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a0b1z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a0b1z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 103,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a0b1z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a0b1z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 103,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a1b0z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a1b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 85,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a1b0z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a1b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 85,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a1b1z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a1b1z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 114,
+    "architectural": 0
+  },
+  {
+    "name": "e0m0a1b1z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m0a1b1z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 114,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a0b0z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a0b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 82,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a0b0z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a0b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 82,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a0b1z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a0b1z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 111,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a0b1z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a0b1z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 111,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a1b0z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a1b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 93,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a1b0z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a1b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 93,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a1b1z0",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a1b1z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 122,
+    "architectural": 0
+  },
+  {
+    "name": "e0m1a1b1z1",
+    "parameters": {
+      "RV32E_EN": 0,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 1,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e0m1a1b1z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 122,
+    "architectural": 0
+  },
+  {
+    "name": "e1m0a0b0z0",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m0a0b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 65,
+    "architectural": 0
+  },
+  {
+    "name": "e1m0a0b0z1",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 0,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m0a0b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 65,
+    "architectural": 0
+  },
+  {
+    "name": "e1m0a1b0z0",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m0a1b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 65,
+    "architectural": 0
+  },
+  {
+    "name": "e1m0a1b0z1",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 0,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m0a1b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 65,
+    "architectural": 0
+  },
+  {
+    "name": "e1m1a0b0z0",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m1a0b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 73,
+    "architectural": 0
+  },
+  {
+    "name": "e1m1a0b0z1",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 1,
+      "AMO_EN": 0,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m1a0b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 73,
+    "architectural": 0
+  },
+  {
+    "name": "e1m1a1b0z0",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 0
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m1a1b0z0/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 73,
+    "architectural": 0
+  },
+  {
+    "name": "e1m1a1b0z1",
+    "parameters": {
+      "RV32E_EN": 1,
+      "RV32M_EN": 1,
+      "AMO_EN": 1,
+      "RV32B_EN": 0,
+      "ZCMP_EN": 1
+    },
+    "generation": 0,
+    "log": "build/compliance/isa-matrix/e1m1a1b0z1/generate.log",
+    "build_and_directed": 0,
+    "elf_count": 73,
+    "architectural": 0
+  }
+]

@@ -1,0 +1,367 @@
+{
+  "utc": "20260915T145753Z",
+  "revision": "e144336cf129d108a3aa57a1b60b9ac8811e7a8f",
+  "rtl_sha256": "d0eac30962a835b66dc77d866edc4a4a3d259778d63215522067eee10199495a",
+  "groups": [
+    "smoke",
+    "isa",
+    "csr",
+    "trap",
+    "interrupt",
+    "timer",
+    "amo",
+    "memory",
+    "axi",
+    "uart",
+    "debug",
+    "jtag",
+    "cdc",
+    "reset",
+    "parameter"
+  ],
+  "results": [
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-hello",
+        "rtl-simple"
+      ],
+      "returncode": 0,
+      "seconds": 2.866,
+      "log": "000.log"
+    },
+    {
+      "command": [
+        "make",
+        "disabled-isa-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.09,
+      "log": "001.log"
+    },
+    {
+      "command": [
+        "make",
+        "arch-test-run"
+      ],
+      "returncode": 0,
+      "seconds": 4.428,
+      "log": "002.log"
+    },
+    {
+      "command": [
+        "make",
+        "csr-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.08,
+      "log": "003.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-trap"
+      ],
+      "returncode": 0,
+      "seconds": 0.45,
+      "log": "004.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-trap",
+        "rtl-atomic_compat"
+      ],
+      "returncode": 0,
+      "seconds": 1.035,
+      "log": "005.log"
+    },
+    {
+      "command": [
+        "make",
+        "clic-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.104,
+      "log": "006.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-clic",
+        "rtl-nested_irq"
+      ],
+      "returncode": 0,
+      "seconds": 1.346,
+      "log": "007.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/amo0",
+        "AMO_EN=0",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 1.955,
+      "log": "008.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/amo1",
+        "AMO_EN=1",
+        "rtl-amo_config",
+        "rtl-atomic",
+        "rtl-atomic_compat"
+      ],
+      "returncode": 0,
+      "seconds": 3.648,
+      "log": "009.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-tcm_alias",
+        "rtl-extram",
+        "rtl-mem_ordering",
+        "rtl-fence",
+        "rtl-fencei_smc"
+      ],
+      "returncode": 0,
+      "seconds": 2.324,
+      "log": "010.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-extram",
+        "rtl-mem_ordering",
+        "rtl-uart"
+      ],
+      "returncode": 0,
+      "seconds": 1.859,
+      "log": "011.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/default",
+        "rtl-uart"
+      ],
+      "returncode": 0,
+      "seconds": 0.891,
+      "log": "012.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb"
+      ],
+      "returncode": 0,
+      "seconds": 0.126,
+      "log": "013.log"
+    },
+    {
+      "command": [
+        "make",
+        "-C",
+        "openocd",
+        "all-with-gdb",
+        "VPI_PORT=15555",
+        "GDB_PORT=13333"
+      ],
+      "returncode": 0,
+      "seconds": 182.316,
+      "log": "014.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb",
+        "TMO_W=5",
+        "JTAG_TB_ARGS=+TEST=sba_timeout"
+      ],
+      "returncode": 0,
+      "seconds": 2.08,
+      "log": "015.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb",
+        "JTAG_TB_ARGS=+TCK_LOW=31 +TCK_HIGH=37 +TCK_SETTLE=3"
+      ],
+      "returncode": 0,
+      "seconds": 2.074,
+      "log": "016.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb",
+        "JTAG_TB_ARGS=+TCK_LOW=2 +TCK_HIGH=2 +TCK_SETTLE=1"
+      ],
+      "returncode": 0,
+      "seconds": 0.094,
+      "log": "017.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-default",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 1.606,
+      "log": "018.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-noamo",
+        "AMO_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 1.671,
+      "log": "019.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-nodebug",
+        "JTAG_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.298,
+      "log": "020.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-minimal",
+        "RV32EC=1",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.42,
+      "log": "021.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-serial",
+        "FAST_MUL=0",
+        "MUL_MC=0",
+        "FAST_DIV=0",
+        "FAST_SHIFT=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.683,
+      "log": "022.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-nob",
+        "RV32B_EN=0",
+        "ZCMP_EN=0",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.285,
+      "log": "023.log"
+    },
+    {
+      "command": [
+        "make",
+        "BUILD_DIR=build/compliance/param-smalltcm",
+        "IRAM_SIZE=65536",
+        "DRAM_SIZE=65536",
+        "lint-full",
+        "rtl-amo_config"
+      ],
+      "returncode": 0,
+      "seconds": 2.33,
+      "log": "024.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb-elab",
+        "NTRIG=0"
+      ],
+      "returncode": 0,
+      "seconds": 0.109,
+      "log": "025.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb-elab",
+        "NTRIG=1"
+      ],
+      "returncode": 0,
+      "seconds": 0.105,
+      "log": "026.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb-elab",
+        "NTRIG=2"
+      ],
+      "returncode": 0,
+      "seconds": 0.102,
+      "log": "027.log"
+    },
+    {
+      "command": [
+        "make",
+        "jtag-tb-elab",
+        "NTRIG=4"
+      ],
+      "returncode": 0,
+      "seconds": 0.104,
+      "log": "028.log"
+    }
+  ],
+  "architectural_tests": {
+    "passed": 128,
+    "submodule_revision": "c2fe5dc72e1ca898d9ea8410b8130e0e1ebd422a",
+    "scope": "existing jv32-rv32imac ACT configuration; exclusions retained"
+  },
+  "directed_checks": {
+    "controller_default_seed": 1172,
+    "csr": 82,
+    "disabled_decoder": 32779,
+    "jtag_per_clock_ratio": 99
+  },
+  "interoperability": {
+    "jtag_passed": 29,
+    "cjtag_passed": 29,
+    "gdb_passed": 9,
+    "skipped": 0
+  },
+  "atomic_trace_comparison": {
+    "entries": 15080,
+    "result": "PASS"
+  },
+  "logs_directory": "build/compliance/runs/20260915T145753Z",
+  "release_complete": false
+}
