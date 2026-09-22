@@ -113,13 +113,13 @@ module axi_ram_ctrl #(
         end
     end
 
-    assign s_awready = !aw_active;
-    assign s_wready  = !w_active;
+    assign s_awready = !aw_active && !s_bvalid;
+    assign s_wready  = !w_active && !s_bvalid;
     assign s_bresp   = WR_EN ? 2'b00 : 2'b10;  // SLVERR if read-only
 
     // SRAM write
     logic do_write;
-    assign do_write  = WR_EN && (aw_active || (s_awvalid && !aw_active)) && (w_active || (s_wvalid && !w_active));
+    assign do_write  = WR_EN && (aw_active || (s_awvalid && s_awready)) && (w_active || (s_wvalid && s_wready));
 
     assign ram_ce    = do_write || (s_arvalid && s_arready);
     assign ram_we    = do_write;
@@ -130,21 +130,24 @@ module axi_ram_ctrl #(
     // =====================================================================
     // Read channel (1-cycle latency)
     // =====================================================================
+    logic read_pending;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            read_pending <= 1'b0;
             s_rvalid <= 1'b0;
             s_rdata  <= 32'h0;
         end
-        else if (s_arvalid && s_arready) begin
-            s_rvalid <= 1'b1;
-            s_rdata  <= ram_rdata;
-        end
-        else if (s_rvalid && s_rready) begin
-            s_rvalid <= 1'b0;
+        else begin
+            read_pending <= s_arvalid && s_arready;
+            if (read_pending) begin
+                s_rvalid <= 1'b1;
+                s_rdata <= ram_rdata;
+            end
+            else if (s_rvalid && s_rready) s_rvalid <= 1'b0;
         end
     end
 
-    assign s_arready = !s_rvalid;
+    assign s_arready = !s_rvalid && !read_pending && !do_write;
     assign s_rresp   = 2'b00;
 
     // Suppress unused

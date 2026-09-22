@@ -1220,16 +1220,19 @@ module jv32_dtm #(
     wire _sba_rd_edge   = (sba_rd_toggle_sync[1] != sba_rd_toggle_r);
 
     a_cmd_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
-        _cmd_disp_edge |-> $stable(command_reg_i) && $stable(data0_i) && $stable(data1_i))
+        (cmd_wr_toggle_sync[0] != cmd_wr_toggle_r || _cmd_disp_edge)
+        |-> $stable(command_reg_i) && $stable(data0_i) && $stable(data1_i))
         else $error("CDC: abstract-command payload changed during dispatch toggle sync");
 
     a_sba_wr_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
-        _sba_wr_edge |-> $stable(sbaddress0_i) && $stable(sbdata0_i)
+        (sba_wr_toggle_sync[0] != sba_wr_toggle_r || _sba_wr_edge)
+        |-> $stable(sbaddress0_i) && $stable(sbdata0_i)
                       && $stable(sb_access_i) && $stable(sb_autoincr_i))
         else $error("CDC: SBA write payload changed during dispatch toggle sync");
 
     a_sba_rd_payload_stable: assert property (@(posedge clk) disable iff (!rst_n)
-        _sba_rd_edge |-> $stable(sbaddress0_i) && $stable(sb_access_i) && $stable(sb_autoincr_i))
+        (sba_rd_toggle_sync[0] != sba_rd_toggle_r || _sba_rd_edge)
+        |-> $stable(sbaddress0_i) && $stable(sb_access_i) && $stable(sb_autoincr_i))
         else $error("CDC: SBA read payload changed during dispatch toggle sync");
 
     // W1C clear toggles carry a bundled mask; it must be stable at the edge.

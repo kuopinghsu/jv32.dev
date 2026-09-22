@@ -182,9 +182,9 @@ module axi_clic #(
                         aw_active, w_active, s_awaddr, aw_addr_r));
 `endif
                     casez (wr_addr_sel[15:0])
-                        16'h0000: msip <= wr_data_sel[0];
-                        16'h4000: mtime[31:0] <= (mtime[31:0] & ~wr_msk) | (wr_data_sel & wr_msk);
-                        16'h4004: mtime[63:32] <= (mtime[63:32] & ~wr_msk) | (wr_data_sel & wr_msk);
+                        16'h0000: if (wr_strb_sel[0]) msip <= wr_data_sel[0];
+                        16'h4000: if (|wr_strb_sel) mtime[31:0] <= (mtime[31:0] & ~wr_msk) | (wr_data_sel & wr_msk);
+                        16'h4004: if (|wr_strb_sel) mtime[63:32] <= (mtime[63:32] & ~wr_msk) | (wr_data_sel & wr_msk);
                         16'h4008: mtimecmp[31:0] <= (mtimecmp[31:0] & ~wr_msk) | (wr_data_sel & wr_msk);
                         16'h400C: mtimecmp[63:32] <= (mtimecmp[63:32] & ~wr_msk) | (wr_data_sel & wr_msk);
                         default: begin

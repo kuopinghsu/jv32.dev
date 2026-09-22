@@ -72,10 +72,12 @@ module tb_jtag_dtm #(
   logic        mem_req_q = 1'b0;
 
   // Sticky captures of momentary core-facing debug strobes.
+  int reg_write_count=0;
   bit          reg_we_seen = 1'b0;
   logic [4:0]  reg_we_addr = 5'b0;
   logic [31:0] reg_we_data = 32'b0;
   always @(posedge clk) if (dbg_reg_we_o) begin
+    reg_write_count <= reg_write_count+1;
     reg_we_seen <= 1'b1;
     reg_we_addr <= dbg_reg_addr_o;
     reg_we_data <= dbg_reg_wdata_o;
@@ -231,12 +233,16 @@ module tb_jtag_dtm #(
   // One TCK period ~ 20 system-clock cycles so CDC synchronisers settle.
   // TDO is registered on the falling edge of TCK; the extra settle delay after
   // deasserting TCK lets that NBA update land before the caller samples `tdo`.
+  int tck_low_ns = 35;
+  int tck_high_ns = 40;
+  int tck_settle_ns = 5;
+  bit tck_jitter = 0;
   task automatic tck_pulse(input logic tms_v, input logic tdi_v);
     tms = tms_v;
     tdi = tdi_v;
-    #35; tck = 1'b1;
-    #40; tck = 1'b0;
-    #5;
+    #(tck_low_ns + (tck_jitter ? int'($urandom_range(0,3)) : 0)); tck = 1'b1;
+    #(tck_high_ns + (tck_jitter ? int'($urandom_range(0,3)) : 0)); tck = 1'b0;
+    #(tck_settle_ns);
   endtask
 
   // Move through TMS states (bit 0 first).
@@ -831,6 +837,14 @@ module tb_jtag_dtm #(
     check("DMSTATUS.confstrptrvalid = 0",     s[4] === 1'b0);
     check("DMSTATUS.ndmresetpending = 0 (ndmreset clear)", s[24] === 1'b0);
 
+    // Unimplemented optional DMI banks are read-as-zero/write-ignore.
+    for(int addr=0;addr<128;addr++) begin
+      if(addr inside {4,5,16,17,18,22,23,24,32,33,56,57,60,64}) continue;
+      dmi_write(7'(addr),32'hffffffff);
+      dmi_read(7'(addr),d);
+      check_eq($sformatf("unsupported DMI 0x%02x RAZ/WI",addr),d,0);
+    end
+
     // ndmresetpending must track dmcontrol.ndmreset.
     dmi_write(DMI_DMCONTROL, 32'h0000_0003);      // ndmreset(bit1) + dmactive
     dmi_read(DMI_DMSTATUS, s);
@@ -963,8 +977,53 @@ module tb_jtag_dtm #(
   // ---------------------------------------------------------------------------
   string test_sel;
 
+  task automatic test_independent_reset();
+    int writes_before;
+    dut_reset();
+    writes_before=reg_write_count;
+    dmi_write(DMI_DMCONTROL,1);
+    halted_i=1;
+    dmi_write(DMI_DATA0,32'hC0DE0001);
+    dmi_write(DMI_COMMAND,32'h00231001);
+    acmd_settle();
+    check("exactly one command acknowledgement",reg_write_count==writes_before+1);
+    @(negedge clk); rst_n=0; reg_we_seen=0;
+    repeat(5) @(negedge clk);
+    rst_n=1;
+    repeat(30) @(negedge clk);
+    check("system reset cannot replay a completed command",!reg_we_seen);
+    // A TAP-only reset must leave the system engine idle, without a phantom request.
+    ntrst=0;
+    repeat(5) @(negedge clk); ntrst=1;
+    repeat(30) @(negedge clk);
+    check("TAP reset cannot dispatch a phantom command",!reg_we_seen);
+    check("command was not accepted twice",reg_write_count==writes_before+1);
+  endtask
+
+  task automatic test_unknown_ir();
+    logic [63:0] bits_out;
+    logic [31:0] data;
+    dut_reset();
+    dmi_write(DMI_DMCONTROL, 1);
+    dmi_write(DMI_DATA0, 32'h12345678);
+    for(int ir=0;ir<31;ir++) begin
+      if(ir==1 || ir==16 || ir==17) continue;
+      ir_scan(5'(ir));
+      dr_scan(64'hffffffffffffffff,32,bits_out);
+      check_eq($sformatf("unsupported IR %0d reads zero",ir),bits_out[31:0],0);
+    end
+    dmi_read(DMI_DATA0,data);
+    check_eq("unsupported IR does not dispatch DMI",data,32'h12345678);
+  endtask
+
   initial begin
     if (!$value$plusargs("TEST=%s", test_sel)) test_sel = "all";
+    void'($value$plusargs("TCK_LOW=%d", tck_low_ns));
+    void'($value$plusargs("TCK_HIGH=%d", tck_high_ns));
+    void'($value$plusargs("TCK_SETTLE=%d", tck_settle_ns));
+    tck_jitter = $test$plusargs("TCK_JITTER");
+    if (tck_low_ns < 1 || tck_high_ns < 1 || tck_settle_ns < 1)
+      $fatal(1, "TCK delays must be positive");
 
     ntrst = 1'b0; rst_n = 1'b0;
     repeat (10) @(posedge clk);
@@ -978,9 +1037,12 @@ module tb_jtag_dtm #(
       ir_scan(IR_IDCODE);
       dr_scan(64'h0, 32, r);
       $display("  [CAL] IDCODE = 0x%08x (expect 0x1DEAD3FF)", r[31:0]);
+      check_eq("IDCODE", r[31:0], 32'h1DEAD3FF);
     end
 
     if (test_sel == "all" || test_sel == "ntrig")           test_ntrig();
+    if (test_sel == "all" || test_sel == "independent_reset") test_independent_reset();
+    if (test_sel == "all" || test_sel == "unknown_ir")      test_unknown_ir();
     if (test_sel == "all" || test_sel == "ntrig")           test_ntrig_warl();
     if (test_sel == "all" || test_sel == "dmactive_reset")  test_dmactive_reset();
     if (test_sel == "all" || test_sel == "dtmcs_reset")     test_dtmcs_reset();
@@ -997,9 +1059,10 @@ module tb_jtag_dtm #(
     $display("\n---------------------------------------------");
     $display("  jtag-dtm tb: %0d passed, %0d failed", pass_cnt, fail_cnt);
     $display("---------------------------------------------");
+    if (pass_cnt + fail_cnt <= 1) $fatal(1, "Unknown or empty test selection: %s", test_sel);
     if (fail_cnt != 0) begin
       $display("RESULT: FAIL");
-      $finish(1);
+      $fatal(1, "JTAG directed checks failed");
     end
     $display("RESULT: PASS");
     $finish;
@@ -1009,7 +1072,7 @@ module tb_jtag_dtm #(
   initial begin
     #300_000_000;
     $display("RESULT: FAIL (timeout)");
-    $finish(1);
+    $fatal(1, "JTAG testbench timeout");
   end
 
 endmodule

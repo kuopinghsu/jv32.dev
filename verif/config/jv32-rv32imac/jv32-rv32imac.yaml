@@ -52,10 +52,10 @@ params:
 
   # ── MTVAL reporting ───────────────────────────────────────────────────────
   # EXC_ILLEGAL_INSTR  → mtval = orig_instr (instruction encoding)
-  # EXC_BREAKPOINT     → mtval = 0
+  # EXC_BREAKPOINT     → mtval = instruction PC (trap_contract)
   # EXC_ECALL          → mtval = 0
   # EXC_LOAD/STORE_MISALIGNED → mtval = fault_address
-  REPORT_VA_IN_MTVAL_ON_BREAKPOINT: false
+  REPORT_VA_IN_MTVAL_ON_BREAKPOINT: true
   REPORT_VA_IN_MTVAL_ON_LOAD_MISALIGNED: true
   REPORT_VA_IN_MTVAL_ON_STORE_AMO_MISALIGNED: true
   REPORT_VA_IN_MTVAL_ON_INSTRUCTION_MISALIGNED: false
@@ -74,7 +74,8 @@ params:
   MISALIGNED_AMO: false
   LRSC_RESERVATION_STRATEGY: "reserve exactly enough to cover the access"
   LRSC_FAIL_ON_VA_SYNONYM: false
-  LRSC_MISALIGNED_BEHAVIOR: "always raise access fault"
+  # UDB spelling: https://riscv.github.io/riscv-arch-test/ctp.html
+  LRSC_MISALIGNED_BEHAVIOR: "always raise misaligned exception"
   LRSC_FAIL_ON_NON_EXACT_LRSC: false
 
   # ── CSR / implementation IDs ──────────────────────────────────────────────

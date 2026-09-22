@@ -172,3 +172,13 @@ jobs:
 
       - name: Run trace-comparison regression
         run: make compare-all
+
+      - name: Run directed compliance regressions
+        run: make compliance COMPLIANCE_GROUPS="amo csr trap interrupt timer memory axi uart jtag cdc reset"
+
+      - name: Preserve compliance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-results
+          path: build/compliance/runs/

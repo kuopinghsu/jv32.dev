@@ -48,6 +48,7 @@
 
 #include "jv_platform.h"
 #include <stdint.h>
+void __libc_init_array(void) {}
 
 static int g_fail __attribute__((unused)) = 0;
 
@@ -75,7 +76,7 @@ static int g_fail __attribute__((unused)) = 0;
  * After a correct push/pop round-trip, the returned value equals sentinel.
  * ============================================================================ */
 
-#ifdef __riscv_zcmp
+#if defined(__riscv_zcmp) || JV32_TEST_ZCMP
 
 /* rlist=5 ({ra,s0}), sadj=16 -- single s-register save/restore. */
 __attribute__((naked, noinline))
@@ -217,7 +218,7 @@ static void test_mv_variants(void)
  * ============================================================================ */
 int main(void)
 {
-#ifndef __riscv_zcmp
+#if !defined(__riscv_zcmp) && !JV32_TEST_ZCMP
     jv_puts("SKIP (Zcmp extension not enabled; __riscv_zcmp not defined)\n");
     jv_exit(0);
     return 0;

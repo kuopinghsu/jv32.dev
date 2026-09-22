@@ -484,6 +484,68 @@ module tb_jv32_soc #(
         .clks_per_bit(LOOPBACK_CLKS_PER_BIT)
     );
 
+    // Protocol checks on both crossbar master paths and every slave port.
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.core_mbus_awvalid && !u_soc.core_mbus_awready |=> u_soc.core_mbus_awvalid && $stable({u_soc.core_mbus_awaddr}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.core_mbus_arvalid && !u_soc.core_mbus_arready |=> u_soc.core_mbus_arvalid && $stable({u_soc.core_mbus_araddr}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.core_mbus_wvalid && !u_soc.core_mbus_wready |=> u_soc.core_mbus_wvalid && $stable({u_soc.core_mbus_wdata,u_soc.core_mbus_wstrb}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.core_mbus_rvalid && !u_soc.core_mbus_rready |=> u_soc.core_mbus_rvalid && $stable({u_soc.core_mbus_rdata,u_soc.core_mbus_rresp}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.core_mbus_bvalid && !u_soc.core_mbus_bready |=> u_soc.core_mbus_bvalid && $stable({u_soc.core_mbus_bresp}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.mbus_awvalid && !u_soc.mbus_awready |=> u_soc.mbus_awvalid && $stable({u_soc.mbus_awaddr}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.mbus_arvalid && !u_soc.mbus_arready |=> u_soc.mbus_arvalid && $stable({u_soc.mbus_araddr}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.mbus_wvalid && !u_soc.mbus_wready |=> u_soc.mbus_wvalid && $stable({u_soc.mbus_wdata,u_soc.mbus_wstrb}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.mbus_rvalid && !u_soc.mbus_rready |=> u_soc.mbus_rvalid && $stable({u_soc.mbus_rdata,u_soc.mbus_rresp}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.mbus_bvalid && !u_soc.mbus_bready |=> u_soc.mbus_bvalid && $stable({u_soc.mbus_bresp}));
+    for(genvar port_idx=0;port_idx<4;port_idx++) begin : bus_checks
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.xs_awvalid[port_idx] && !u_soc.xs_awready[port_idx] |=> u_soc.xs_awvalid[port_idx] && $stable({u_soc.xs_awaddr[port_idx]}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.xs_arvalid[port_idx] && !u_soc.xs_arready[port_idx] |=> u_soc.xs_arvalid[port_idx] && $stable({u_soc.xs_araddr[port_idx]}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.xs_wvalid[port_idx] && !u_soc.xs_wready[port_idx] |=> u_soc.xs_wvalid[port_idx] && $stable({u_soc.xs_wdata[port_idx],u_soc.xs_wstrb[port_idx]}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.xs_rvalid[port_idx] && !u_soc.xs_rready[port_idx] |=> u_soc.xs_rvalid[port_idx] && $stable({u_soc.xs_rdata[port_idx],u_soc.xs_rresp[port_idx]}));
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.xs_bvalid[port_idx] && !u_soc.xs_bready[port_idx] |=> u_soc.xs_bvalid[port_idx] && $stable({u_soc.xs_bresp[port_idx]}));
+    end
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        int'(u_soc.u_jv32.iram_addr) < IRAM_SIZE/4 && int'(u_soc.u_jv32.dram_addr) < DRAM_SIZE/4);
+    assert property (@(posedge clk) disable iff(!u_soc.soc_rst_n)
+        u_soc.u_jv32.u_core.ex_wb_r.is_amo && u_soc.u_jv32.u_core.dmem_req_valid &&
+        u_soc.u_jv32.u_core.dmem_req_addr == u_soc.u_jv32.u_core.ex_wb_r.mem_addr
+        |-> u_soc.u_jv32.u_core.dmem_req_addr[1:0]==0);
+
+    // Optional randomized channel delays, enabled by +AXI_STALLS.
+    logic mem_awvalid, mem_awready;
+    axi_test_delay delay_aw (.clk(clk), .rst_n(rst_n), .s_valid(extram_awvalid_d), .s_ready(extram_awready), .m_valid(mem_awvalid), .m_ready(mem_awready));
+    logic mem_wvalid, mem_wready;
+    axi_test_delay delay_w (.clk(clk), .rst_n(rst_n), .s_valid(extram_wvalid_d), .s_ready(extram_wready), .m_valid(mem_wvalid), .m_ready(mem_wready));
+    logic mem_arvalid, mem_arready;
+    axi_test_delay delay_ar (.clk(clk), .rst_n(rst_n), .s_valid(extram_arvalid_d), .s_ready(extram_arready), .m_valid(mem_arvalid), .m_ready(mem_arready));
+    logic mem_bvalid, mem_bready;
+    axi_test_delay delay_b (.clk(clk), .rst_n(rst_n), .s_valid(mem_bvalid), .s_ready(mem_bready), .m_valid(extram_bvalid), .m_ready(extram_bready_d));
+    logic mem_rvalid, mem_rready;
+    axi_test_delay delay_r (.clk(clk), .rst_n(rst_n), .s_valid(mem_rvalid), .s_ready(mem_rready), .m_valid(extram_rvalid), .m_ready(extram_rready_d));
+    assert property (@(posedge clk) disable iff(!rst_n)
+        ext_axi_awvalid && !ext_axi_awready |=> ext_axi_awvalid && $stable(ext_axi_awaddr));
+    assert property (@(posedge clk) disable iff(!rst_n)
+        ext_axi_arvalid && !ext_axi_arready |=> ext_axi_arvalid && $stable(ext_axi_araddr));
+    assert property (@(posedge clk) disable iff(!rst_n)
+        ext_axi_wvalid && !ext_axi_wready |=> ext_axi_wvalid && $stable({ext_axi_wdata,ext_axi_wstrb}));
+    assert property (@(posedge clk) disable iff(!rst_n)
+        ext_axi_bvalid && !ext_axi_bready |=> ext_axi_bvalid && $stable(ext_axi_bresp));
+    assert property (@(posedge clk) disable iff(!rst_n)
+        ext_axi_rvalid && !ext_axi_rready |=> ext_axi_rvalid && $stable({ext_axi_rdata,ext_axi_rresp}));
+
     // External RAM: 2 MB AXI4 memory model at 0xA000_0000 (simulation only)
     axi_memory #(
         .ADDR_WIDTH       (32),
@@ -500,27 +562,27 @@ module tb_jv32_soc #(
         .axi_awlen  (8'h0),
         .axi_awsize (3'h2),
         .axi_awburst(2'h1),
-        .axi_awvalid(extram_awvalid_d),
-        .axi_awready(extram_awready),
+        .axi_awvalid(mem_awvalid),
+        .axi_awready(mem_awready),
         .axi_wdata  (ext_axi_wdata),
         .axi_wstrb  (ext_axi_wstrb),
         .axi_wlast  (1'b1),
-        .axi_wvalid (extram_wvalid_d),
-        .axi_wready (extram_wready),
+        .axi_wvalid (mem_wvalid),
+        .axi_wready (mem_wready),
         .axi_bresp  (extram_bresp),
-        .axi_bvalid (extram_bvalid),
-        .axi_bready (extram_bready_d),
+        .axi_bvalid (mem_bvalid),
+        .axi_bready (mem_bready),
         .axi_araddr (tb_alias_addr_r),
         .axi_arlen  (8'h0),
         .axi_arsize (3'h2),
         .axi_arburst(2'h1),
-        .axi_arvalid(extram_arvalid_d),
-        .axi_arready(extram_arready),
+        .axi_arvalid(mem_arvalid),
+        .axi_arready(mem_arready),
         .axi_rdata  (extram_rdata),
         .axi_rresp  (extram_rresp),
         .axi_rlast  (extram_rlast),
-        .axi_rvalid (extram_rvalid),
-        .axi_rready (extram_rready_d)
+        .axi_rvalid (mem_rvalid),
+        .axi_rready (mem_rready)
     );
 
     jv32_soc #(
@@ -646,3 +708,20 @@ module tb_jv32_soc #(
 
 endmodule
 /* verilator coverage_on */
+
+// A delay gate never withdraws VALID after exposing it to the receiver.
+module axi_test_delay(input logic clk, rst_n, s_valid, m_ready,
+                      output logic s_ready, m_valid);
+    bit enabled;
+    logic allow, held;
+    initial enabled=$test$plusargs("AXI_STALLS");
+    always_ff @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin allow<=0; held<=0; end
+        else begin
+            allow<=($urandom_range(0,3)==0);
+            held<=m_valid && !m_ready;
+        end
+    end
+    assign m_valid=s_valid && (!enabled || allow || held);
+    assign s_ready=m_ready && (!enabled || allow || held);
+endmodule

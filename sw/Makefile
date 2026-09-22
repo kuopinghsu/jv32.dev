@@ -85,6 +85,12 @@ COMMON_LINK := common/link.ld
 
 LDFLAGS := -march=$(ARCH) -mabi=$(ABI)
 LDFLAGS += -nostartfiles
+IRAM_SIZE ?= 131072
+DRAM_SIZE ?= 131072
+IRAM_BASE ?= 0x80000000
+DRAM_BASE ?= 0x90000000
+LDFLAGS += -Wl,--defsym=__jv_iram_size=$(IRAM_SIZE),--defsym=__jv_dram_size=$(DRAM_SIZE)
+LDFLAGS += -Wl,--defsym=__jv_iram_base=$(IRAM_BASE),--defsym=__jv_dram_base=$(DRAM_BASE)
 LDFLAGS += -T $(COMMON_LINK)
 LDFLAGS += -Wl,--gc-sections
 

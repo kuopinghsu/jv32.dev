@@ -10,8 +10,10 @@
  * ============================================================================ */
 
 MEMORY {
-    IRAM   (rx)  : ORIGIN = 0x80000000, LENGTH = 128K
-    DRAM   (rwx) : ORIGIN = 0x90000000, LENGTH = 128K
+    IRAM   (rx)  : ORIGIN = DEFINED(__jv_iram_base) ? __jv_iram_base : 0x80000000,
+                  LENGTH = DEFINED(__jv_iram_size) ? __jv_iram_size : 128K
+    DRAM   (rwx) : ORIGIN = DEFINED(__jv_dram_base) ? __jv_dram_base : 0x90000000,
+                  LENGTH = DEFINED(__jv_dram_size) ? __jv_dram_size : 128K
     EXTRAM (rwx) : ORIGIN = 0xA0000000, LENGTH = 2M
 }
 

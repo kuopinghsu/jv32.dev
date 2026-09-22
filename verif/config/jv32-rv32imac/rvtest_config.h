@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // JV32 has no PMP
+#if defined(__riscv_32e) || defined(__riscv_abi_rve)
+#define RVTEST_E
+#endif
+
 #define RVMODEL_PMP_GRAIN 0
 #define RVMODEL_NUM_PMPS  0
 

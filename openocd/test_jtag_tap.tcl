@@ -33,6 +33,10 @@ proc as_u32 {v} {
 # ── 1. IDCODE (IR=0x01) ───────────────────────────────────────────────────────
 puts "\[SUBTEST\] IDCODE (IR=0x01)"
 
+# Raw IR/DR scans temporarily select instructions other than DMI.  Prevent the
+# background target poll from inserting DMI traffic while IDCODE/BYPASS is active.
+poll off
+
 # OpenOCD leaves IR=DMI (0x11) after target examine.  Load IDCODE explicitly.
 irscan jv32.cpu 0x01
 set idcode [as_u32 [drscan jv32.cpu 32 0x00000000]]
@@ -137,5 +141,6 @@ if {$version != 3 || !$authed} {
     error "DM not reachable after IR restore: dmstatus=[format 0x%08x $dmstatus]"
 }
 puts "DM reachable after IR=0x11 restore: OK"
+poll on
 
 puts "\[PASS\] JTAG TAP IR instructions"

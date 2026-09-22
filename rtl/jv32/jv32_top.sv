@@ -542,11 +542,11 @@ module jv32_top #(
 
             case (iram_slv_state)
                 SLV_IDLE: begin
-                    if (s_iram_axi_arvalid) begin
+                    if (s_iram_axi_arvalid && s_iram_axi_arready) begin
                         iram_slv_addr  <= s_iram_axi_araddr;
                         iram_slv_state <= SLV_RD_WAIT;
                     end
-                    else if (s_iram_axi_awvalid) begin
+                    else if (s_iram_axi_awvalid && s_iram_axi_awready) begin
                         iram_slv_addr  <= s_iram_axi_awaddr;
                         iram_slv_state <= SLV_WR_DATA;
                     end
@@ -579,11 +579,11 @@ module jv32_top #(
 
             case (dram_slv_state)
                 SLV_IDLE: begin
-                    if (s_dram_axi_arvalid) begin
+                    if (s_dram_axi_arvalid && s_dram_axi_arready) begin
                         dram_slv_addr  <= s_dram_axi_araddr;
                         dram_slv_state <= SLV_RD_WAIT;
                     end
-                    else if (s_dram_axi_awvalid) begin
+                    else if (s_dram_axi_awvalid && s_dram_axi_awready) begin
                         dram_slv_addr  <= s_dram_axi_awaddr;
                         dram_slv_state <= SLV_WR_DATA;
                     end
@@ -617,7 +617,7 @@ module jv32_top #(
     end
 
     // IRAM slave AXI outputs
-    assign s_iram_axi_arready = (iram_slv_state == SLV_IDLE) & ~s_iram_axi_awvalid;
+    assign s_iram_axi_arready = (iram_slv_state == SLV_IDLE);
     assign s_iram_axi_awready = (iram_slv_state == SLV_IDLE) & ~s_iram_axi_arvalid;
     assign s_iram_axi_wready  = (iram_slv_state == SLV_WR_DATA);
     assign s_iram_axi_rvalid  = (iram_slv_state == SLV_RD_RESP);
@@ -627,7 +627,7 @@ module jv32_top #(
     assign s_iram_axi_bresp   = 2'b00;
 
     // DRAM slave AXI outputs
-    assign s_dram_axi_arready = (dram_slv_state == SLV_IDLE) & ~s_dram_axi_awvalid;
+    assign s_dram_axi_arready = (dram_slv_state == SLV_IDLE);
     assign s_dram_axi_awready = (dram_slv_state == SLV_IDLE) & ~s_dram_axi_arvalid;
     assign s_dram_axi_wready  = (dram_slv_state == SLV_WR_DATA);
     assign s_dram_axi_rvalid  = (dram_slv_state == SLV_RD_RESP);

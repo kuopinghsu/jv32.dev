@@ -180,7 +180,13 @@ module axi_uart #(
     logic       aw_pend_r;
     logic [7:0] aw_addr_pend_r;
     wire  [7:0] eff_awaddr_w = (axi_awvalid && axi_awready) ? axi_awaddr[7:0] : aw_addr_pend_r;
-    wire        wr_fire = axi_wvalid && axi_wready && ((axi_awvalid && axi_awready) || aw_pend_r);
+    logic w_pend_r;
+    logic [31:0] w_data_pend_r;
+    logic [3:0] w_strb_pend_r;
+    wire [31:0] eff_wdata = w_pend_r ? w_data_pend_r : axi_wdata;
+    wire [3:0] eff_wstrb = w_pend_r ? w_strb_pend_r : axi_wstrb;
+    wire wr_fire = (w_pend_r || (axi_wvalid && axi_wready)) &&
+                   (aw_pend_r || (axi_awvalid && axi_awready));
     wire        wr_addr_valid = (eff_awaddr_w[7:2] <= ADDR_MAX);  // write address in range
     wire        rd_addr_valid = (axi_araddr[7:2] <= ADDR_MAX);    // read address in range
 
@@ -222,7 +228,7 @@ module axi_uart #(
 
     always_ff @(posedge clk) begin
         if (txf_push) begin
-            txf_mem[txf_wr_ptr] <= axi_wdata[7:0];
+            txf_mem[txf_wr_ptr] <= eff_wdata[7:0];
             `DEBUG2(`DBG_GRP_UART, ("TX push: '%c' (0x%h)", axi_wdata[7:0], axi_wdata[7:0]));
         end
     end
@@ -468,12 +474,12 @@ module axi_uart #(
     // AXI4-Lite Interface
     // ========================================================================
     // Always-ready channels (single-cycle); TX FIFO push/RX FIFO pop are combinational
-    assign axi_awready = 1'b1;
-    assign axi_wready  = 1'b1;
-    assign axi_arready = 1'b1;
+    assign axi_awready = !aw_pend_r && !axi_bvalid;
+    assign axi_wready  = !w_pend_r && !axi_bvalid;
+    assign axi_arready = !axi_rvalid || axi_rready;
 
     // TX FIFO push: AXI write to offset 0x00 (drop if FIFO full)
-    assign txf_push    = wr_fire && (eff_awaddr_w == 8'h00) && !txf_full && axi_wstrb[0];
+    assign txf_push    = wr_fire && (eff_awaddr_w == 8'h00) && !txf_full && eff_wstrb[0];
 
     // RX FIFO pop: AXI read of offset 0x00 (advance pointer).
     // Use a registered request so that rxf_pop fires one cycle after the AR
@@ -498,22 +504,34 @@ module axi_uart #(
             baud_div_r     <= 16'(CLKS_PER_BIT - 1);
             aw_pend_r      <= 1'b0;
             aw_addr_pend_r <= '0;
+            w_pend_r       <= 1'b0;
+            w_data_pend_r  <= '0;
+            w_strb_pend_r  <= '0;
         end
         else begin
             if (axi_bvalid && axi_bready) axi_bvalid <= 1'b0;
 
             // Latch AW address when AW fires before W (sequential AXI4 write)
-            if (axi_awvalid && axi_awready && !axi_wvalid) begin
+            if (axi_awvalid && axi_awready) begin
                 aw_pend_r      <= 1'b1;
                 aw_addr_pend_r <= axi_awaddr[7:0];
+            end
+            if (axi_wvalid && axi_wready) begin
+                w_pend_r <= 1'b1;
+                w_data_pend_r <= axi_wdata;
+                w_strb_pend_r <= axi_wstrb;
             end
 
             if (wr_fire) begin
                 aw_pend_r <= 1'b0;
+                w_pend_r <= 1'b0;
                 case (eff_awaddr_w)
-                    8'h08:   if (axi_wstrb[0]) ie_r <= axi_wdata[1:0];
-                    8'h10:   baud_div_r <= axi_wdata[15:0];  // baud-rate divisor: CLKS_PER_BIT-1
-                    8'h14:   if (axi_wstrb[0]) loopback_en <= axi_wdata[0];
+                    8'h08:   if (eff_wstrb[0]) ie_r <= eff_wdata[1:0];
+                    8'h10: begin
+                        if (eff_wstrb[0]) baud_div_r[7:0] <= eff_wdata[7:0];
+                        if (eff_wstrb[1]) baud_div_r[15:8] <= eff_wdata[15:8];
+                    end
+                    8'h14:   if (eff_wstrb[0]) loopback_en <= eff_wdata[0];
                     default: ;
                 endcase
                 axi_bvalid <= 1'b1;
@@ -548,32 +566,26 @@ module axi_uart #(
         if (!rst_n) begin
             axi_rresp  <= 2'b00;
             axi_rvalid <= 1'b0;
+            axi_rdata  <= 32'b0;
         end
         else begin
             if (axi_rvalid && axi_rready) axi_rvalid <= 1'b0;
 
             if (axi_arvalid && axi_arready) begin
+                axi_rdata <= read_data;
                 axi_rresp  <= rd_addr_valid ? 2'b00 : 2'b10;  // OKAY or SLVERR
                 axi_rvalid <= 1'b1;
             end
         end
     end
 
-    // axi_rdata is combinatorial: always reflects current register values for
-    // the stable rd_addr_r address.  This avoids a Verilator NBA eval-order
-    // issue where the registered capture was one cycle behind.
-    assign axi_rdata = read_data;
+    // Read payload is captured at AR acceptance and held through backpressure.
 
-    // Suppress unused-signal lint warnings: upper address/data bits and byte-enable
-    // are not needed for this byte-wide register file.
-    // axi_wstrb[0] used: all UART registers are byte-wide.
-    // axi_wstrb[3:1] unused: no register maps to wdata bytes 1-3.
+    // Registers use byte 0; BAUDDIV additionally uses byte 1.
 `ifndef SYNTHESIS
-    // Lint sink (debug only): wstrb[3:1] unused; upper address/data bits
-    // decoded by crossbar.
+    // Upper address bits are decoded by the crossbar.
     logic _unused_ok;
-    assign _unused_ok = &{1'b0, axi_wstrb[3:1], axi_awaddr[31:8], axi_wdata[31:8], axi_araddr[31:8]};
+    assign _unused_ok = &{1'b0, eff_wstrb[3:2], eff_wdata[31:16], axi_awaddr[31:8], axi_araddr[31:8]};
 `endif  // SYNTHESIS
 
 endmodule
-

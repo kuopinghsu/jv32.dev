@@ -2,7 +2,7 @@
 :doctype: book
 :author: JV32 Development Team
 :revnumber: 1.4
-:revdate: 2026-08-27
+:revdate: 2026-09-15
 :toc: left
 :toclevels: 4
 :sectnums:
@@ -16,7 +16,7 @@
 
 [abstract]
 --
-JV32 is a compact 32-bit RISC-V System-on-Chip (SoC) for RTL simulation and FPGA prototyping. It integrates a single-issue 3-stage processor core, instruction and data TCM, AXI4-Lite interfaces, UART, CLIC/CLINT-compatible timer functions, simulation support, and JTAG/cJTAG debug connectivity.
+JV32 is a compact 32-bit RISC-V System-on-Chip (SoC) for RTL simulation and FPGA prototyping. It integrates a single-issue 3-stage processor core, instruction and data TCM, AXI4-Lite interfaces, UART, a project-specific local interrupt controller with CLINT-style timer/software-interrupt registers, simulation support, and JTAG/cJTAG debug connectivity.
 
 This datasheet describes the implemented RTL behavior. Unless stated otherwise, addresses, reset values, timing, and feature descriptions refer to the default RTL parameters.
 --
@@ -33,8 +33,8 @@ The JV32 SoC is a compact embedded processor system. The default configuration i
 * **Tightly Coupled Memories (TCM)**: 128 KB IRAM at `0x8000_0000` and 128 KB DRAM at `0x9000_0000` by default, with 1-cycle read latency
 * **Merged AXI4-Lite Master**: Out-of-TCM accesses from both I-fetch and D-bus share one master port; D-bus has priority over I-fetch
 * **AXI4-Lite Slave**: External agents (debug master, testbench DPI) can read/write TCM; core has absolute priority
-* **Peripheral Subsystem** (4-slave AXI crossbar): UART, CLIC, Magic device, external catch-all
-* **Interrupt System**: CLIC with CLINT-compatible 64-bit timer (`mtime`/`mtimecmp`), software interrupt (`msip`), and 16 independently prioritized external interrupt lines
+* **Peripheral Subsystem** (4-target AXI crossbar): UART, local interrupt controller, Magic device, external catch-all
+* **Interrupt System**: local interrupt controller with CLINT-style 64-bit timer (`mtime`/`mtimecmp`), software interrupt (`msip`), and 16 prioritized external interrupt lines. The register model is implementation-specific and must not be described as full RISC-V CLIC compliance.
 
 === Document Conventions
 
@@ -61,12 +61,29 @@ Behavior outside the documented address ranges, register encodings, access sizes
 
 Microarchitectural details such as pipeline timing, arbitration timing, and internal state transitions describe the current RTL implementation. Software must not depend on cycle-exact behavior unless a section explicitly defines that behavior as part of the interface.
 
+=== Compliance Status and Verification Boundary
+
+This revision distinguishes *implemented behavior* from *standards conformance*. The RTL was statically reviewed against the programmer-visible requirements described in this datasheet and against the relevant RISC-V architectural concepts. Static source review can establish what the RTL decodes and exposes, but it cannot prove complete ISA, privileged-architecture, debug, AXI, or cJTAG compliance.
+
+The following terminology is used throughout this document:
+
+* **Implemented** — directly supported by the supplied RTL.
+* **RISC-V architectural behavior** — behavior intended to follow the cited RISC-V ISA or privileged architecture.
+* **Subset / implementation-specific** — only the documented functions are provided; software must not assume unimplemented optional features.
+* **Compliance not established** — requires directed testbenches, architectural compliance suites, protocol assertions, or external debugger interoperability tests.
+
+Important implementation boundaries found during review:
+
+* `axi_clic` is a JV32 local interrupt controller with CLINT-style timer/software-interrupt registers and a compact external-interrupt array. It is **not documented as a complete standard CLIC implementation**.
+* The debug block implements a useful subset of RISC-V Debug Specification 1.0 behavior, but this datasheet does **not** claim formal Debug Spec compliance.
+* `AMO_EN=0` makes all AMO-opcode instructions illegal, including LR.W and SC.W. Verified by `sw/amo_config` in both atomic configurations and by the disabled-decoder sweep; the RTL parameter comment matches this behavior.
+* AXI4-Lite behavior is implementation-specific to the documented channels and ordering restrictions. Protocol compliance should be verified with AXI assertions/testbench coverage.
+
 === Default Configuration
 
 The table below summarizes the principal RTL defaults. Parameters remain the authoritative source when an integration overrides these values.
 
 [cols="2,2,4"]
-This table is a summary of the default configuration. The RTL parameter declarations remain authoritative when an integration overrides a default.
 
 .Default RTL Configuration
 |===
@@ -94,7 +111,7 @@ This table is a summary of the default configuration. The RTL parameter declarat
 
 |External interrupts
 |16
-|Handled by the CLIC interrupt path.
+|Handled by the local interrupt-controller path.
 
 |UART
 |115200 baud
@@ -135,10 +152,10 @@ This table is a summary of the default configuration. The RTL parameter declarat
 |128 KB IRAM, 128 KB DRAM (each independently parameterized, power-of-2)
 
 |Peripherals
-|UART (8N1, 16-deep FIFOs), CLIC/CLINT (64-bit timer, 16 external IRQs), Magic (simulation I/O)
+|UART (8N1, 16-deep FIFOs), local interrupt controller (CLINT-style timer/software interrupt plus 16 external IRQs), Magic (simulation I/O)
 
 |Interrupts
-|Machine timer, machine software, 16 external CLIC lines (`ext_irq_i[15:0]`)
+|Machine timer, machine software, and 16 local-controller external interrupt lines (`ext_irq_i[15:0]`)
 
 |Multiply Latency
 |1 cycle (`FAST_MUL=1`), 1–32 cycles (`FAST_MUL=0`, CLZ-reduced on multiplier)
@@ -292,7 +309,7 @@ The JV32 SoC implements a 32-bit address space (4 GB). The table lists the defau
 |`0x0200_0000` – `0x021F_FFFF`
 |CLIC
 |2 MB
-|RISC-V CLIC / CLINT-compatible interrupt controller; only first 64 KB used
+|Project-specific local interrupt controller with CLINT-style timer/software-interrupt offsets; only the implemented offsets in the first 64 KB are meaningful
 
 |`0x2001_0000` – `0x2001_00FF`
 |UART
@@ -365,10 +382,10 @@ The AXI crossbar (`axi_xbar`) decodes using base/mask:
 |256-byte aperture; 7 registers (DATA, STATUS, IE, IS, LEVEL, CTRL, CAPABILITY at 0x00–0x18)
 
 |1
-|CLIC
+|Local interrupt controller
 |`0x0200_0000`
 |`0xFFE0_0000`
-|2 MB aperture; CLINT registers + CLIC interrupt array
+|2 MB aperture; CLINT-style timer/software registers plus implementation-specific external-interrupt array
 
 |2
 |Magic
@@ -585,6 +602,7 @@ The RAS is active only when `BP_EN=1`, `RAS_EN=1`, and `RV32E_EN=0`. It is a two
 * **Branch correction and FENCE.I**: these redirects do not clear the RAS.
 
 A RAS prediction is only speculative. EX always computes the JALR target and corrects the fetch path if the predicted return address is wrong.
+
 === RTL Operation Timing
 
 The following timing statements are derived from the current RTL. They are not benchmark results and do not define a system-level performance guarantee.
@@ -623,6 +641,7 @@ The following timing statements are derived from the current RTL. They are not b
 |===
 
 This datasheet does not define typical CPI, benchmark performance, interrupt-entry latency, or maximum clock frequency. Those values depend on the selected RTL parameters, software workload, memory placement, external-system latency, synthesis target, and physical implementation.
+
 === CSR (Control and Status Registers)
 
 CSR instructions are checked by the decoder before execution. Access to an unknown CSR is illegal. A write attempt to a read-only CSR is illegal; CSRRS/CSRRC and their immediate forms remain read-only accesses when the source value is zero. The core implements only the CSR addresses listed in this datasheet.
@@ -823,6 +842,8 @@ The table lists exceptions that are actively generated by the current RTL. The c
 |Environment call from M-mode
 |ECALL executed in M-mode
 |===
+
+Instruction-address-misaligned exceptions cannot arise from ordinary control transfers in the supported configurations: compressed instructions are always present (`IALIGN=16`), JAL/branches encode halfword offsets, and JALR clears bit 0. Integrators must provide a halfword-aligned reset vector. The CSR test separately verifies cause-0 trap-state capture.
 
 NOTE: The EX-stage misalignment check covers normal loads and stores and, in this RTL, also LR.W / SC.W / AMO.W. A misaligned atomic raises cause 4 (LR.W) or cause 6 (SC.W, AMO.W) with `mtval` = faulting address, and no memory transaction is issued.
 
@@ -1075,6 +1096,8 @@ The UART peripheral provides serial communication with configurable baud rate an
 
 ==== UART Register Map
 
+Reset clears IE, CTRL, and FIFO counts. STATUS reads zero and IS reads `0x2` (TX empty). BAUDDIV resets to `CLK_FREQ / BAUD_RATE - 1`; CAPABILITY reflects the configured FIFO depth and version 1. Reading an empty DATA register does not provide a defined byte.
+
 [cols="1,2,1,4"]
 .UART Registers (base `0x2001_0000`)
 |===
@@ -1113,7 +1136,7 @@ Only `WSTRB[0]` enables an IE write; the implemented value is `wdata[1:0]`.
 |LEVEL / BAUDDIV
 |R/W
 |**Read**: **[15:0]** `rx_count` — number of bytes in RX FIFO; **[31:16]** `tx_count` — number of bytes in TX FIFO. +
-**Write**: **[15:0]** runtime baud-rate divisor (`CLKS_PER_BIT − 1`); upper 16 bits are ignored. The RTL does not gate this write with `WSTRB`; software should use a naturally aligned 32-bit write. The divisor takes effect immediately, so changing it during an active TX or RX character can corrupt that character.
+**Write**: **[15:0]** runtime baud-rate divisor (`CLKS_PER_BIT − 1`); upper 16 bits are ignored. `WSTRB[0]` enables bits [7:0] and `WSTRB[1]` enables bits [15:8]; a zero-strobe write leaves the divisor unchanged. The divisor takes effect immediately, so changing it during an active TX or RX character can corrupt that character.
 
 |0x14
 |CTRL
@@ -1202,11 +1225,11 @@ WARNING: Configurations with `CLKS_PER_BIT < 4` violate the RTL elaboration cons
 
 ---
 
-=== CLIC (Core-Local Interrupt Controller)
+=== Local Interrupt Controller (`axi_clic`)
 
-==== CLIC Overview
+==== Overview
 
-The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software interrupt registers with a 16-line external interrupt controller supporting per-interrupt enable, level, and priority.
+The `axi_clic` block combines CLINT-style timer/software-interrupt registers with a 16-line implementation-specific external interrupt controller. It provides the internal sideband signals required by JV32 (`clic_irq`, `clic_id`, `clic_level`, and `clic_prio`), but it does not implement the complete standard RISC-V CLIC memory-mapped register model. Software should use the register map defined in this datasheet, not a generic CLIC driver.
 
 [cols="1,3"]
 .CLIC Features
@@ -1219,8 +1242,8 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |Aperture
 |2 MB crossbar aperture. The RTL implements MSIP, MTIME, MTIMECMP, and `NUM_IRQ` CLICINT words; with the default `NUM_IRQ=16`, only CLICINT[0]–CLICINT[15] are implemented.
 
-|CLINT Compatibility
-|Full `mtime`/`mtimecmp`/`msip` register layout at standard RISC-V CLINT offsets
+|Timer/software-interrupt layout
+|Implements the JV32 `msip`, `mtime`, and `mtimecmp` offsets documented below; treat these as the platform ABI for this RTL
 
 |Timer Counter
 |64-bit free-running `mtime`, increments every clock cycle
@@ -1238,17 +1261,17 @@ The CLIC integrates the RISC-V CLINT (Core-Local Interruptor) timer and software
 |`timer_irq_o`, `software_irq_o`, `clic_irq_o` (aggregated external), `clic_level_o[7:0]`, `clic_prio_o[7:0]`, `clic_id_o[4:0]` (winning IRQ index; used by CPU to compute `mtvt + 4*id`)
 |===
 
-==== CLIC Register Map
+==== Register Map
 
 [cols="1,2,1,4"]
-.CLIC / CLINT Registers (base `0x0200_0000`)
+.Local Interrupt Controller Registers (base `0x0200_0000`)
 |===
 |Offset |Name |Access |Description
 
 |0x0000
 |MSIP
 |R/W
-|Machine Software Interrupt Pending. `[0]=msip`: write 1 to assert software interrupt; write 0 to clear. The RTL takes bit 0 directly from `wdata[0]`; `WSTRB` is not applied to MSIP, so software should use a normal aligned 32-bit write.
+|Machine Software Interrupt Pending. `[0]=msip`: write 1 to assert software interrupt; write 0 to clear. A write changes this bit only when `WSTRB[0]=1`; other byte lanes and zero-strobe writes leave it unchanged. Verified by `tb_clic`.
 
 |0x4000
 |MTIME_LO
@@ -1289,20 +1312,29 @@ NOTE: `axi_clic` always returns AXI `OKAY` for reads and writes. Unsupported off
 
 ==== Timer Operation
 
-The 64-bit `mtime` counter increments by 1 every system clock cycle. The timer interrupt fires when `mtime >= mtimecmp` (unsigned 64-bit comparison), **unless `mtimecmp` equals its reset sentinel value `0xFFFF_FFFF_FFFF_FFFF`** (startup guard — prevents a spurious interrupt before software programs a compare value). Software clears the timer interrupt by writing a new, larger value to `mtimecmp`.
+The 64-bit `mtime` counter increments by 1 every system clock cycle. The timer interrupt fires when `mtime >= mtimecmp` (unsigned 64-bit comparison), **unless `mtimecmp` equals its reset sentinel value `0xFFFF_FFFF_FFFF_FFFF`** (startup guard — prevents a spurious interrupt before software programs a compare value). Software clears the timer interrupt by writing a new, larger value to `mtimecmp`. MTIME and MTIMECMP writes honor byte strobes. A zero-strobe MTIME write does not pause the counter. These behaviors are checked by `tb_clic`.
 
 [source,c]
 ----
-// Set timer 1 ms from now (100 MHz clock)
-uint64_t now = ((uint64_t)CLIC_MTIME_HI << 32) | CLIC_MTIME_LO;
+// Coherent 64-bit read on RV32; retry if the low word rolls over.
+uint32_t hi, lo, hi_again;
+do {
+    hi = CLIC_MTIME_HI;
+    lo = CLIC_MTIME_LO;
+    hi_again = CLIC_MTIME_HI;
+} while (hi != hi_again);
+uint64_t now = ((uint64_t)hi << 32) | lo;
 uint64_t cmp = now + 100000;   // 1 ms at 100 MHz
-CLIC_MTIMECMP_LO = (uint32_t)(cmp & 0xFFFFFFFF);
+// Comparator write order exercised by tb_clic:
+CLIC_MTIMECMP_LO = 0xFFFFFFFFu;
 CLIC_MTIMECMP_HI = (uint32_t)(cmp >> 32);
+CLIC_MTIMECMP_LO = (uint32_t)cmp;
 ----
 
-WARNING: Always write MTIMECMP_HI (set to `0xFFFFFFFF`) before writing
-MTIMECMP_LO when programming a new compare value, to avoid a spurious timer
-interrupt in the window between the two writes on a 64-bit counter.
+Use volatile MMIO accesses. The low-word sentinel, high-word update, and final
+low-word update avoid exposing a partially assembled compare value. Changing
+an already expired deadline does not erase an interrupt already accepted by
+the processor.
 
 ==== Software Interrupt Operation
 
@@ -1546,7 +1578,7 @@ The merged AXI master is implemented as a state machine with the following state
 
 When `JTAG_EN=1`, the SoC instantiates the JTAG TAP, RISC-V Debug Transport Module (DTM), Debug Module control logic, abstract-command engine, System Bus Access (SBA), and hardware trigger support.
 
-The Debug Module conforms to **RISC-V Debug Specification 1.0**: `dmstatus.version` reads 3 and `dtmcs.version` reads 1 (the DTM encoding shared by spec 0.13 and 1.0). Optional 1.0 features that JV32 does not implement read back as "absent": `dmstatus.hasresethaltreq` = 0 (no halt-on-reset), `dmstatus.confstrptrvalid` = 0 (no configuration string), `dtmcs.errinfo` = 0, and the `dmcs2`/`hawindow`/`confstrptr0-3` registers return 0. `dmstatus.ndmresetpending` tracks `dmcontrol.ndmreset`; `dmstatus.stickyunavail` = 0 (the single hart is always present). `nextdm` (DMI 0x1d) reads 0 — this is the only Debug Module.
+The Debug Module implements a **RISC-V Debug Specification 1.0-oriented subset**. Static RTL review confirms the implemented register encodings and major flows listed below, but full specification conformance requires dedicated debug-compliance testing. In the current RTL, `dmstatus.version` reads 3 and `dtmcs.version` reads 1 (the DTM encoding shared by spec 0.13 and 1.0). Optional 1.0 features that JV32 does not implement read back as "absent": `dmstatus.hasresethaltreq` = 0 (no halt-on-reset), `dmstatus.confstrptrvalid` = 0 (no configuration string), `dtmcs.errinfo` = 0, and the `dmcs2`/`hawindow`/`confstrptr0-3` registers return 0. `dmstatus.ndmresetpending` tracks `dmcontrol.ndmreset`; `dmstatus.stickyunavail` = 0 (the single hart is always present). `nextdm` (DMI 0x1d) reads 0 — this is the only Debug Module.
 
 The implementation spans two clock domains:
 
@@ -1583,7 +1615,7 @@ The TAP uses a 5-bit instruction register.
 
 |Other IR values
 |—
-|Use the bypass data path.
+|Return zero on TDO and do not dispatch DMI operations. Only IR `0x1F` selects the one-bit BYPASS register.
 |===
 
 After TAP reset, the instruction register selects IDCODE.
@@ -1621,6 +1653,8 @@ The implemented DTMCS value reports:
 `dmihardreset` and `dmireset` are decoded from the DTMCS scan register (not from the DMI shift register). Writing `dmihardreset` clears the TAP-domain DMI soft state, including the selected DMI address, DATA registers, COMMAND, abstract-command error state, ABSTRACTAUTO state, and SBA address/data shadow registers. It does not replace the SoC system reset. `dmireset` is accepted as a no-op: this DTM keeps `dmistat` constant at 0 and never reports a sticky DMI operation error, so there is no per-operation status for `dmireset` to clear.
 
 === DMI Register Map
+
+Unlisted DMI addresses read as zero and ignore writes. Optional authentication, configuration-string pointers, halt-on-reset requests, multi-hart arrays, extra program-buffer words, and SBA address/data words above 32 bits are absent. `dmstatus.authenticated` is fixed at one. The directed test scans every unimplemented DMI address for read-as-zero/write-ignore behavior.
 
 The DMI register bank implements the following addresses.
 
@@ -1868,9 +1902,7 @@ The SoC has two independent clock domains.
 |`jtag_tap` and the TAP-domain DMI register bank. In cJTAG mode, the bridge samples TCKC using `clk`.
 |===
 
-The two domains are **fully asynchronous**.  All signals crossing the boundary
-pass through two-stage synchroniser chains in `jv32_dtm`
-(see `ASYNC_REG`-attributed registers in the RTL).
+The TAP and system-clock domains are asynchronous in 4-wire JTAG mode. CDC handling is split between `jtag_tap` and the system-clock debug engine: toggle/stable-payload handshakes and synchronizer stages are used at the boundary. `jv32_dtm` itself is a system-clock-domain module; it is not the sole location of the CDC synchronizers.
 
 ==== System Clock (`clk`)
 
@@ -1904,6 +1936,7 @@ system-clock half of the debug transport module.
 In 4-wire JTAG mode, `jtag_pin0_tck_i` directly clocks the TAP. TCK is asynchronous to the system clock. Status and command information crossing between the TAP and system-clock domains is synchronized in the debug logic.
 
 The RTL does not define a universal maximum external TCK frequency. The usable TCK frequency depends on the implementation timing and on the clock-domain-crossing handshake latency. The DTMCS `idle=1` field requires the debugger to insert at least one Run-Test/Idle TCK cycle between DMI operations.
+
 ==== TAP Clock — `USE_CJTAG=1` (2-wire cJTAG)
 
 In 2-wire cJTAG mode, `jtag_pin0_tck_i` carries TCKC and `jtag_pin1_tms_i/o` carries TMSC. `cjtag_bridge` samples both external signals using the system clock, detects synchronized TCKC edges, and generates the internal TAP clock and JTAG scan signals.
@@ -1917,6 +1950,7 @@ f_sys >= 6 × f_tckc
 This corresponds to at least three system-clock cycles for each TCKC high or low phase, allowing the two-stage synchronizer and edge detector to observe the signal reliably at the RTL interface level.
 
 The ratio above is a functional design requirement. Actual board-level and FPGA/ASIC timing margins must be established by the target implementation.
+
 ==== Reset Architecture
 
 The SoC implements an **asynchronous-assert / synchronous-deassert** reset
@@ -1977,8 +2011,8 @@ assign soc_rst_n = rst_sync_ff2;            // (4) clean synchronised reset to a
 |Non-debug-module reset issued over JTAG (`dmcontrol.ndmreset`); resets the SoC while the debug module itself remains active; `rst_n_pre = rst_n & ~dbg_ndmreset`
 
 |`dbg_hartreset`
-|Synchronous, core only
-|Hart reset signal from `jv32_dtm`; resets the `jv32_core` pipeline registers only, without affecting peripherals or the debug infrastructure
+|Core-local reset request
+|`dbg_hartreset` is a TAP-domain level passed through the debug engine and combined into `core_rst_n = rst_n & ~dbg_hartreset_i`. It resets the core without resetting the peripheral subsystem or TAP. Unlike `ndmreset`, its release does not pass through the SoC two-flop reset synchronizer. Reset recovery/removal timing must be checked during physical integration.
 |===
 
 ===== Reset domain coverage
@@ -1993,7 +2027,7 @@ assign soc_rst_n = rst_sync_ff2;            // (4) clean synchronised reset to a
 The JTAG TAP (`jtag_tap`) and `jv32_dtm` are reset by `rst_n` **directly** (not
 through the synchroniser), so debug infrastructure is available as soon as the
 external reset is released, independent of the 2-cycle delay on `soc_rst_n`.
-`jtag_ntrst_i` provides an additional TAP-only reset.
+`jtag_ntrst_i` provides an additional TAP-domain reset. System reset now clears both the TAP dispatch toggles and their receiving engine, preventing completed commands from replaying after reset. `ndmreset` leaves both debug domains active.
 
 ===== Reset timing requirements
 
@@ -2014,9 +2048,9 @@ external reset is released, independent of the 2-cycle delay on `soc_rst_n`.
 |Not required
 |Deassertion is sampled synchronously; no setup requirement on the deassert edge
 
-|`dbg_ndmreset` minimum width
-|1 `clk` cycle
-|Must remain high for at least one complete `clk` cycle to ensure the async clear of `rst_sync_ff1/ff2` is captured
+|`dbg_ndmreset` assertion
+|Clock-domain generated
+|The signal is a TAP-domain register level passed through the debug engine to the asynchronous assertion path of the SoC reset synchronizer. No independent external pulse-width requirement is defined by this RTL interface.
 |===
 
 [IMPORTANT]
@@ -2116,7 +2150,7 @@ The RTL does not define FPGA/ASIC setup time, hold time, clock-to-output time, o
 
 |`AMO_EN`
 |`1`
-|`1`=A-extension enabled (LR.W/SC.W and AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W); `0`=all atomic instructions using the AMO opcode, including LR.W/SC.W, trap as illegal
+|`1`=A-extension enabled (LR.W/SC.W and AMO{SWAP,ADD,XOR,AND,OR,MIN,MAX,MINU,MAXU}.W); `0`=all atomic instructions using the AMO opcode, including LR.W/SC.W, trap as illegal. Verified by `sw/amo_config` and `testbench/compliance/tb_disabled_isa.sv`.
 
 |`FAST_MUL`
 |`1`
@@ -2394,138 +2428,20 @@ The following items are implementation-aware guidance, not architectural require
 * Measure complete workloads on the target configuration; this datasheet does not define a typical CPI or system performance target.
 <<<
 
-== Revision History
+== Register Reference Index
 
-[cols="1,2,5"]
-.Revision History
-|===
-|Revision |Date |Summary
+The following block sections contain the register definitions. Use these definitions for access rules, side effects, parameter dependencies, and reset behavior:
 
-|1.4
-|2026-08-27
-|Updated and reorganized the SoC datasheet to match the current RTL. Clarified ISA and CSR behavior, memory map and TCM aliases, CLIC, UART, AXI, debug/JTAG, atomic operations, exceptions, control-flow behavior, and integration requirements.
-|===
-== References
-
-=== Verification Boundary
-
-This document is intended to match the supplied RTL source set. Functional correctness, ISA compliance, AXI compliance, timing closure, and target-specific electrical behavior require their respective verification and implementation flows. The datasheet does not replace those verification results.
-
-The RTL is the implementation source of truth for this datasheet. When modifying programmer-visible behavior, update the RTL and this document in the same change set.
-
-Within this document, each detailed block section is authoritative for that block's behavior. Quick-reference tables and appendices are summaries only. If a summary omits a restriction, side effect, parameter dependency, or error condition, use the detailed block specification.
-
-The following specifications provide background for the interfaces and architecture described in this datasheet:
-
-* **RISC-V Specifications**: https://riscv.org/technical/specifications/
-* **AMBA AXI4-Lite Specification**: https://developer.arm.com/documentation/ihi0022/latest/
+* <<_csr_control_and_status_registers,Machine CSRs>>
+* <<_register_map,Local interrupt controller and timer registers>>
+* <<_uart_register_map,UART registers>>
+* <<_magic_device_register_map,Magic simulation registers>>
+* <<_dmi_register_map,Debug Module registers>>
 
 <<<
 
 [appendix]
-== Register Quick Reference
 
-This section is a lookup summary. Detailed block sections are authoritative for register behavior, reset semantics, side effects, access restrictions, parameter dependencies, and programming sequences. The summary may omit non-default behavior. When this summary and a detailed description appear to differ, use the detailed peripheral specification and verify against the RTL.
-
-=== CLIC Registers
-
-[cols="1,2,1,2"]
-|===
-|Address |Name |Access |Reset Value
-
-|`0x0200_0000`
-|MSIP
-|R/W
-|`0x0000_0000`
-
-|`0x0200_4000`
-|MTIME_LO
-|R/W
-|`0x0000_0000`
-
-|`0x0200_4004`
-|MTIME_HI
-|R/W
-|`0x0000_0000`
-
-|`0x0200_4008`
-|MTIMECMP_LO
-|R/W
-|`0xFFFF_FFFF`
-
-|`0x0200_400C`
-|MTIMECMP_HI
-|R/W
-|`0xFFFF_FFFF`
-
-|`0x0200_1000` + n×4
-|CLICINT[n] (n=0..15)
-|R/W
-|`0x0000_0000`
-|===
-
-=== UART Registers
-
-[cols="1,2,1,2"]
-|===
-|Address |Name |Access |Reset Value
-
-|`0x2001_0000`
-|DATA
-|R/W
-|`0x0000_0000`
-
-|`0x2001_0004`
-|STATUS
-|R/O
-|`0x0000_0000` (TX FIFO empty, TX ready)
-
-|`0x2001_0008`
-|IE
-|R/W
-|`0x0000_0000`
-
-|`0x2001_000C`
-|IS
-|R/O
-|`0x0000_0002` (TX empty)
-
-|`0x2001_0010`
-|LEVEL
-|R/W
-|`0x0000_0000`
-
-|`0x2001_0014`
-|CTRL
-|R/W
-|`0x0000_0000`
-
-|`0x2001_0018`
-|CAPABILITY
-|R/O
-|`0x0001_1010` (version=1, TX depth=16, RX depth=16 with default `FIFO_DEPTH=16`)
-|===
-
-=== Magic Device Registers
-
-[cols="1,2,1,2"]
-|===
-|Address |Name |Access |Reset Value
-
-|`0x4000_0000`
-|CONSOLE
-|W/O
-|—
-
-|`0x4000_0004`
-|EXIT
-|W/O
-|—
-|===
-
-<<<
-
-[appendix]
 == Trap Cause Reference
 
 This section summarizes trap cause encodings implemented or recognized by the current RTL. See <<_exception_and_interrupt_handling>> for behavior and trap-entry sequencing.
@@ -2596,6 +2512,7 @@ NOTE: `mcause[31]=1` indicates interrupt; `mcause[30:0]` is the cause code.
 <<<
 
 [appendix]
+
 == Pin Descriptions
 
 This section is the integration-facing signal reference. Signal behavior is defined in the corresponding functional sections; this section provides direction, width, and interface-level purpose.
@@ -2954,6 +2871,7 @@ T = (2 × 2^24 × CPI_avg) / f_clk
 ----
 
 For example, at the default 100 MHz system clock and `CPI_avg = 1.0`, one complete period is approximately 336 ms. Real software may have a longer period because stalls, memory accesses, branches, and multi-cycle operations increase CPI.
+
 === External AXI Master Interface (`ext_axi_*`)
 
 The external AXI master port carries transactions that fall outside all TCM and peripheral apertures (crossbar slave 3 catch-all). Connect to an external memory or MMIO fabric, or tie `ext_axi_arready`, `ext_axi_rvalid`, `ext_axi_awready`, `ext_axi_wready`, `ext_axi_bvalid` all to 0 if no external master is needed (the core will stall until reset).
@@ -3062,6 +2980,73 @@ Before releasing an RTL configuration or software package, verify:
 * JTAG/cJTAG mode selection, TAP connectivity, debug reset behavior, and supported DMI flow.
 * SRAM/TCM initialization mechanism for the selected simulation, FPGA, or ASIC environment.
 * Software headers and register definitions against the detailed block sections in this datasheet.
-* Verification results for ISA compliance, AXI protocol compliance, target timing closure, and any target-specific electrical requirements.
+* Verification results for ISA compliance, privileged-architecture behavior, debug interoperability, AXI protocol compliance, target timing closure, and target-specific electrical requirements.
 
 Any parameter change that affects software-visible behavior should update the RTL, this datasheet, software headers, linker configuration, and verification environment together.
+
+[[verification-status]]
+== Verification and Compliance Status
+
+Measured on 2026-09-17. Commands, configuration boundaries, and remaining
+requirements are recorded in `verif/COMPLIANCE_RESULTS.md`. The final regression passed all 42 commands. A passing test
+establishes the tested behavior, not complete specification conformance.
+
+[cols="2,3,3,3"]
+|===
+|Area |Implementation |Verification |Compliance claim
+|Base ISA and extensions
+|Parameterized RV32I/E with optional M/A/B/Zcmp groups
+|24 effective ISA configurations passed 2,120 applicable architectural-test executions; Zcmp has separate project-model and directed coverage
+|Configured tests verified; not independent certification of every extension
+|CSRs, traps, interrupts
+|Machine-mode subset and project-specific CLIC-like sideband
+|82 cycle-level CSR checks and CPU-generated fault checks verify exact cause, PC, and trap value; trap/nested-interrupt regressions passed
+|Tested behavior verified; no full privileged-architecture claim
+|Local interrupt controller and timer
+|CLINT-style registers and CLIC-like external control
+|100 randomized transactions and AXI response stability assertions passed (1,176 checks at the default seed)
+|No full CLIC or CLINT claim
+|AXI and memory
+|Implemented slave/master paths and TCM aliases
+|RAM, UART, Magic, CLIC, both TCM slave ports, and crossbar tests; all-channel external-memory stalls; 34 address-boundary probes
+|Implemented single-beat paths tested with stability assertions; not AXI certification
+|JTAG and Debug Module
+|RISC-V Debug Specification 1.0-oriented subset
+|Directed checks include unsupported DMI/IR values, independent resets, slow/fast/jittered TCK; OpenOCD and GDB interoperability tested
+|Tested interoperability verified; no complete Debug Spec conformance claim
+|Reset and CDC
+|Distributed synchronizers and debug transfer protocols
+|Two-edge SoC reset release, TCM retention, independent debug resets, and bundled-payload assertions tested; crossing inventory in `verif/CDC_REVIEW.md`
+|Simulation evidence only; exhaustive reset-phase and structural CDC signoff remain open
+|===
+
+== Revision History
+
+[cols="1,2,5"]
+.Revision History
+|===
+|Revision |Date |Summary
+
+|1.4
+|2026-09-17
+|Fixed AXI response retention, independent UART write channels and strobes, TCM concurrent-request arbitration, crossbar duplicate reads, and debug command replay after system reset. Added the 24-configuration ISA matrix, address-boundary tests, reset checks, and CDC inventory. Added directed compliance regressions and measured verification status. Corrected MSIP byte strobes, zero-strobe MTIME writes, and AMO parameter documentation. Reviewed against the supplied RTL and reorganized the SoC datasheet to match the current RTL. Clarified ISA and CSR behavior, memory map and TCM aliases, CLIC, UART, AXI, debug/JTAG, atomic operations, exceptions, control-flow behavior, and integration requirements.
+|===
+
+== References
+
+=== Verification Boundary
+
+This document is intended to match the supplied RTL source set. Functional correctness, ISA compliance, AXI compliance, timing closure, and target-specific electrical behavior require their respective verification and implementation flows. The datasheet does not replace those verification results.
+
+The RTL is the implementation source of truth for this datasheet. When modifying programmer-visible behavior, update the RTL and this document in the same change set.
+
+Within this document, each detailed block section is authoritative for that block's behavior. The register index links to these definitions, and appendices are summaries only. If a summary omits a restriction, side effect, parameter dependency, or error condition, use the detailed block specification.
+
+The following specifications provide background for the interfaces and architecture described in this datasheet:
+
+* **RISC-V Specifications**: https://riscv.org/technical/specifications/
+* **AMBA AXI4-Lite Specification**: https://developer.arm.com/documentation/ihi0022/latest/
+
+<<<
+
+[appendix]

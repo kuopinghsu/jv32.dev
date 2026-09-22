@@ -57,7 +57,7 @@ module jv32_soc #(
     parameter bit                 USE_CJTAG       = 1'b0,        // 0=4-wire JTAG, 1=2-wire cJTAG
     parameter bit          [31:0] JTAG_IDCODE     = 32'h1DEAD3FF,
     parameter int                 N_TRIGGERS      = 2,           // hardware breakpoints (0..4)
-    parameter bit                 AMO_EN          = 1'b1,        // 1=full A-extension; 0=LR/SC only
+    parameter bit                 AMO_EN          = 1'b1,        // 1=atomic instructions enabled; 0=LR/SC and AMO illegal
     parameter int unsigned        IRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter int unsigned        DRAM_SIZE       = 128 * 1024,  // bytes (128 KB)
     parameter bit                 FAST_MUL        = 1'b1,
@@ -720,8 +720,8 @@ module jv32_soc #(
                              core_use_dram_resp ? dram_tcm_rresp_int :
                              mbus_rresp;
     assign core_mbus_rvalid = dbg_ext_select ? 1'b0 :
-                              core_use_iram_resp ? iram_tcm_rvalid_int :
-                              core_use_dram_resp ? dram_tcm_rvalid_int :
+                              core_use_iram_resp ? (core_alias_iram_rd_pend && iram_tcm_rvalid_int) :
+                              core_use_dram_resp ? (core_alias_dram_rd_pend && dram_tcm_rvalid_int) :
                               mbus_rvalid;
 
     logic core_use_iram_wresp, core_use_dram_wresp;
@@ -741,8 +741,8 @@ module jv32_soc #(
                              core_use_dram_wresp ? dram_tcm_bresp_int :
                              mbus_bresp;
     assign core_mbus_bvalid = dbg_ext_select ? 1'b0 :
-                              core_use_iram_wresp ? iram_tcm_bvalid_int :
-                              core_use_dram_wresp ? dram_tcm_bvalid_int :
+                              core_use_iram_wresp ? (core_alias_iram_wr_pend && iram_tcm_bvalid_int) :
+                              core_use_dram_wresp ? (core_alias_dram_wr_pend && dram_tcm_bvalid_int) :
                               mbus_bvalid;
 
     // LR/SC external-writer snoop: single-cycle pulse + word address when a

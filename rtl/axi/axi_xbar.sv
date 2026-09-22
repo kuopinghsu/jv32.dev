@@ -108,12 +108,14 @@ module axi_xbar #(
     // =====================================================================
     logic [$clog2(N_SLAVES)-1:0] rd_sel;
     logic                        rd_active;
+    logic                        ar_sent;
     logic [                31:0] rd_addr_r;
     logic                        rd_err;  // DECERR
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rd_active <= 1'b0;
+            ar_sent   <= 1'b0;
             rd_sel    <= '0;
             rd_err    <= 1'b0;
             rd_addr_r <= 32'h0;
@@ -121,6 +123,7 @@ module axi_xbar #(
         else if (!rd_active) begin
             if (m_arvalid) begin
                 rd_active <= 1'b1;
+                ar_sent <= 1'b0;
                 rd_addr_r <= m_araddr;
                 if (decode_addr(m_araddr) < 0) begin
                     rd_sel <= '0;
@@ -133,6 +136,7 @@ module axi_xbar #(
             end
         end
         else begin
+            if (!rd_err && s_arvalid[rd_sel] && s_arready[rd_sel]) ar_sent <= 1'b1;
             if (m_rvalid && m_rready) begin
                 rd_active <= 1'b0;
                 rd_err    <= 1'b0;
@@ -147,17 +151,14 @@ module axi_xbar #(
     always_comb begin
         for (int i = 0; i < N_SLAVES; i++) begin
             s_araddr[i]  = rd_addr_r;
-            s_arvalid[i] = rd_active && !rd_err && ($clog2(N_SLAVES)'(i) == rd_sel);
-            s_rready[i]  = m_rready && ($clog2(N_SLAVES)'(i) == rd_sel);
+            s_arvalid[i] = rd_active && !ar_sent && !rd_err && ($clog2(N_SLAVES)'(i) == rd_sel);
+            s_rready[i]  = rd_active && !rd_err && m_rready && ($clog2(N_SLAVES)'(i) == rd_sel);
         end
     end
 
     // Route R back to master.
-    // NOTE: rd_active is NOT used to gate m_rdata/m_rvalid here so that
-    // combinatorial evaluation returns the correct slave data.
-    // Spurious responses are safe: the bus-state machine only samples
-    // m_rvalid when bus_state==BUS_DR or BUS_IR.
-    assign m_rvalid = rd_err ? rd_active : s_rvalid[rd_sel];
+    // Only the outstanding read may deliver a response to the master.
+    assign m_rvalid = rd_active && (rd_err || s_rvalid[rd_sel]);
     assign m_rdata  = rd_err ? 32'h0000_0000 : s_rdata[rd_sel];
     assign m_rresp  = rd_err ? 2'b11 : s_rresp[rd_sel];
 
@@ -169,6 +170,7 @@ module axi_xbar #(
     logic [                31:0] wr_addr_r;
     logic                        wr_err;
     logic                        aw_sent;  // AW handshake with slave has completed
+    logic                        w_sent;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -177,12 +179,14 @@ module axi_xbar #(
             wr_err    <= 1'b0;
             wr_addr_r <= 32'h0;
             aw_sent   <= 1'b0;
+            w_sent    <= 1'b0;
         end
         else if (!wr_active) begin
             if (m_awvalid) begin
                 wr_active <= 1'b1;
                 wr_addr_r <= m_awaddr;
                 aw_sent   <= 1'b0;
+                w_sent    <= 1'b0;
                 if (decode_addr(m_awaddr) < 0) begin
                     wr_sel <= '0;
                     wr_err <= 1'b1;
@@ -196,6 +200,7 @@ module axi_xbar #(
         else begin
             // Deassert s_awvalid after slave accepts the AW transaction
             if (!aw_sent && s_awvalid[wr_sel] && s_awready[wr_sel]) aw_sent <= 1'b1;
+            if (m_wvalid && m_wready) w_sent <= 1'b1;
             if (m_bvalid && m_bready) wr_active <= 1'b0;
         end
     end
@@ -208,15 +213,15 @@ module axi_xbar #(
             s_awvalid[i] = wr_active && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel) && !aw_sent;
             s_wdata[i]   = m_wdata;
             s_wstrb[i]   = m_wstrb;
-            s_wvalid[i]  = m_wvalid && wr_active && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel);
+            s_wvalid[i]  = m_wvalid && wr_active && !w_sent && !wr_err && ($clog2(N_SLAVES)'(i) == wr_sel);
             s_bready[i]  = m_bready && ($clog2(N_SLAVES)'(i) == wr_sel);
         end
     end
 
     // Gate m_wready and m_bvalid by wr_active to prevent stale wr_err
     // from the previous transaction from leaking into a new one.
-    assign m_wready = wr_active ? (wr_err ? 1'b1 : s_wready[wr_sel]) : 1'b0;
-    assign m_bvalid = wr_active ? (wr_err ? 1'b1 : s_bvalid[wr_sel]) : 1'b0;
+    assign m_wready = wr_active && !w_sent && (wr_err || s_wready[wr_sel]);
+    assign m_bvalid = wr_active && (wr_err ? w_sent : s_bvalid[wr_sel]);
     assign m_bresp  = wr_active ? (wr_err ? 2'b11 : s_bresp[wr_sel]) : 2'b00;
 
 `ifndef SYNTHESIS

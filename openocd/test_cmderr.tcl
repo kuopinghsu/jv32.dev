@@ -58,6 +58,10 @@ halt
 if {[catch {wait_halt 1000}]} {
     error "hart did not halt at test start"
 }
+# This script intentionally drives raw DMI commands and inspects sticky error
+# state.  OpenOCD's background target poll also uses abstract commands and may
+# clear cmderr between the command and assertion, especially over slower cJTAG.
+poll off
 clear_cmderr
 check_cmderr "initial clean" 0
 puts "setup: hart halted, cmderr clean"

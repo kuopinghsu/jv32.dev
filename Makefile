@@ -37,6 +37,7 @@ export RAS_EN
 export IBUF_EN
 export SCOREBOARD_EN
 export SPIKE
+export IRAM_SIZE DRAM_SIZE IRAM_BASE DRAM_BASE
 
 # Compute ARCH/ABI from feature flags and export so all sub-makes agree.
 # sw/Makefile and rtos/freertos/Makefile both use ARCH ?= / ABI ?= guards,
@@ -614,7 +615,7 @@ rtl-%: build-rtl $(BUILD_DIR)/%.elf
 	    $(if $(filter vcd,$(WAVE)),--trace jv32soc.vcd) \
 	    $(if $(filter 1,$(TRACE)),--rtl-trace $(RTL_TRACE_FILE)) \
 	    $(KANATA_ARG) \
-	    $(TIMEOUT_ARG) \
+	    $(TIMEOUT_ARG) $(RTL_PLUSARGS) \
 	    $*.elf
 	@echo "=========================================="
 	@if [ "$(WAVE)" = "1" ] || [ "$(WAVE)" = "fst" ]; then \
@@ -1479,7 +1480,7 @@ TMO_W        ?= 16
 .PHONY: jtag-tb jtag-tb-elab
 jtag-tb:
 	@mkdir -p $(BUILD_DIR)/objdir_jtag_tb
-	$(VERILATOR) --binary --timing -sv -Wno-fatal -Wno-TIMESCALEMOD -Wno-PROCASSINIT \
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal -Wno-TIMESCALEMOD -Wno-PROCASSINIT \
 	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
 	    -Wno-UNUSEDPARAM -Wno-PINCONNECTEMPTY \
 	    --top-module tb_jtag_dtm -GDBG_BUS_TIMEOUT_W=$(TMO_W) \
@@ -1488,6 +1489,59 @@ jtag-tb:
 	    $(JTAG_TB_HDR) $(JTAG_TB_RTL) $(JTAG_TB_SRC)
 	@echo "=========================================="
 	$(JTAG_TB_BIN) +TMO_W=$(TMO_W) $(JTAG_TB_ARGS)
+
+CLIC_IRQ_COUNT ?= 16
+.PHONY: clic-tb
+clic-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_clic_tb
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal \
+	    --top-module tb_clic -GIRQ_COUNT=$(CLIC_IRQ_COUNT) -I$(JV32_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_clic_tb -o ../tb_clic \
+	    $(JTAG_TB_HDR) rtl/axi/axi_clic.sv testbench/compliance/tb_clic.sv
+	$(BUILD_DIR)/tb_clic
+
+.PHONY: csr-tb
+csr-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_csr_tb
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal \
+	    --top-module tb_csr -I$(JV32_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_csr_tb -o ../tb_csr \
+	    rtl/jv32/core/jv32_pkg.sv rtl/jv32/core/jv32_csr.sv testbench/compliance/tb_csr.sv
+	$(BUILD_DIR)/tb_csr
+
+.PHONY: disabled-isa-tb
+SLAVE_KIND ?= 0
+.PHONY: xbar-tb
+xbar-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_xbar_tb
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal --top-module tb_xbar \
+	    -Mdir $(BUILD_DIR)/objdir_xbar_tb -o ../tb_xbar \
+	    rtl/axi/axi_xbar.sv testbench/compliance/tb_xbar.sv
+	$(BUILD_DIR)/tb_xbar
+
+.PHONY: axi-slave-tb
+axi-slave-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_slave_$(SLAVE_KIND)
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal \
+	    --top-module tb_axi_slave -GKIND=$(SLAVE_KIND) -I$(JV32_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_slave_$(SLAVE_KIND) -o ../tb_axi_slave_$(SLAVE_KIND) \
+	    -I$(CORE_DIR) -I$(RTL_DIR) $(RTL_SOURCES) \
+	    testbench/compliance/tb_axi_slave.sv $(abspath testbench/compliance/magic_stub.cpp)
+	$(BUILD_DIR)/tb_axi_slave_$(SLAVE_KIND)
+
+disabled-isa-tb:
+	@mkdir -p $(BUILD_DIR)/objdir_disabled_isa_tb
+	$(VERILATOR) --binary --timing --assert -sv -Wno-fatal -Wno-PINMISSING \
+	    --top-module tb_disabled_isa -I$(JV32_DIR) \
+	    -Mdir $(BUILD_DIR)/objdir_disabled_isa_tb -o ../tb_disabled_isa \
+	    rtl/jv32/core/jv32_pkg.sv rtl/jv32/core/jv32_decoder.sv testbench/compliance/tb_disabled_isa.sv
+	$(BUILD_DIR)/tb_disabled_isa
+
+# Independent compliance groups; logs include commands, RTL digest and revision.
+.PHONY: compliance
+COMPLIANCE_GROUPS ?= smoke
+compliance:
+	python3 scripts/compliance_regression.py $(COMPLIANCE_GROUPS)
 
 # Elaboration-only check across N_TRIGGERS values (P1 s4 regression).
 jtag-tb-elab:

@@ -193,11 +193,10 @@ module axi_magic (
     end
 
     // Read channel handling (return 0 for all reads)
-    // Keep ARREADY asserted so software that pulses ARVALID for one cycle
-    // cannot deadlock on this simulation-only peripheral.
+    // Keep the pending response intact until the master accepts it.
+    assign axi_arready = !axi_rvalid || axi_rready;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            axi_arready <= 1'b1;
             axi_rdata   <= 32'h0;
             axi_rresp   <= 2'b00;
             axi_rvalid  <= 1'b0;
@@ -406,4 +405,3 @@ module axi_magic (
 endmodule
 /* verilator coverage_on */
 `endif  // SYNTHESIS
-

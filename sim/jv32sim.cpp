@@ -577,6 +577,20 @@ static inline bool extram_offset_for_addr(uint32_t addr, int size, uint32_t *off
     return false;
 }
 
+static inline bool mem_readable(uint32_t addr, int size) {
+    uint32_t off;
+    return iram_offset_for_addr(addr, size, &off)
+        || dram_offset_for_addr(addr, size, &off)
+        || extram_offset_for_addr(addr, size, &off)
+        || in_range(addr, CLIC_BASE,  0x200000U, size)
+        || in_range(addr, UART_BASE,        0x1CU, size)
+        || in_range(addr, MAGIC_BASE,         8U, size);
+}
+
+static inline bool mem_writable(uint32_t addr, int size) {
+    return mem_readable(addr, size);
+}
+
 // Forward declaration (defined after the hint infrastructure)
 static uint32_t consume_hint(uint32_t csr_addr, uint32_t fallback_val);
 
@@ -1018,9 +1032,12 @@ static void take_trap(uint32_t cause, uint32_t tval, uint32_t trap_pc) {
 // CLIC arbiter helpers
 // ============================================================================
 
-// Return true when the UART RX interrupt is active (level-triggered).
+// Return true when either enabled UART interrupt source is active.
 static bool uart_irq_active() {
-    return (uart_ie & 0x1u) != 0u && !uart_rx_fifo.empty();
+    bool rx_not_empty = !uart_rx_fifo.empty();
+    bool tx_empty = true;  // TX is instantaneous in the software simulator.
+    return ((uart_ie & 0x1u) != 0u && rx_not_empty)
+        || ((uart_ie & 0x2u) != 0u && tx_empty);
 }
 
 // Scan CLICINT[0..15]: find the enabled+pending line with the highest CTL.
@@ -1684,8 +1701,17 @@ static void step() {
     uint32_t instr;
     uint32_t pc_step;
 
+    if (instr_pc & 1u) {
+        take_trap(CAUSE_MISALIGNED_FETCH, instr_pc, instr_pc);
+        return;
+    }
+    if (!mem_readable(instr_pc, 2)) {
+        take_trap(CAUSE_FETCH_ACCESS, instr_pc, instr_pc);
+        return;
+    }
+
     // Read first halfword
-    uint16_t half0 = (uint16_t)mem_read(instr_pc & ~1u, 2);
+    uint16_t half0 = (uint16_t)mem_read(instr_pc, 2);
     uint32_t raw_instr;  // original encoding passed to disassembler
 
     if ((half0 & 3u) != 3u) {
@@ -1706,7 +1732,11 @@ static void step() {
         }
     } else {
         // Full 32-bit instruction
-        uint16_t half1 = (uint16_t)mem_read((instr_pc & ~1u) + 2, 2);
+        if (!mem_readable(instr_pc + 2u, 2)) {
+            take_trap(CAUSE_FETCH_ACCESS, instr_pc, instr_pc);
+            return;
+        }
+        uint16_t half1 = (uint16_t)mem_read(instr_pc + 2u, 2);
         instr     = ((uint32_t)half1 << 16) | half0;
         raw_instr = instr;
         pc_step = 4;
@@ -1819,13 +1849,18 @@ static void step() {
     case 0x03: {
         uint32_t addr = a + imm_i();
         switch (funct3) {
-        case 0: result = (uint32_t)sign_extend(mem_read(addr, 1) & 0xFFu, 8);     break; // LB
+        case 0: if (!mem_readable(addr, 1)) { exc_pending=true; exc_cause=CAUSE_LOAD_ACCESS; exc_tval=addr; break; }
+                result = (uint32_t)sign_extend(mem_read(addr, 1) & 0xFFu, 8);     break; // LB
         case 1: if (!check_align(addr, 2, true)) break;
+                if (!mem_readable(addr, 2)) { exc_pending=true; exc_cause=CAUSE_LOAD_ACCESS; exc_tval=addr; break; }
                 result = (uint32_t)sign_extend(mem_read(addr, 2) & 0xFFFFu, 16);  break; // LH
         case 2: if (!check_align(addr, 4, true)) break;
+                if (!mem_readable(addr, 4)) { exc_pending=true; exc_cause=CAUSE_LOAD_ACCESS; exc_tval=addr; break; }
                 result = mem_read(addr, 4);                                        break; // LW
-        case 4: result = mem_read(addr, 1) & 0xFFu;                               break; // LBU
+        case 4: if (!mem_readable(addr, 1)) { exc_pending=true; exc_cause=CAUSE_LOAD_ACCESS; exc_tval=addr; break; }
+                result = mem_read(addr, 1) & 0xFFu;                               break; // LBU
         case 5: if (!check_align(addr, 2, true)) break;
+                if (!mem_readable(addr, 2)) { exc_pending=true; exc_cause=CAUSE_LOAD_ACCESS; exc_tval=addr; break; }
                 result = mem_read(addr, 2) & 0xFFFFu;                             break; // LHU
         default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr;  break;
         }
@@ -1841,11 +1876,15 @@ static void step() {
     // ── Stores ────────────────────────────────────────────────────────────
     case 0x23: {
         uint32_t addr = a + imm_s();
-        // JV32 handles misaligned stores transparently as byte-lane writes.
         switch (funct3) {
-        case 0: mem_write(addr, b & 0xFFu,   1); break; // SB
-        case 1: mem_write(addr, b & 0xFFFFu, 2); break; // SH
-        case 2: mem_write(addr, b,           4); break; // SW
+        case 0: if (!mem_writable(addr, 1)) { exc_pending=true; exc_cause=CAUSE_STORE_ACCESS; exc_tval=addr; break; }
+                mem_write(addr, b & 0xFFu,   1); break; // SB
+        case 1: if (!check_align(addr, 2, false)) break;
+                if (!mem_writable(addr, 2)) { exc_pending=true; exc_cause=CAUSE_STORE_ACCESS; exc_tval=addr; break; }
+                mem_write(addr, b & 0xFFFFu, 2); break; // SH
+        case 2: if (!check_align(addr, 4, false)) break;
+                if (!mem_writable(addr, 4)) { exc_pending=true; exc_cause=CAUSE_STORE_ACCESS; exc_tval=addr; break; }
+                mem_write(addr, b,           4); break; // SW
         default: exc_pending=true; exc_cause=CAUSE_ILLEGAL_INSN; exc_tval=instr; break;
         }
         if (!exc_pending) {
@@ -2089,6 +2128,13 @@ static void step() {
         // address-misaligned exception -- load-misaligned for LR.W,
         // store/AMO-misaligned for SC.W and every AMO<op>.W.
         if (!check_align(addr, 4, /*is_load=*/amo_op == 0x02u)) break;
+        if ((amo_op == 0x02u && !mem_readable(addr, 4)) ||
+            (amo_op != 0x02u && !mem_writable(addr, 4))) {
+            exc_pending = true;
+            exc_cause = (amo_op == 0x02u) ? CAUSE_LOAD_ACCESS : CAUSE_STORE_ACCESS;
+            exc_tval = addr;
+            break;
+        }
         uint32_t val    = mem_read(addr, 4);
         result   = val;
         do_write = true;

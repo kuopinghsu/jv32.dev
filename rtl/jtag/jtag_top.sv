@@ -200,7 +200,9 @@ module jtag_top #(
         .tms_i  (tap_tms),
         .tdi_i  (tap_tdi),
         .tdo_o  (tap_tdo),
-        .ntrst_i(ntrst_i),
+        // System reset must clear the dispatch toggles together with the
+        // receiving engine, otherwise an old toggle is replayed after reset.
+        .ntrst_i(ntrst_i & rst_n_i),
 
         // System clock and reset
         .clk  (clk_i),
@@ -274,4 +276,3 @@ module jtag_top #(
 `endif  // SYNTHESIS
 
 endmodule
-
