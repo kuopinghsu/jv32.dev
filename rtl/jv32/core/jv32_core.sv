@@ -872,17 +872,17 @@ module jv32_core #(
     end
 
     // =====================================================================
-    // Return Address Stack (RAS) -- 2-entry circular buffer
+    // Return Address Stack (RAS) -- RAS_DEPTH-entry circular buffer
     // =====================================================================
     // Enabled when RAS_ACTIVE=1 (BP_EN=1 && RAS_EN=1 && !RV32E_EN).
     // Push on JAL/JALR with rd=link; pop on JALR with rs1=link, rd=non-link.
-    // The write pointer wraps naturally in a circular fashion (modulo 2).
+    // RAS_DEPTH must be a power of two: the write pointer wraps in RAS_BITS.
     // Flushed only on exception/mret/interrupt/debug (wb_redirect) to preserve
     // call-depth state across branch mispredictions and fence.i.
     // When RAS_ACTIVE=0 the generate-else branch ties bp_ras_top to 0 and
     // no flip-flops or combinatorial RAS logic are emitted.
     localparam int unsigned RAS_DEPTH = 2;
-    localparam int unsigned RAS_BITS  = 1;
+    localparam int unsigned RAS_BITS  = $clog2(RAS_DEPTH);
 
     generate
         if (RAS_ACTIVE) begin : g_ras
@@ -898,10 +898,15 @@ module jv32_core #(
             // Link address to push: next sequential PC after the call instruction
             assign bp_ras_push_pc = rvc_instr_pc + (rvc_is_compressed ? 32'd2 : 32'd4);
 
+            // Whole-array reset, not a procedural for-loop. Surelog lowers
+            // `for (int i = 0; i < RAS_DEPTH; i++)` inside always_ff into a
+            // flip-flop for the loop index, and Yosys proc_dff then reports
+            // "Multiple edge sensitive events" for ras_wr_ptr.
+            // Each stack slot is its own always_ff so a variable LHS index is
+            // not required; gi is a constant, so any RAS_DEPTH is covered.
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
                     ras_wr_ptr <= '0;
-                    for (int i = 0; i < RAS_DEPTH; i++) ras_stack[i] <= 32'h0;
                 end
                 else if (wb_redirect) begin
                     // Flush on non-speculative redirect (exception/mret/interrupt).
@@ -915,16 +920,28 @@ module jv32_core #(
                     // is corrected by the EX redirect as normal.
                     ras_wr_ptr <= '0;
                 end
-                else if (bp_ras_push && bp_ras_pop) begin
-                    // Coroutine (e.g. jalr ra, 0(ra)): overwrite top entry; pointer unchanged
-                    ras_stack[ras_rd_ptr] <= bp_ras_push_pc;
+                else if (bp_ras_push && !bp_ras_pop) begin
+                    ras_wr_ptr <= ras_wr_ptr + RAS_BITS'(1);
                 end
-                else if (bp_ras_push) begin
-                    ras_stack[ras_wr_ptr] <= bp_ras_push_pc;
-                    ras_wr_ptr            <= ras_wr_ptr + RAS_BITS'(1);
-                end
-                else if (bp_ras_pop) begin
+                else if (bp_ras_pop && !bp_ras_push) begin
                     ras_wr_ptr <= ras_wr_ptr - RAS_BITS'(1);
+                end
+            end
+
+            for (genvar gi = 0; gi < RAS_DEPTH; gi++) begin : g_ent
+                always_ff @(posedge clk or negedge rst_n) begin
+                    if (!rst_n) begin
+                        ras_stack[gi] <= 32'h0;
+                    end
+                    else if (!wb_redirect && bp_ras_push && bp_ras_pop &&
+                             (ras_rd_ptr == RAS_BITS'(gi))) begin
+                        // Coroutine (e.g. jalr ra, 0(ra)): overwrite top entry
+                        ras_stack[gi] <= bp_ras_push_pc;
+                    end
+                    else if (!wb_redirect && bp_ras_push && !bp_ras_pop &&
+                             (ras_wr_ptr == RAS_BITS'(gi))) begin
+                        ras_stack[gi] <= bp_ras_push_pc;
+                    end
                 end
             end
         end
@@ -1617,7 +1634,11 @@ module jv32_core #(
         end
     end
 
-    // AMO state machine sequential
+    // AMO state machine sequential.
+    // The async-reset if must be the only statement at the top of the block.
+    // A second if beside it (the debug-module snoop) stops Yosys proc_arst
+    // from turning negedge rst_n into a level reset, and proc_dff then errors
+    // with "Multiple edge sensitive events" on amo_load_data / lr_valid.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             amo_state     <= AMO_IDLE;
@@ -1625,7 +1646,8 @@ module jv32_core #(
             lr_valid      <= 1'b0;
             lr_addr       <= 32'h0;
         end
-        else if (ex_wb_r.valid && ex_wb_r.is_amo && !(|sb_valid)) begin
+        else begin
+            if (ex_wb_r.valid && ex_wb_r.is_amo && !(|sb_valid)) begin
             // (external-writer snoop handled after the case; see below)
             case (amo_state)
                 AMO_IDLE: begin
@@ -1675,11 +1697,12 @@ module jv32_core #(
         end
         else if (!ex_wb_r.valid) amo_state <= AMO_IDLE;
 
-        // External-writer snoop: a debug-module (SBA / abstract Access Memory)
-        // write to the reserved word breaks the reservation.  Placed last so it
-        // wins over a same-cycle LR that would otherwise re-arm it.
-        if (dm_mem_wr_i && lr_valid && (dm_mem_waddr_i[31:2] == lr_addr[31:2]))
-            lr_valid <= 1'b0;
+            // External-writer snoop: a debug-module (SBA / abstract Access Memory)
+            // write to the reserved word breaks the reservation.  Placed last so it
+            // wins over a same-cycle LR that would otherwise re-arm it.
+            if (dm_mem_wr_i && lr_valid && (dm_mem_waddr_i[31:2] == lr_addr[31:2]))
+                lr_valid <= 1'b0;
+        end
     end
 
 `ifndef SYNTHESIS

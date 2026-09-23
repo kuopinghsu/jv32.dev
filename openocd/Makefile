@@ -82,6 +82,8 @@ SEMIHOST_ELF := $(SEMIHOST_BUILD_DIR)/hello.elf
 VPI_PORT ?= 5555
 
 # ── OpenOCD GDB server port (used by the GDB test suite) ─────────────────────
+# 3333 is OpenOCD's usual port.  On WSL it often sits inside a Hyper-V
+# excluded range and cannot be bound; the GDB recipes fall back to a free port.
 GDB_PORT ?= 3333
 
 # ── Portable TCP-port helpers ────────────────────────────────────────────────
@@ -91,6 +93,10 @@ GDB_PORT ?= 3333
 #   $(call port-kill,PORT)      — SIGKILLs whatever holds PORT (no-op if free)
 port-listening = lsof -nP -iTCP:$(1) -sTCP:LISTEN >/dev/null 2>&1
 port-kill      = for p in $$(lsof -tnP -iTCP:$(1) 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done
+# Print a TCP port OpenOCD can bind.  Prefer $(1); if bind fails, print an
+# ephemeral port.  Hyper-V excluded ranges on WSL reject the usual 3333 with
+# EADDRINUSE even though no process is listening and lsof/ss show it free.
+port-pick = python3 -c 'import socket,sys; exec("want=int(sys.argv[1])\ntry:\n s=socket.socket(); s.bind((\"0.0.0.0\", want)); s.close(); print(want)\nexcept OSError:\n s.close(); s=socket.socket(); s.bind((\"0.0.0.0\", 0)); print(s.getsockname()[1]); s.close()")' $(1)
 
 # ── Test names (file stem of openocd/test_<name>.tcl) ────────────────────────
 # JTAG: common functionality; no cJTAG-specific activation test
@@ -440,11 +446,19 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	@mkdir -p $(LOG_DIR)
 	@pkill -9 jv32vpi_jtag 2>/dev/null; sleep 0.2; true
 	@PASS=0; SKIP=0; FAIL=0; N=0; \
+	GDB_PORT_USE=$$($(call port-pick,$(GDB_PORT))); \
+	if [ "$$GDB_PORT_USE" != "$(GDB_PORT)" ]; then \
+	    echo "GDB port $(GDB_PORT) is not bindable on this host; using $$GDB_PORT_USE"; \
+	fi; \
+	port_kill() { for p in $$(lsof -tnP -iTCP:"$$1" 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done; }; \
+	port_up() { lsof -nP -iTCP:"$$1" -sTCP:LISTEN >/dev/null 2>&1; }; \
 	run_one() { \
 	    N=$$((N+1)); \
 	    t=$$1; \
 	    LOG="$(LOG_DIR)/gdb_$$t"; \
 	    printf "  [gdb]  %d/$(N_GDB_TESTS) %-20s ... " "$$N" "test_gdb_$$t"; \
+	    port_kill $(VPI_PORT); \
+	    port_kill $$GDB_PORT_USE; \
 	    "$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	        --max-cycles 0 \
 	        >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
@@ -456,21 +470,33 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	      $(OPENOCD) -d0 \
 	          -f jv32.cfg \
 	          -c "jtag_vpi set_port $(VPI_PORT)" \
-	          -c "gdb port $(GDB_PORT)" \
+	          -c "gdb port $$GDB_PORT_USE" \
 	          -c "tcl port disabled" \
 	          -c "telnet port disabled" \
 	          -c "gdb flash_program disable" \
 	          -c init \
 	    ) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
+	    OCD_UP=0; \
 	    for _i in $$(seq 1 80); do \
-	        $(call port-listening,$(GDB_PORT)) && break; \
+	        if port_up $$GDB_PORT_USE && kill -0 $$OCD_PID 2>/dev/null; then \
+	            OCD_UP=1; break; \
+	        fi; \
+	        kill -0 $$OCD_PID 2>/dev/null || break; \
 	        sleep 0.1; \
 	    done; \
+	    if [ $$OCD_UP -eq 0 ]; then \
+	        echo "FAIL (openocd gdb port $$GDB_PORT_USE not listening)"; \
+	        FAIL=$$((FAIL+1)); \
+	        sed 's/^/    /' "$$LOG.ocd.log"; \
+	        kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
+	        kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	        return; \
+	    fi; \
 	    $(GDB) --batch \
 	        -ex "set pagination off" \
 	        -ex "set confirm off" \
 	        -ex "set remotetimeout 300" \
-	        -ex "target extended-remote :$(GDB_PORT)" \
+	        -ex "target extended-remote :$$GDB_PORT_USE" \
 	        -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
 	        "$(BOOT_ELF)" \
 	        >"$$LOG.gdb.log" 2>&1; \
@@ -478,11 +504,11 @@ test-gdb: $(VPI_JTAG) $(BOOT_ELF)
 	    kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
 	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
 	    for _j in $$(seq 1 30); do \
-	        $(call port-listening,$(VPI_PORT)) || break; \
+	        port_up $(VPI_PORT) || break; \
 	        sleep 0.1; \
 	    done; \
 	    for _j in $$(seq 1 30); do \
-	        $(call port-listening,$(GDB_PORT)) || break; \
+	        port_up $$GDB_PORT_USE || break; \
 	        sleep 0.1; \
 	    done; \
 	    if [ $$GDB_RC -eq 0 ] && grep -Eq '\[(PASS|SKIP)\]' "$$LOG.gdb.log" 2>/dev/null; then \
@@ -525,11 +551,15 @@ $(JV32SIM_BIN): FORCE
 gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 	@mkdir -p $(LOG_DIR)
 	@t=hello; LOG="$(LOG_DIR)/gdb_$$t"; \
+	GDB_PORT_USE=$$($(call port-pick,$(GDB_PORT))); \
+	if [ "$$GDB_PORT_USE" != "$(GDB_PORT)" ]; then \
+	    echo "GDB port $(GDB_PORT) is not bindable on this host; using $$GDB_PORT_USE"; \
+	fi; \
 	echo "--- [gdb] test_gdb_$$t (GDB debug test + ISS trace compare) ---"; \
 	pkill -x jv32vpi_jtag 2>/dev/null || true; \
 	pkill -x openocd      2>/dev/null || true; \
 	$(call port-kill,$(VPI_PORT)); \
-	$(call port-kill,$(GDB_PORT)); \
+	for p in $$(lsof -tnP -iTCP:$$GDB_PORT_USE 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done; \
 	sleep 0.3; \
 	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	    --max-cycles 0 \
@@ -546,21 +576,21 @@ gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
-	      -c "gdb port $(GDB_PORT)" \
+	      -c "gdb port $$GDB_PORT_USE" \
 	      -c "tcl port disabled" \
 	      -c "telnet port disabled" \
 	      -c "gdb flash_program disable" \
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
-	    $(call port-listening,$(GDB_PORT)) && break; \
+	    lsof -nP -iTCP:$$GDB_PORT_USE -sTCP:LISTEN >/dev/null 2>&1 && break; \
 	    sleep 0.1; \
 	done; \
 	$(GDB) --batch \
 	    -ex "set pagination off" \
 	    -ex "set confirm off" \
 	    -ex "set remotetimeout 300" \
-	    -ex "target extended-remote :$(GDB_PORT)" \
+	    -ex "target extended-remote :$$GDB_PORT_USE" \
 	    -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
 	    "$(BOOT_ELF)" \
 	    >"$$LOG.gdb.log" 2>&1; \
@@ -610,7 +640,13 @@ gdb-hello: $(VPI_JTAG) $(BOOT_ELF) $(JV32SIM_BIN)
 gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	@mkdir -p $(LOG_DIR)
 	@t=$*; LOG="$(LOG_DIR)/gdb_$$t"; \
+	GDB_PORT_USE=$$($(call port-pick,$(GDB_PORT))); \
+	if [ "$$GDB_PORT_USE" != "$(GDB_PORT)" ]; then \
+	    echo "GDB port $(GDB_PORT) is not bindable on this host; using $$GDB_PORT_USE"; \
+	fi; \
 	echo "--- [gdb] test_gdb_$$t ---"; \
+	$(call port-kill,$(VPI_PORT)); \
+	for p in $$(lsof -tnP -iTCP:$$GDB_PORT_USE 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done; \
 	"$(VPI_JTAG)" "$(BOOT_ELF)" --port $(VPI_PORT) \
 	    >"$$LOG.sim.log" 2>&1 & VPI_PID=$$!; \
 	for _i in $$(seq 1 50); do \
@@ -621,21 +657,32 @@ gdb-%: $(VPI_JTAG) $(BOOT_ELF)
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
-	      -c "gdb port $(GDB_PORT)" \
+	      -c "gdb port $$GDB_PORT_USE" \
 	      -c "tcl port disabled" \
 	      -c "telnet port disabled" \
 	      -c "gdb flash_program disable" \
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
+	OCD_UP=0; \
 	for _i in $$(seq 1 80); do \
-	    $(call port-listening,$(GDB_PORT)) && break; \
+	    if lsof -nP -iTCP:$$GDB_PORT_USE -sTCP:LISTEN >/dev/null 2>&1 && kill -0 $$OCD_PID 2>/dev/null; then \
+	        OCD_UP=1; break; \
+	    fi; \
+	    kill -0 $$OCD_PID 2>/dev/null || break; \
 	    sleep 0.1; \
 	done; \
+	if [ $$OCD_UP -eq 0 ]; then \
+	    echo "[FAIL] openocd gdb port $$GDB_PORT_USE not listening"; \
+	    cat "$$LOG.ocd.log"; \
+	    kill $$OCD_PID 2>/dev/null; wait $$OCD_PID 2>/dev/null; \
+	    kill $$VPI_PID 2>/dev/null; wait $$VPI_PID 2>/dev/null; \
+	    exit 1; \
+	fi; \
 	$(GDB) --batch \
 	    -ex "set pagination off" \
 	    -ex "set confirm off" \
 	    -ex "set remotetimeout 30" \
-	    -ex "target extended-remote :$(GDB_PORT)" \
+	    -ex "target extended-remote :$$GDB_PORT_USE" \
 	    -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
 	    "$(BOOT_ELF)" \
 	    >"$$LOG.gdb.log" 2>&1; \
@@ -714,11 +761,15 @@ $(ZCMP_ELF): FORCE
 gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 	@mkdir -p $(LOG_DIR)
 	@t=zcmp; LOG="$(LOG_DIR)/gdb_$$t"; \
+	GDB_PORT_USE=$$($(call port-pick,$(GDB_PORT))); \
+	if [ "$$GDB_PORT_USE" != "$(GDB_PORT)" ]; then \
+	    echo "GDB port $(GDB_PORT) is not bindable on this host; using $$GDB_PORT_USE"; \
+	fi; \
 	echo "--- [gdb] test_gdb_$$t (Zcmp instruction test + ISS trace compare) ---"; \
 	pkill -x jv32vpi_jtag 2>/dev/null || true; \
 	pkill -x openocd      2>/dev/null || true; \
 	$(call port-kill,$(VPI_PORT)); \
-	$(call port-kill,$(GDB_PORT)); \
+	for p in $$(lsof -tnP -iTCP:$$GDB_PORT_USE 2>/dev/null); do kill -9 $$p 2>/dev/null || true; done; \
 	sleep 0.3; \
 	"$(VPI_JTAG)" "$(ZCMP_ELF)" --port $(VPI_PORT) \
 	    --max-cycles 0 \
@@ -735,21 +786,21 @@ gdb-zcmp: $(VPI_JTAG) $(ZCMP_ELF) $(JV32SIM_BIN)
 	  $(OPENOCD) -d0 \
 	      -f jv32.cfg \
 	      -c "jtag_vpi set_port $(VPI_PORT)" \
-	      -c "gdb port $(GDB_PORT)" \
+	      -c "gdb port $$GDB_PORT_USE" \
 	      -c "tcl port disabled" \
 	      -c "telnet port disabled" \
 	      -c "gdb flash_program disable" \
 	      -c init \
 	) >"$$LOG.ocd.log" 2>&1 & OCD_PID=$$!; \
 	for _i in $$(seq 1 80); do \
-	    $(call port-listening,$(GDB_PORT)) && break; \
+	    lsof -nP -iTCP:$$GDB_PORT_USE -sTCP:LISTEN >/dev/null 2>&1 && break; \
 	    sleep 0.1; \
 	done; \
 	$(GDB) --batch \
 	    -ex "set pagination off" \
 	    -ex "set confirm off" \
 	    -ex "set remotetimeout 300" \
-	    -ex "target extended-remote :$(GDB_PORT)" \
+	    -ex "target extended-remote :$$GDB_PORT_USE" \
 	    -x "$(OPENOCD_DIR)/test_gdb_$$t.gdb" \
 	    "$(ZCMP_ELF)" \
 	    >"$$LOG.gdb.log" 2>&1; \

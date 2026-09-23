@@ -105,11 +105,15 @@
       "exceptions": {
         "load_store": { "Some": "AlignmentException" },
         "vector": { "None": null },
-        "amo": { "Some": "AlignmentException" },
+        // amo and lrsc are plain enums in the current sail-riscv schema
+        // (load_store/vector stay option objects).
+        "amo": "AlignmentException",
         "lrsc": "AlignmentException"
       },
       "order_decreasing": false,
-      "default_allowed_within_exp": 0,
+      // 0: every misaligned access that is allowed to proceed is split.
+      // JV32 faults instead (exceptions above), so this is unused.
+      "allowed_within_exp": 0,
       "byte_by_byte": false
     },
     "translation": {
@@ -144,8 +148,6 @@
             "amo": "AccessFault"
           },
           "atomic_support": "AMONone",
-          "misaligned_atomicity_granule_size_exp": 0,
-          "vector_misaligned_atomicity_granule_size_exp": 0,
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
           "supports_pte_read": false,
@@ -172,8 +174,6 @@
             "amo": "AccessFault"
           },
           "atomic_support": "AMONone",
-          "misaligned_atomicity_granule_size_exp": 0,
-          "vector_misaligned_atomicity_granule_size_exp": 0,
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
           "supports_pte_read": false,
@@ -201,8 +201,6 @@
             "amo": "AccessFault"
           },
           "atomic_support": "AMONone",
-          "misaligned_atomicity_granule_size_exp": 0,
-          "vector_misaligned_atomicity_granule_size_exp": 0,
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
           "supports_pte_read": false,
@@ -230,8 +228,6 @@
             "amo": "AccessFault"
           },
           "atomic_support": "AMOArithmetic",  // JV32 has Zaamo (all AMOs except AMOCAS)
-          "misaligned_atomicity_granule_size_exp": 0,
-          "vector_misaligned_atomicity_granule_size_exp": 0,
           "reservability": "RsrvEventual",
           "supports_cbo_zero": false,
           "supports_pte_read": false,   // JV32 has no MMU
