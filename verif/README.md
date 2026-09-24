@@ -5,7 +5,7 @@ This directory contains the RISC-V Architectural Compliance Test (ACT4) infrastr
 ```
 verif/
 ├── Makefile                    # ACT4 build/run orchestration
-├── sail_spike_wrapper.sh.in    # Spike wrapper template for ACT4 reference model
+├── sail_spike_wrapper.sh.in    # sail-riscv wrapper template for ACT4 reference model
 ├── config/                     # ACT4 DUT/reference model configuration
 ├── riscv-arch-test/            # ACT4 submodule (cloned by make arch-test-setup)
 └── formal/
@@ -27,15 +27,9 @@ JV32 is verified against the **RISC-V Architectural Compliance Test suite v4 (AC
 
 | Tool | Notes |
 |---|---|
-| [Spike](https://github.com/riscv-software-src/riscv-isa-sim) | RISC-V ISA reference simulator; set `SPIKE=` in `env.config` |
+| [sail-riscv](https://github.com/riscv/sail-riscv) 0.14.1 | Reference model used to generate golden signatures; `sail_riscv_sim` must be on `PATH`. Arch tests were run against this version. |
 | [uv](https://docs.astral.sh/uv/) | Python package/venv manager for the ACT4 framework; auto-installed by `make arch-test-setup` if absent |
 | Git | Required to clone the `riscv-arch-test` submodule during `make arch-test-setup` |
-
-Configure your Spike binary in `env.config`:
-
-```ini
-SPIKE=$(HOME)/opt/riscv/bin/spike
-```
 
 ### One-time setup
 
@@ -58,8 +52,9 @@ The arch-test run proceeds in three phases:
    is unchanged.
 
 2. **Generate self-checking ELFs** — ACT4 compiles each test to a self-checking ELF. During this
-   phase, **Spike** also runs each test and dumps a golden memory signature for the region
-   `begin_signature`…`end_signature`.
+   phase, **sail-riscv 0.14.1** also runs each test and dumps a golden memory signature for the
+   region `begin_signature`…`end_signature`. Zcmp tests use `jv32sim` as the reference instead,
+   because Sail does not implement Zcmp. |
 
 3. **Run on JV32 RTL** — `run_tests.py` loads each ELF on to `build/jv32soc`. The RTL simulator
    polls the `tohost` MMIO word; when the test program writes `1` (pass) or `(exit_code << 1) | 1`
