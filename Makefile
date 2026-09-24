@@ -1685,6 +1685,7 @@ coverage: build-rtl-cov build-vpi-jtag-cov sw-all sw-hello
 clean:
 	@rm -rf $(BUILD_DIR)
 	@$(MAKE) -C $(SW_DIR) --no-print-directory clean
+	@$(MAKE) -C verif arch-test-clean
 	@echo "Clean done."
 
 # ============================================================================

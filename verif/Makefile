@@ -277,7 +277,7 @@ arch-test-%: $(ACT_SENTINEL) $(ARCH_TEST_CONFIG) $(ARCH_TEST_EXTENSIONS_FILE)
 # arch-test-clean: remove generated artifacts (keep cloned repo and venv)
 # ============================================================================
 arch-test-clean:
-	@rm -rf $(WORKDIR)
+	@rm -rf $(WORKDIR) riscv-arch-test/tests/rv32i/Zcmp
 	@echo "[arch-test] Work directory removed: $(WORKDIR)"
 
 # ============================================================================

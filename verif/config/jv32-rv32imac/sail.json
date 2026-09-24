@@ -24,6 +24,8 @@
     "privileged_isa_version": "Privileged_ISA_1_13",
     // JV32 is M-mode only -> no S/U counter access, no trap delegation
     "mcounteren_writable_bits": { "len": 32, "value": "0x00000000" },
+    // H-mode is absent, so hcounteren does not exist and has no writable bits.
+    "hcounteren_writable_bits": { "len": 32, "value": "0x00000000" },
     "medeleg": { "delegatable_bits": { "len": 64, "value": "0x0000000000000000" } },
     "mideleg": { "delegatable_bits": { "len": "xlen", "value": "0x00000000" } },
     // F and V are unsupported -> the FS/VS fields stay Off
@@ -38,6 +40,11 @@
     },
     // No S-mode; stvec is not implemented but the schema requires the object
     "stvec": {
+      "direct":   { "supported": false },
+      "vectored": { "supported": false, "base_alignment": 2 }
+    },
+    // No H extension; vstvec is schema-required but architecturally absent.
+    "vstvec": {
       "direct":   { "supported": false },
       "vectored": { "supported": false, "base_alignment": 2 }
     },
@@ -59,20 +66,25 @@
       //   EXC_LOAD/STORE_MISALIGNED → mtval = fault_address
       //   IRQ                   → mtval = 0
       "illegal_instruction": true,   // mtval = instruction encoding
+      "virtual_instruction": false,  // no H extension
       "software_breakpoint": false,  // mtval = 0 (JV32 sets tval=0 for EBREAK)
       "hardware_breakpoint": false,
       "load_address_misaligned": true,   // mtval = fault address
       "load_access_fault": true,         // JV32 sets mtval = fault address (wb_exc_tval = mem_addr)
       "load_page_fault": false,          // no MMU
+      "load_guest_page_fault": false,    // no H extension
       "samo_address_misaligned": true,   // mtval = fault address
       "samo_access_fault": true,         // JV32 sets mtval = fault address (wb_exc_tval = mem_addr)
       "samo_page_fault": false,          // no MMU
+      "samo_guest_page_fault": false,    // no H extension
       "fetch_address_misaligned": false, // JV32 has C extension (IALIGN=16): hardware always
       //   clears bit[0] of JALR/JAL/branch targets, so the target is always
       //   16-bit aligned and a fetch-misaligned exception never fires.
       "fetch_access_fault": true,        // JV32 sets mtval = fetch PC (ex_exc_tval = if_ex_r.pc)
       "fetch_page_fault": false,
+      "fetch_guest_page_fault": false,   // no H extension
       "software_check": false,
+      "hardware_error": false,
       "reserved_exceptions": false
     },
     "reserved_behavior": {
@@ -88,6 +100,8 @@
   },
   "memory": {
     "physaddr_bits": 32,
+    "asidlen": 0,
+    "vmidlen": 0,
     "pmp": {
       // JV32 has no PMP
       "grain": 0,
@@ -105,15 +119,13 @@
       "exceptions": {
         "load_store": { "Some": "AlignmentException" },
         "vector": { "None": null },
-        // amo and lrsc are plain enums in the current sail-riscv schema
-        // (load_store/vector stay option objects).
-        "amo": "AlignmentException",
-        "lrsc": "AlignmentException"
+        "amo": { "Some": "AlignmentException" },
+        "lrsc": { "Some": "AlignmentException" }
       },
       "order_decreasing": false,
       // 0: every misaligned access that is allowed to proceed is split.
       // JV32 faults instead (exceptions above), so this is unused.
-      "allowed_within_exp": 0,
+      "default_allowed_within_exp": 0,
       "byte_by_byte": false
     },
     "translation": {
@@ -145,8 +157,11 @@
           "misaligned_exceptions": {
             "load_store": { "Some": "AlignmentException" },
             "vector": { "None": null },
-            "amo": "AccessFault"
+            "amo": "AccessFault",
+            "lrsc": "AccessFault"
           },
+          "misaligned_atomicity_granule_size_exp": 0,
+          "vector_misaligned_atomicity_granule_size_exp": 0,
           "atomic_support": "AMONone",
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
@@ -171,8 +186,11 @@
           "misaligned_exceptions": {
             "load_store": { "Some": "AlignmentException" },
             "vector": { "None": null },
-            "amo": "AccessFault"
+            "amo": "AccessFault",
+            "lrsc": "AccessFault"
           },
+          "misaligned_atomicity_granule_size_exp": 0,
+          "vector_misaligned_atomicity_granule_size_exp": 0,
           "atomic_support": "AMONone",
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
@@ -198,8 +216,11 @@
           "misaligned_exceptions": {
             "load_store": { "Some": "AlignmentException" },
             "vector": { "None": null },
-            "amo": "AccessFault"
+            "amo": "AccessFault",
+            "lrsc": "AccessFault"
           },
+          "misaligned_atomicity_granule_size_exp": 0,
+          "vector_misaligned_atomicity_granule_size_exp": 0,
           "atomic_support": "AMONone",
           "reservability": "RsrvNone",
           "supports_cbo_zero": false,
@@ -225,8 +246,11 @@
           "misaligned_exceptions": {
             "load_store": { "Some": "AlignmentException" },  // JV32 raises EXC_LOAD/STORE_ADDR_MISALIGNED
             "vector": { "None": null },
-            "amo": "AccessFault"
+            "amo": "AccessFault",
+            "lrsc": "AccessFault"
           },
+          "misaligned_atomicity_granule_size_exp": 0,
+          "vector_misaligned_atomicity_granule_size_exp": 0,
           "atomic_support": "AMOArithmetic",  // JV32 has Zaamo (all AMOs except AMOCAS)
           "reservability": "RsrvEventual",
           "supports_cbo_zero": false,
@@ -251,6 +275,13 @@
       // does NOT clear it (only an SC, or a debug-module write to the
       // reserved word, does).
       "invalidate_on_same_hart_store": false
+    },
+    "interrupts": {
+      "machine": {
+        "software": { "supported": true },
+        "timer": { "supported": true },
+        "external": { "supported": true }
+      }
     },
     // CLINT / CLIC at JV32 CLIC base (same layout as standard CLINT):
     //   MSIP    @ 0x02000000
@@ -296,8 +327,35 @@
     "Ssnpm": { "supported": false, "supported_pmlen_7": true, "supported_pmlen_16": true },
     "Zama16b": { "supported": false },
     "B": { "supported": false },
-    "S": { "supported": false },
+    "S": {
+      "supported": false,
+      "interrupts": {
+        "software": { "supported": false },
+        "timer": { "supported": false },
+        "external": { "supported": false }
+      }
+    },
     "U": { "supported": false },
+    "H": {
+      "supported": false,
+      "geilen": 0,
+      "guest_page_fault_writes_htval": false,
+      "hgatp_modes": {
+        "Sv32x4": false, "Sv39x4": false, "Sv48x4": false, "Sv57x4": false
+      },
+      "vsatp_modes": {
+        "Sv32": false, "Sv39": false, "Sv48": false, "Sv57": false
+      }
+    },
+    "Sha": { "supported": false },
+    "Shcounterenw": { "supported": false },
+    "Shgatpa": { "supported": false },
+    "Shtvala": { "supported": false },
+    "Shvsatpa": { "supported": false },
+    "Shvstvala": { "supported": false },
+    "Shvstvecd": { "supported": false },
+    "Sstvecd": { "supported": false },
+    "Svukte": { "supported": false },
     "Zibi": { "supported": false },
     "Zicbom": { "supported": false },
     "Zicbop": { "supported": false },
@@ -317,6 +375,7 @@
     "Zihintntl": { "supported": false },
     "Zihintpause": { "supported": false },
     "Zihpm": { "supported": false },
+    "Zilx": { "supported": false },
     "Zimop": { "supported": false },
     "Zmmul": { "supported": false },
     "Zaamo": { "supported": true },
